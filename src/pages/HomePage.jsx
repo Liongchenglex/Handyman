@@ -1,11 +1,47 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 const HomePage = () => {
-  // Ensure page scrolls to top when component mounts
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [visibleCards, setVisibleCards] = useState([]);
+  const [visibleSections, setVisibleSections] = useState([]);
+
+  // Ensure page scrolls to top when component mounts and trigger initial animations
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
+
+    // Trigger initial hero animations
+    setTimeout(() => setIsLoaded(true), 100);
+
+    // Set up intersection observer for scroll animations
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const sectionId = entry.target.getAttribute('data-section');
+            if (sectionId && !visibleSections.includes(sectionId)) {
+              setVisibleSections(prev => [...prev, sectionId]);
+            }
+
+            const cardId = entry.target.getAttribute('data-card');
+            if (cardId && !visibleCards.includes(cardId)) {
+              setVisibleCards(prev => [...prev, cardId]);
+            }
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '50px' }
+    );
+
+    // Observe sections and cards
+    setTimeout(() => {
+      document.querySelectorAll('[data-section], [data-card]').forEach(el => {
+        observer.observe(el);
+      });
+    }, 200);
+
+    return () => observer.disconnect();
+  }, [visibleCards, visibleSections]);
   // Static featured handymen data
   const featuredHandymen = [
     {
@@ -40,35 +76,57 @@ const HomePage = () => {
   return (
     <div className="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
       {/* Hero Banner Section */}
-      <div className="relative">
+      <div className="relative overflow-hidden">
         <div className="flex flex-col items-center justify-center h-[70vh] p-4">
           <div className="w-full max-w-md text-center">
             <div className="mb-8">
-              <svg className="mx-auto h-16 w-auto text-primary" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
-              </svg>
-              <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mt-4">HandySG</h1>
-              <p className="mt-2 text-base sm:text-lg text-gray-600 dark:text-gray-400">Your trusted partner for home services in Singapore.</p>
+              {/* Animated Logo */}
+              <div className={`transition-all duration-1000 ease-out ${
+                isLoaded ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-8 scale-95'
+              }`}>
+                <svg className="mx-auto h-16 w-auto text-primary transform hover:rotate-12 transition-transform duration-300" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
+                </svg>
+              </div>
+
+              {/* Animated Title */}
+              <h1 className={`text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mt-4 transition-all duration-1000 ease-out delay-200 ${
+                isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+              }`}>
+                HandySG
+              </h1>
+
+              {/* Animated Subtitle */}
+              <p className={`mt-2 text-base sm:text-lg text-gray-600 dark:text-gray-400 transition-all duration-1000 ease-out delay-400 ${
+                isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+              }`}>
+                Your trusted partner for home services in Singapore.
+              </p>
             </div>
+
+            {/* Animated Buttons */}
             <div className="space-y-3">
               <Link
                 to="/request-job"
-                className="group flex w-full items-center justify-center rounded-lg bg-primary px-6 py-3 text-base sm:text-lg font-bold text-background-dark transition-transform duration-300 hover:scale-105"
+                className={`group flex w-full items-center justify-center rounded-lg bg-primary px-6 py-3 text-base sm:text-lg font-bold text-background-dark transition-all duration-500 hover:scale-105 hover:shadow-xl hover:shadow-primary/25 ${
+                  isLoaded ? 'opacity-100 translate-y-0 delay-600' : 'opacity-0 translate-y-4'
+                }`}
               >
-                <span className="material-symbols-outlined mr-3">construction</span>
+                <span className="material-symbols-outlined mr-3 group-hover:animate-bounce">construction</span>
                 I need a handyman
               </Link>
               <Link
                 to="/handyman-dashboard"
-                className="group flex w-full items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 px-6 py-3 text-base sm:text-lg font-bold text-gray-900 dark:text-white transition-transform duration-300 hover:scale-105"
+                className={`group flex w-full items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 px-6 py-3 text-base sm:text-lg font-bold text-gray-900 dark:text-white transition-all duration-500 hover:scale-105 hover:shadow-lg ${
+                  isLoaded ? 'opacity-100 translate-y-0 delay-700' : 'opacity-0 translate-y-4'
+                }`}
               >
-                <span className="material-symbols-outlined mr-3">engineering</span>
+                <span className="material-symbols-outlined mr-3 group-hover:animate-pulse">engineering</span>
                 I am a handyman
               </Link>
             </div>
           </div>
         </div>
-
       </div>
 
       {/* Featured Handymen Section */}
