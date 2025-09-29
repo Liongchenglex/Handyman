@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Jobs collection - read access for all, write only for authenticated users
+    match /jobs/{jobId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && 
+        (resource.data.customerId == request.auth.uid || 
+         resource.data.handymanId == request.auth.uid);
+    }
+    
+    // Handymen collection
+    match /handymen/{handymanId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == handymanId;
+    }
+    
+    // Customers collection
+    match /customers/{customerId} {
+      allow read, write: if request.auth != null && request.auth.uid == customerId;
+    }
+    
+    // Payments collection - restricted access
+    match /payments/{paymentId} {
+      allow read, write: if request.auth != null && 
+        (resource.data.customerId == request.auth.uid || 
+         resource.data.handymanId == request.auth.uid);
+    }
+    
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read, write: if request.auth != null && 
+        resource.data.userId == request.auth.uid;
+    }
+  }
+}
