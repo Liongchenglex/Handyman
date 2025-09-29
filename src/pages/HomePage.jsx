@@ -145,6 +145,83 @@ const HomePage = () => {
         </div>
       </div>
 
+      {/* Help & Contact Section */}
+      <div className="py-16 px-4 bg-gray-50 dark:bg-gray-800">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+              Need Help or Want to Contact Us?
+            </h2>
+            <p className="text-lg text-gray-600 dark:text-gray-400">
+              We're here to help you with any questions or support you need.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto">
+            {/* Help Section */}
+            <div className="bg-white dark:bg-gray-700 rounded-xl shadow-lg p-8 text-center border border-gray-200 dark:border-gray-600">
+              <div className="mb-6">
+                <div className="bg-blue-100 dark:bg-blue-900/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 text-2xl">help_center</span>
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Help Center</h3>
+                <p className="text-gray-600 dark:text-gray-400 mb-6">
+                  Find answers to common questions and learn how to use our platform effectively.
+                </p>
+              </div>
+              <Link
+                to="/help"
+                className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200"
+              >
+                <span className="material-symbols-outlined">library_books</span>
+                Visit Help Center
+              </Link>
+            </div>
+
+            {/* Contact Section */}
+            <div className="bg-white dark:bg-gray-700 rounded-xl shadow-lg p-8 text-center border border-gray-200 dark:border-gray-600">
+              <div className="mb-6">
+                <div className="bg-green-100 dark:bg-green-900/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-green-600 dark:text-green-400 text-2xl">support_agent</span>
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Contact Us</h3>
+                <p className="text-gray-600 dark:text-gray-400 mb-6">
+                  Get in touch with our support team for personalized assistance.
+                </p>
+              </div>
+
+              <div className="space-y-4 text-left">
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">mail</span>
+                  <div>
+                    <span className="text-gray-700 dark:text-gray-300 block font-medium">Email</span>
+                    <a href="mailto:support@handysg.com" className="text-green-600 dark:text-green-400 hover:underline">
+                      support@handysg.com
+                    </a>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">call</span>
+                  <div>
+                    <span className="text-gray-700 dark:text-gray-300 block font-medium">Phone</span>
+                    <a href="tel:+6561234567" className="text-green-600 dark:text-green-400 hover:underline">
+                      +65 6123 4567
+                    </a>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">schedule</span>
+                  <div>
+                    <span className="text-gray-700 dark:text-gray-300 block font-medium">Hours</span>
+                    <span className="text-gray-600 dark:text-gray-400">Mon-Fri 9AM-6PM</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Footer */}
       <footer className="py-8 text-center text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700">
         <p>&copy; 2024 HandySG. All rights reserved.</p>
