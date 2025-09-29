@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
+import ExpressInterestButton from './ExpressInterestButton';
 
 /**
  * JobBoard Component
@@ -8,12 +10,11 @@ import LoadingSpinner from '../common/LoadingSpinner';
  * Follows the established design patterns and is ready for API integration
  *
  * @param {Function} onJobSelect - Callback when a job is selected
- * @param {Function} onBackToHome - Callback to return to home page
  */
 const JobBoard = ({
-  onJobSelect,
-  onBackToHome
+  onJobSelect
 }) => {
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilters, setSelectedFilters] = useState({
@@ -202,18 +203,18 @@ const JobBoard = ({
     }));
   };
 
-  const handleJobInterest = (jobId) => {
+  const handleRefresh = () => {
     setIsLoading(true);
-    // Simulate API call
+    // Simulate API refresh
     setTimeout(() => {
-      const job = mockJobs.find(j => j.id === jobId);
-      console.log('Expressing interest in job:', job);
-      alert(`Interest expressed in job ${jobId}. Customer will be notified!`);
+      console.log('Refreshing job listings...');
       setIsLoading(false);
-      if (onJobSelect) {
-        onJobSelect(job);
-      }
-    }, 1500);
+    }, 1000);
+  };
+
+  const handleSeeDetails = (job) => {
+    // Navigate to job details page with job data
+    navigate(`/job-details/${job.id}`, { state: { job } });
   };
 
   const getUrgencyBadge = (urgency) => {
@@ -233,26 +234,24 @@ const JobBoard = ({
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
-          <button
-            type="button"
-            onClick={onBackToHome}
-            className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            <span className="material-symbols-outlined text-lg">arrow_back</span>
-          </button>
-          <div className="flex-1">
+        <div className="flex items-center justify-between mb-8">
+          <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Available Jobs</h1>
             <p className="text-gray-600 dark:text-gray-400 mt-1">
               {sortedJobs.length} job{sortedJobs.length !== 1 ? 's' : ''} available
             </p>
           </div>
+
+          {/* Refresh Button */}
           <button
-            onClick={() => window.location.reload()}
-            className="flex items-center gap-2 px-4 py-2 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span className="material-symbols-outlined">refresh</span>
-            Refresh
+            <span className={`material-symbols-outlined ${isLoading ? 'animate-spin' : ''}`}>
+              refresh
+            </span>
+            <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
 
@@ -469,14 +468,20 @@ const JobBoard = ({
                     )}
                   </div>
 
-                  {/* Action Button */}
-                  <button
-                    onClick={() => handleJobInterest(job.id)}
-                    disabled={isLoading}
-                    className="w-full bg-primary text-black font-bold py-3 px-4 rounded-xl hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Express Interest
-                  </button>
+                  {/* Action Buttons */}
+                  <div className="space-y-3">
+                    <ExpressInterestButton
+                      job={job}
+                      onJobSelect={onJobSelect}
+                      buttonStyle="full-width"
+                    />
+                    <button
+                      onClick={() => handleSeeDetails(job)}
+                      className="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white font-medium py-3 px-4 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm"
+                    >
+                      See Details
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -494,6 +499,7 @@ const JobBoard = ({
           </div>
         )}
       </div>
+
     </div>
   );
 };

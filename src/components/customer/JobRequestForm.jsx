@@ -3,6 +3,7 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 // import { useForm } from 'react-hook-form';
 // import { createJob } from '../../services/api/jobs';
+// import { validateSingaporeAddress } from '../../services/onemap/addressValidation'; // Future OneMap integration
 import LoadingSpinner from '../common/LoadingSpinner';
 import PaymentForm from './PaymentForm';
 import FixedStepperContainer from '../common/FixedStepperContainer';
@@ -138,6 +139,14 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       errors.phone = 'Please enter a valid Singapore phone number';
     }
 
+    if (!data.address || data.address.trim() === '') {
+      errors.address = 'This field is required';
+    }
+    // Future: Add OneMap API validation here
+    // } else if (!await validateSingaporeAddress(data.address)) {
+    //   errors.address = 'Please enter a valid Singapore address';
+    // }
+
     return errors;
   };
 
@@ -231,10 +240,11 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       customerName: personalData.name,
       customerEmail: personalData.email,
       customerPhone: personalData.phone,
+      address: personalData.address,
       // Job details
       serviceType: selectedCategory,
       description: notes || `${selectedCategory} service requested`,
-      location: 'Singapore',
+      location: personalData.address || 'Singapore',
       preferredTiming: selectedTiming,
       preferredDate: selectedTiming === 'Schedule' ? selectedDate.toISOString().split('T')[0] : null,
       preferredTime: jobFormData.time,
@@ -282,10 +292,11 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
         customerName: personalData.name,
         customerEmail: personalData.email,
         customerPhone: personalData.phone,
+        address: personalData.address,
         // Job details
         serviceType: selectedCategory,
         description: data.notes || `${selectedCategory} service requested`,
-        location: 'Singapore', // You can make this dynamic
+        location: personalData.address || 'Singapore',
         preferredTiming: selectedTiming,
         preferredDate: selectedTiming === 'Schedule' ? `2024-10-${selectedDate.toString().padStart(2, '0')}` : null,
         preferredTime: data.time,
@@ -478,6 +489,23 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 {personalErrors.phone && <span className="text-red-500 text-sm mt-1">{personalErrors.phone}</span>}
           </div>
 
+              <div>
+            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2" htmlFor="address">
+              Job Address
+            </label>
+                <input
+              className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
+                personalErrors.address ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
+              }`}
+              id="address"
+              placeholder="e.g., 123 Orchard Road, #12-34, Singapore 238826"
+              type="text"
+              defaultValue={personalData.address || ''}
+              {...register('address')}
+                />
+                {personalErrors.address && <span className="text-red-500 text-sm mt-1">{personalErrors.address}</span>}
+          </div>
+
                   {/* Primary Action Button */}
                   <div className="mt-8">
                     <button
@@ -546,6 +574,13 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">Phone:</span>
                   <span className="font-medium">{personalData.phone}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-xs">location_on</span>
+                    Job Address:
+                  </span>
+                  <span className="font-medium text-right max-w-[60%]">{personalData.address}</span>
                 </div>
               </div>
             </div>

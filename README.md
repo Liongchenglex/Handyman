@@ -440,10 +440,12 @@ The customer experience follows a carefully designed 4-step flow to ensure ease 
 - **Full Name** *(required)* - Customer identification
 - **Email Address** *(required)* - Communication and notifications
 - **Phone Number** *(required)* - WhatsApp notifications and handyman contact
+- **Job Address** *(required)* - Location where service will be performed
 
 **Validation:**
 - Email format validation with pattern matching
 - Singapore phone number validation (8 digits starting with 6, 8, or 9)
+- Address validation with preparation for OneMap API integration
 - All fields are mandatory with real-time error messages
 
 **UI Features:**
@@ -498,7 +500,7 @@ The customer experience follows a carefully designed 4-step flow to ensure ease 
 
 **Review Sections:**
 1. **Personal Details Card**
-   - Name, email, phone display
+   - Name, email, phone, and job address display
    - Edit functionality (returns to Step 1)
 
 2. **Job Details Card**
@@ -1129,9 +1131,36 @@ npm run deploy
 - Webhook retry mechanisms
 - Input validation and sanitization
 
+## 🆕 Recent Updates
+
+### November 2024 - Enhanced User Experience
+- ✅ **Address Field Addition**: Added required job address field to customer job request form
+- ✅ **Handyman Flow Improvements**:
+  - Removed unnecessary back button from job board for cleaner navigation
+  - Added "See Details" button for comprehensive job information viewing
+  - Complete JobCard component overhaul with modern styling patterns
+- ✅ **Express Interest Enhancement**:
+  - Factorized Express Interest button into reusable component
+  - Added professional confirmation modal with penalty warnings
+  - Improved user experience with clear consequences and commitments
+- ✅ **UI/UX Refinements**:
+  - Moved refresh button to right side of job board for better accessibility
+  - Enhanced job details display with improved information hierarchy
+  - Added location icons and visual improvements throughout the platform
+- ✅ **Future-Ready Architecture**:
+  - Prepared for Singapore OneMap API integration for address validation
+  - Set up infrastructure for enhanced location services
+
+### Technical Improvements
+- Component factorization for better code reusability
+- Enhanced form validation and error handling
+- Improved responsive design patterns
+- Better state management across handyman components
+
 ## 🔄 Future Enhancements
 
 ### Planned Features
+- [ ] Singapore OneMap API integration for address validation and geocoding
 - [ ] Real-time chat between customers and handymen
 - [ ] Photo upload for job documentation
 - [ ] Rating and review system

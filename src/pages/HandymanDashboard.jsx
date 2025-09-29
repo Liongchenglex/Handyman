@@ -478,7 +478,6 @@ const HandymanDashboard = () => {
       {currentView === 'jobs' && (
         <JobBoard
           onJobSelect={handleJobSelect}
-          onBackToHome={() => setCurrentView('profile')}
         />
       )}
       {currentView === 'my-jobs' && <MyJobsView />}
