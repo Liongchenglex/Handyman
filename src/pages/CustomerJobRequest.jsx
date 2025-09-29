@@ -14,7 +14,10 @@ const CustomerJobRequest = () => {
 
   // Handle navigation back to home page
   const handleBackToHome = () => {
-    navigate('/');
+    // Navigate to home page with replace to avoid back button issues
+    navigate('/', { replace: true });
+    // Scroll to top immediately (React Router will handle this after navigation)
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
