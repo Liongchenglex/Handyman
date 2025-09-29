@@ -51,10 +51,10 @@ const JobConfirmation = ({ job, paymentIntent }) => {
 
             {/* Action Button */}
             <a
-              href="/jobs"
+              href="/"
               className="w-full inline-block bg-primary text-background-dark font-bold py-3 px-6 rounded-lg hover:bg-primary/90 transition-colors duration-300"
             >
-              View Job
+              Back to Home
             </a>
 
             {/* Job Details Summary */}

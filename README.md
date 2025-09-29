@@ -640,6 +640,328 @@ The customer experience follows a carefully designed 4-step flow to ensure ease 
 - Scalable text and interface elements
 - Clear visual hierarchy and spacing
 
+## 🔧 Handyman Flow Documentation
+
+### Complete Handyman Journey
+The handyman experience is designed for professionals to efficiently find, accept, and manage job requests from customers. The flow emphasizes simplicity and mobile-first design for busy handymen.
+
+#### **Step 1: Authentication**
+**Location**: `/handyman-auth`
+**Purpose**: Unified login and signup experience for handymen
+
+**Authentication Modes:**
+- **Login Mode**: For returning handymen
+  - Email/phone and password authentication
+  - "Remember me" functionality
+  - Password recovery option
+
+- **Signup Mode**: For new handymen
+  - Basic account creation (email, phone, password)
+  - Initial verification
+  - Progresses to registration flow
+
+**Form Features:**
+- Toggle between login/signup modes with animated transition
+- Singapore phone number validation (+65 format)
+- Real-time form validation with error messaging
+- Mobile-optimized input fields
+- Loading states during authentication
+
+**Navigation:**
+- "Back to Home" link to return to main site
+- Auto-redirect after successful authentication
+- Error handling with retry mechanisms
+
+#### **Step 2: Registration (New Handymen Only)**
+**Location**: `/handyman-registration`
+**Purpose**: Comprehensive profile setup for new handymen
+
+**Multi-Step Registration Process:**
+
+##### **Step 1: Personal Details**
+- **Full Name** *(required)* - Professional identification
+- **Email Address** *(pre-filled from signup)*
+- **Phone Number** *(pre-filled from signup)*
+- **Address** *(required)* - Service area determination
+- **Date of Birth** - Age verification
+- **NRIC/FIN** *(required)* - Singapore identity verification
+
+##### **Step 2: Professional Information**
+- **Service Types** *(multi-select required)*:
+  - Plumbing
+  - Electrical
+  - Carpentry
+  - Appliance Repair
+  - Painting
+  - Aircon Servicing
+  - Other (with custom input)
+
+- **Experience Level** *(required)*:
+  - Beginner (0-2 years)
+  - Intermediate (2-5 years)
+  - Expert (5+ years)
+
+- **Hourly Rate** - Pricing expectation (SGD)
+- **Service Areas** - Singapore regions served
+- **Professional Description** - Skills and experience summary
+- **Availability** - Working hours and days
+
+##### **Step 3: Documents & Verification**
+- **NRIC/Passport Upload** *(required)* - Identity verification
+- **Professional Certifications** - Relevant trade certificates
+- **Insurance Documents** - Liability coverage proof
+- **Portfolio Images** - Previous work examples
+- **Trade License** - Professional licensing (if applicable)
+
+**Upload Features:**
+- Drag & drop interface
+- Multiple file support
+- Image preview functionality
+- File size validation (10MB per file)
+- Progress indicators
+
+##### **Step 4: Preferences & Settings**
+- **Notification Preferences**:
+  - Job alerts via WhatsApp *(default: enabled)*
+  - Job alerts via email
+  - Weekly summary reports
+  - Promotional communications
+
+- **Job Matching Preferences**:
+  - Preferred service types
+  - Budget range preferences
+  - Distance/location preferences
+  - Urgency level preferences
+
+**Registration Completion:**
+- Profile review summary
+- Terms and conditions acceptance
+- Account activation
+- Welcome message and dashboard redirect
+
+#### **Step 3: Dashboard Access**
+**Location**: `/handyman-dashboard`
+**Purpose**: Central hub for handyman job management
+
+**Dashboard Navigation Tabs:**
+
+##### **Available Jobs Tab**
+**Purpose**: Browse and apply for customer job requests
+
+**Job Board Features:**
+- **Real-time job listings** with auto-refresh
+- **Advanced filtering**:
+  - Service type filter
+  - Budget range slider
+  - Location/distance filter
+  - Urgency level filter
+  - Job age filter
+
+- **Search functionality**:
+  - Keyword search in job descriptions
+  - Location-based search
+  - Customer name search
+
+- **Sorting options**:
+  - Newest first (default)
+  - Highest budget
+  - Closest location
+  - Most urgent
+
+**Job Card Information:**
+- Service type with icon
+- Job description preview
+- Customer location (area only for privacy)
+- Estimated budget range
+- Urgency indicator (🔥 for urgent jobs)
+- Posted time (relative: "2 hours ago")
+- Materials requirement
+- Site visit requirement
+- Image count indicator
+
+**Job Interaction:**
+- "Express Interest" button for each job
+- WhatsApp notification sent to customer
+- Real-time status updates
+- Quick job preview modal
+
+##### **My Jobs Tab**
+**Purpose**: Manage accepted and ongoing job assignments
+
+**Job Status Categories:**
+- **Accepted**: Jobs confirmed but not yet started
+- **In Progress**: Currently working on
+- **Completed**: Finished jobs (for reference)
+
+**Accepted Jobs Features:**
+- **Customer Contact Information**:
+  - Customer name and phone number
+  - Direct call button (`tel:` link)
+  - WhatsApp button with pre-formatted message
+  - Contact privacy protection
+
+- **Job Details Display**:
+  - Complete job description
+  - Scheduled date and time
+  - Exact address (visible after acceptance)
+  - Materials requirement details
+  - Special instructions/notes
+  - Uploaded images (if any)
+
+- **Action Buttons**:
+  - **"Start Work"** - Updates status to in-progress
+  - **"Get Directions"** - Opens maps app
+  - **"Contact Customer"** - Quick communication options
+  - **"Mark Complete"** - Finish job workflow
+
+**Job Management Workflow:**
+1. **Job Acceptance**: Customer receives WhatsApp notification
+2. **Work Start**: Status update sent to customer via WhatsApp
+3. **Progress Updates**: Optional interim status updates
+4. **Job Completion**:
+   - Completion confirmation to customer
+   - Payment release trigger
+   - Rating/review request
+
+**Timeline Tracking:**
+- Visual timeline for each job showing:
+  - Job posted timestamp
+  - Acceptance timestamp
+  - Work start timestamp
+  - Completion timestamp
+- Status history preservation
+
+##### **My Profile Tab**
+**Purpose**: View and manage handyman profile information
+
+**Profile Sections:**
+
+**Personal Information:**
+- Name, email, phone (editable)
+- Address and service areas
+- Professional photo upload
+- Account creation date
+
+**Professional Details:**
+- Service types offered
+- Experience level and description
+- Hourly rate settings
+- Service area coverage
+- Availability schedule
+
+**Performance Statistics:**
+- Total jobs completed
+- Average customer rating
+- Response time metrics
+- Customer satisfaction rate
+- Earnings summary
+
+**Account Management:**
+- Notification preferences
+- Privacy settings
+- Document management
+- Verification status
+
+#### **Notification System**
+
+**WhatsApp Notifications:**
+- **New Job Alerts**: Immediate notifications for matching jobs
+- **Job Status Updates**: Customer acceptance/rejection notifications
+- **Schedule Reminders**: Upcoming job reminders
+- **Payment Notifications**: Completion and payment confirmations
+
+**Email Notifications:**
+- Weekly job summary reports
+- Account security updates
+- Platform announcements
+- Marketing communications (optional)
+
+**In-App Notifications:**
+- Real-time dashboard updates
+- Job board refresh notifications
+- Message indicators
+- System maintenance alerts
+
+#### **Mobile Optimization**
+
+**Touch Interface:**
+- Large touch targets for all buttons (minimum 44px)
+- Swipe gestures for job card navigation
+- Pull-to-refresh functionality
+- Mobile-optimized form inputs
+
+**Performance Features:**
+- Lazy loading for job listings
+- Image optimization and compression
+- Offline capability for viewing accepted jobs
+- Progressive loading for slow connections
+
+**Location Services:**
+- GPS integration for distance calculation
+- Navigation app integration
+- Location-based job filtering
+- Service area verification
+
+#### **Security & Privacy**
+
+**Data Protection:**
+- Customer contact details only visible after job acceptance
+- Secure document upload and storage
+- Encrypted communication channels
+- GDPR compliance for data handling
+
+**Account Security:**
+- Two-factor authentication option
+- Secure password requirements
+- Session management
+- Device authorization
+
+**Professional Verification:**
+- NRIC/passport verification
+- Certificate validation
+- Background check integration
+- Insurance verification
+
+#### **Error Handling & Edge Cases**
+
+**Connection Issues:**
+- Offline mode for viewing accepted jobs
+- Auto-retry for failed notifications
+- Data synchronization when connection restored
+- User feedback for connectivity status
+
+**Job Conflicts:**
+- Double-booking prevention
+- Schedule conflict detection
+- Automatic availability updates
+- Graceful handling of simultaneous acceptances
+
+**Payment Issues:**
+- Escrow status tracking
+- Payment delay notifications
+- Dispute resolution workflow
+- Financial reconciliation tools
+
+### Integration Points
+
+**Customer-Handyman Communication:**
+- WhatsApp Business API integration
+- Direct phone calling capability
+- In-app messaging system (future enhancement)
+- Automated status update notifications
+
+**Payment Integration:**
+- Stripe Connect for handyman payouts
+- Escrow release automation
+- Fee calculation and deduction
+- Tax reporting integration
+
+**Third-party Services:**
+- Google Maps for directions
+- WhatsApp Business API
+- Document verification services
+- Background check providers
+
 ## 🗄️ Database Schema
 
 ### Collections

@@ -116,7 +116,7 @@ const HomePage = () => {
                 I need a handyman
               </Link>
               <Link
-                to="/handyman-dashboard"
+                to="/handyman-auth"
                 className={`group flex w-full items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 px-6 py-3 text-base sm:text-lg font-bold text-gray-900 dark:text-white transition-all duration-500 hover:scale-105 hover:shadow-lg ${
                   isLoaded ? 'opacity-100 translate-y-0 delay-700' : 'opacity-0 translate-y-4'
                 }`}

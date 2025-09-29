@@ -7,7 +7,9 @@ import Header from './components/common/Header';
 import Footer from './components/common/Footer';
 import HomePage from './pages/HomePage';
 import CustomerJobRequest from './pages/CustomerJobRequest';
-// import HandymanDashboard from './pages/HandymanDashboard';
+import HandymanAuthPage from './pages/HandymanAuth';
+import HandymanRegistrationPage from './pages/HandymanRegistration';
+import HandymanDashboard from './pages/HandymanDashboard';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
 // import './styles/globals.css';
@@ -17,20 +19,23 @@ import CustomerJobRequest from './pages/CustomerJobRequest';
 function AppContent() {
   const location = useLocation();
   const isHomePage = location.pathname === '/';
+  const isHandymanFlow = location.pathname.startsWith('/handyman');
 
   return (
     <div className="App">
-      {!isHomePage && <Header />}
-      <main className={isHomePage ? '' : 'main-content'}>
+      {!isHomePage && !isHandymanFlow && <Header />}
+      <main className={isHomePage || isHandymanFlow ? '' : 'main-content'}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/request-job" element={<CustomerJobRequest />} />
-          {/* <Route path="/handyman-dashboard" element={<HandymanDashboard />} /> */}
+          <Route path="/handyman-auth" element={<HandymanAuthPage />} />
+          <Route path="/handyman-registration" element={<HandymanRegistrationPage />} />
+          <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
           {/* <Route path="/jobs" element={<JobBoard />} /> */}
           {/* <Route path="/jobs/:id" element={<JobDetails />} /> */}
         </Routes>
       </main>
-      {!isHomePage && <Footer />}
+      {!isHomePage && !isHandymanFlow && <Footer />}
     </div>
   );
 }
