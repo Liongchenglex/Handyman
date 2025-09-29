@@ -1,3 +1,5 @@
+You are a senior full stack developer.
+
 I have documented the Project overview in a file call ProjectRequirements.md
 
 Please ensure there is proper documentation for the code

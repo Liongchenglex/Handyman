@@ -5,7 +5,8 @@ import 'react-datepicker/dist/react-datepicker.css';
 // import { createJob } from '../../services/api/jobs';
 import LoadingSpinner from '../common/LoadingSpinner';
 import PaymentForm from './PaymentForm';
-import ProgressStepper from '../common/ProgressStepper';
+import FixedStepperContainer from '../common/FixedStepperContainer';
+import ConfirmationScreen from './ConfirmationScreen';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -72,7 +73,7 @@ if (typeof document !== 'undefined') {
   document.head.appendChild(styleElement);
 }
 
-const JobRequestForm = ({ onJobCreated }) => {
+const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [aiAccordionOpen, setAiAccordionOpen] = useState(false);
@@ -81,6 +82,7 @@ const JobRequestForm = ({ onJobCreated }) => {
   const [personalErrors, setPersonalErrors] = useState({});
   const [jobErrors, setJobErrors] = useState({});
   const [jobData, setJobData] = useState(null);
+  const [paymentResult, setPaymentResult] = useState(null);
 
   // Job form data state for persistence
   const [jobFormData, setJobFormData] = useState({
@@ -251,20 +253,25 @@ const JobRequestForm = ({ onJobCreated }) => {
   };
 
   // Function to handle successful payment
-  const handlePaymentSuccess = (paymentResult) => {
-    console.log('Payment successful:', paymentResult);
+  const handlePaymentSuccess = (paymentResultData) => {
+    console.log('Payment successful:', paymentResultData);
     console.log('Job data:', jobData);
+
+    // Store payment result for confirmation screen
+    setPaymentResult(paymentResultData);
 
     // Here you would typically:
     // 1. Create the job with payment confirmation
     // 2. Call onJobCreated with the final job data
-    // 3. Redirect to success page
+    // 3. Show confirmation screen
 
     if (onJobCreated) {
-      onJobCreated({ ...jobData, paymentStatus: 'completed', paymentResult });
+      onJobCreated({ ...jobData, paymentStatus: 'completed', paymentResult: paymentResultData });
     }
 
-    alert('Payment successful! Your job request has been submitted.');
+    // Move to confirmation screen (step 5)
+    setCurrentStep(5);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleJobSubmit = async (data) => {
@@ -398,30 +405,34 @@ const JobRequestForm = ({ onJobCreated }) => {
   // Render based on current step
   if (currentStep === 1) {
     return (
-      <div className="max-w-4xl mx-auto pt-4">
-        {/* Progress Stepper */}
-        <ProgressStepper
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        {/* Fixed Progress Stepper */}
+        <FixedStepperContainer
           currentStep={currentStep}
           steps={steps}
           onStepClick={handleStepClick}
           allowClickBack={false}
         />
 
-        {/* Header */}
-        <div className="mb-6 text-center">
-          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">Let's get started</h2>
-          <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base">First, we need a few details to create your job request.</p>
-        </div>
+        <div className="max-w-4xl mx-auto pt-8 px-4">
+          {/* Form Card Container */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="p-8">
+              {/* Header */}
+              <div className="mb-8 text-center">
+                <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">Let's get started</h2>
+                <p className="text-gray-500 dark:text-gray-400 text-sm sm:text-base">First, we need a few details to create your job request.</p>
+              </div>
 
-        {/* Personal Details Form Container */}
-        <div className="space-y-6">
+              {/* Personal Details Form Container */}
+              <div className="space-y-6">
             <form onSubmit={handleSubmit(handlePersonalSubmit)} className="space-y-5">
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2" htmlFor="name">
                   Full Name
                 </label>
                 <input
-              className={`w-full h-12 bg-background-light dark:bg-background-dark border rounded-lg p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary dark:placeholder-gray-500 transition-shadow ${
+              className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                 personalErrors.name ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
               }`}
               id="name"
@@ -438,7 +449,7 @@ const JobRequestForm = ({ onJobCreated }) => {
               Email Address
             </label>
                 <input
-              className={`w-full h-12 bg-background-light dark:bg-background-dark border rounded-lg p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary dark:placeholder-gray-500 transition-shadow ${
+              className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                 personalErrors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
               }`}
               id="email"
@@ -455,7 +466,7 @@ const JobRequestForm = ({ onJobCreated }) => {
               Phone Number
             </label>
                 <input
-              className={`w-full h-12 bg-background-light dark:bg-background-dark border rounded-lg p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary dark:placeholder-gray-500 transition-shadow ${
+              className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                 personalErrors.phone ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
               }`}
               id="phone"
@@ -470,13 +481,16 @@ const JobRequestForm = ({ onJobCreated }) => {
                   {/* Primary Action Button */}
                   <div className="mt-8">
                     <button
-                  type="submit"
-                  className="w-full h-12 px-5 bg-primary text-gray-900 font-bold text-base rounded-lg shadow-sm hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary dark:focus:ring-offset-background-dark transition-colors"
-                    >
-                  Continue
-                </button>
+                    type="submit"
+                    className="w-full h-12 px-5 bg-primary text-gray-900 font-bold text-base rounded-xl shadow-sm hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary dark:focus:ring-offset-background-dark transition-colors"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </form>
               </div>
-            </form>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -484,34 +498,38 @@ const JobRequestForm = ({ onJobCreated }) => {
 
   if (currentStep === 3) {
     return (
-      <div className="w-full max-w-4xl mx-auto pt-4">
-        {/* Progress Stepper */}
-        <ProgressStepper
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        {/* Fixed Progress Stepper */}
+        <FixedStepperContainer
           currentStep={currentStep}
           steps={steps}
           onStepClick={handleStepClick}
           allowClickBack={true}
         />
 
-        {/* Header with Back Button */}
-        <div className="flex items-center gap-4 mb-6">
-          <button
-            type="button"
-            onClick={() => { setCurrentStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-            className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            <span className="material-symbols-outlined text-lg">arrow_back</span>
-          </button>
-          <div className="flex-1">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Review Your Request</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">Please review all the information before submitting your job request.</p>
-          </div>
-        </div>
+        <div className="w-full max-w-4xl mx-auto pt-8 px-4">
+          {/* Form Card Container */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="p-8">
+              {/* Header with Back Button */}
+              <div className="flex items-center gap-4 mb-8">
+                <button
+                  type="button"
+                  onClick={() => { setCurrentStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  <span className="material-symbols-outlined text-lg">arrow_back</span>
+                </button>
+                <div className="flex-1">
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Review Your Request</h1>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">Please review all the information before submitting your job request.</p>
+                </div>
+              </div>
 
-        {/* Review Content Container */}
-        <div className="space-y-6">
-            {/* Personal Details Section */}
-            <div className="bg-background-light dark:bg-background-dark border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+              {/* Review Content Container */}
+              <div className="space-y-6">
+                {/* Personal Details Section */}
+                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <span className="material-symbols-outlined">person</span>
                 Personal Details
@@ -532,8 +550,8 @@ const JobRequestForm = ({ onJobCreated }) => {
               </div>
             </div>
 
-            {/* Job Details Section */}
-            <div className="bg-background-light dark:bg-background-dark border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+                {/* Job Details Section */}
+                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
               <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <span className="material-symbols-outlined">work</span>
                 Job Details
@@ -578,7 +596,7 @@ const JobRequestForm = ({ onJobCreated }) => {
 
             {/* Uploaded Images Section */}
             {uploadedImages.length > 0 && (
-              <div className="bg-background-light dark:bg-background-dark border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-6">
                 <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                   <span className="material-symbols-outlined">photo_library</span>
                   Uploaded Images ({uploadedImages.length})
@@ -599,15 +617,18 @@ const JobRequestForm = ({ onJobCreated }) => {
             )}
 
                 {/* Primary Action Button */}
-            <div className="pt-6">
+                <div className="pt-6">
                   <button
-                type="button"
-                onClick={handleProceedToPayment}
-                className="w-full bg-primary text-black font-bold text-lg py-4 px-6 rounded-lg hover:bg-opacity-80 transition-colors shadow-lg"
+                    type="button"
+                    onClick={handleProceedToPayment}
+                    className="w-full bg-primary text-black font-bold text-lg py-4 px-6 rounded-xl hover:bg-opacity-80 transition-colors shadow-lg"
                   >
-                Proceed to Payment
-              </button>
+                    Proceed to Payment
+                  </button>
+                </div>
+              </div>
             </div>
+          </div>
         </div>
       </div>
     );
@@ -615,70 +636,97 @@ const JobRequestForm = ({ onJobCreated }) => {
 
   if (currentStep === 4) {
     return (
-      <div className="w-full max-w-4xl mx-auto pt-4">
-        {/* Progress Stepper */}
-        <ProgressStepper
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+        {/* Fixed Progress Stepper */}
+        <FixedStepperContainer
           currentStep={currentStep}
           steps={steps}
           onStepClick={handleStepClick}
           allowClickBack={true}
         />
 
-        {/* Header with Back Button */}
-        <div className="flex items-center gap-4 mb-6">
-          <button
-            type="button"
-            onClick={() => { setCurrentStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-            className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
-            <span className="material-symbols-outlined text-lg">arrow_back</span>
-          </button>
-          <div className="flex-1">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Payment</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-1">Complete your payment to submit your job request.</p>
-          </div>
-        </div>
+        <div className="w-full max-w-4xl mx-auto pt-8 px-4">
+          {/* Form Card Container */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div className="p-8">
+              {/* Header with Back Button */}
+              <div className="flex items-center gap-4 mb-8">
+                <button
+                  type="button"
+                  onClick={() => { setCurrentStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  <span className="material-symbols-outlined text-lg">arrow_back</span>
+                </button>
+                <div className="flex-1">
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Payment</h1>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">Complete your payment to submit your job request.</p>
+                </div>
+              </div>
 
-        {/* Payment Content Container */}
-        <div className="space-y-6">
-            {/* Payment Form */}
-            <PaymentForm
-              amount={120} // Default service fee
-              jobId={null} // Will be created after payment
-              onPaymentSuccess={handlePaymentSuccess}
+              {/* Payment Content Container */}
+              <div className="space-y-6">
+                {/* Payment Form */}
+                <PaymentForm
+                  amount={120} // Default service fee
+                  jobId={null} // Will be created after payment
+                  onPaymentSuccess={handlePaymentSuccess}
                 />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
+  // Step 5: Confirmation Screen
+  if (currentStep === 5) {
+    return (
+      <ConfirmationScreen
+        jobData={jobData}
+        paymentResult={paymentResult}
+        onBackToHome={onBackToHome}
+        onViewJob={(jobData, jobId) => {
+          // For now, just log the view job action
+          // In a real app, this would navigate to a job detail page
+          console.log('View job:', jobId, jobData);
+        }}
+      />
+    );
+  }
+
   // Step 2: Job Description Form
   return (
-    <div className="w-full max-w-4xl mx-auto pt-4">
-      {/* Progress Stepper */}
-      <ProgressStepper
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Fixed Progress Stepper */}
+      <FixedStepperContainer
         currentStep={currentStep}
         steps={steps}
         onStepClick={handleStepClick}
         allowClickBack={true}
       />
 
-      {/* Header with Back Button */}
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          type="button"
-          onClick={() => { setCurrentStep(1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-        >
-          <span className="material-symbols-outlined text-lg">arrow_back</span>
-        </button>
-        <div className="flex-1">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">What do you need help with?</h1>
-        </div>
-      </div>
+      <div className="w-full max-w-4xl mx-auto pt-8 px-4">
+        {/* Form Card Container */}
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div className="p-8">
+            {/* Header with Back Button */}
+            <div className="flex items-center gap-4 mb-8">
+              <button
+                type="button"
+                onClick={() => { setCurrentStep(1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <span className="material-symbols-outlined text-lg">arrow_back</span>
+              </button>
+              <div className="flex-1">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">What do you need help with?</h1>
+              </div>
+            </div>
 
-      {/* Job Details Content Container */}
-      <div className="space-y-6">
+            {/* Job Details Content Container */}
+            <div className="space-y-6">
           {/* AI Description Accordion - Commented out */}
       {/* <div className="border border-primary/30 bg-primary/5 dark:bg-primary/10 rounded-lg shadow-sm">
         <button
@@ -734,10 +782,10 @@ const JobRequestForm = ({ onJobCreated }) => {
                     key={service}
                     type="button"
                     onClick={() => updateJobFormData('selectedCategory', service)}
-                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                    className={`px-4 py-2 rounded-xl border transition-colors ${
                       selectedCategory === service
                         ? 'bg-primary text-black border-primary'
-                        : 'border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 hover:bg-primary/10'
+                        : 'border-gray-200 dark:border-gray-700 text-black/80 dark:text-white/80 hover:bg-primary/10'
                     }`}
                       >
                     {service}
@@ -756,10 +804,10 @@ const JobRequestForm = ({ onJobCreated }) => {
                     key={timing}
                     type="button"
                     onClick={() => updateJobFormData('selectedTiming', timing)}
-                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                    className={`px-4 py-2 rounded-xl border transition-colors ${
                       selectedTiming === timing
                         ? 'bg-primary text-black border-primary'
-                        : 'border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 hover:bg-primary/10'
+                        : 'border-gray-200 dark:border-gray-700 text-black/80 dark:text-white/80 hover:bg-primary/10'
                     }`}
                       >
                     {timing}
@@ -773,7 +821,7 @@ const JobRequestForm = ({ onJobCreated }) => {
             {selectedTiming === 'Schedule' && (
               <div className="grid sm:grid-cols-2 gap-6 items-start">
                 {/* Calendar */}
-                <div className="bg-background-light dark:bg-background-dark p-4 rounded-lg border border-black/10 dark:border-white/10">
+                <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-700">
                   <DatePicker
                     selected={selectedDate}
                     onChange={(date) => updateJobFormData('selectedDate', date)}
@@ -788,7 +836,7 @@ const JobRequestForm = ({ onJobCreated }) => {
                 <div className="space-y-4">
                   <label className="text-lg font-bold">Select time</label>
                   <select
-                    className="w-full p-3 rounded-lg border border-black/10 dark:border-white/10 bg-background-light dark:bg-background-dark focus:border-primary focus:ring-primary focus:ring-2"
+                    className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 focus:border-primary focus:ring-primary focus:ring-2"
                     defaultValue={jobFormData.time}
                     onChange={(e) => updateJobFormData('time', e.target.value)}
                     {...register('time')}
@@ -812,10 +860,10 @@ const JobRequestForm = ({ onJobCreated }) => {
                     key={option}
                     type="button"
                     onClick={() => updateJobFormData('selectedMaterials', option)}
-                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                    className={`px-4 py-2 rounded-xl border transition-colors ${
                       selectedMaterials === option
                         ? 'bg-primary text-black border-primary'
-                        : 'border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 hover:bg-primary/10'
+                        : 'border-gray-200 dark:border-gray-700 text-black/80 dark:text-white/80 hover:bg-primary/10'
                     }`}
                       >
                     {option}
@@ -833,10 +881,10 @@ const JobRequestForm = ({ onJobCreated }) => {
                     key={option}
                     type="button"
                     onClick={() => updateJobFormData('selectedSiteVisit', option)}
-                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                    className={`px-4 py-2 rounded-xl border transition-colors ${
                       selectedSiteVisit === option
                         ? 'bg-primary text-black border-primary'
-                        : 'border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 hover:bg-primary/10'
+                        : 'border-gray-200 dark:border-gray-700 text-black/80 dark:text-white/80 hover:bg-primary/10'
                     }`}
                       >
                     {option}
@@ -849,7 +897,7 @@ const JobRequestForm = ({ onJobCreated }) => {
             {/* Image Upload */}
             <div className="space-y-4">
               <h3 className="text-lg font-bold">Upload Images</h3>
-              <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6">
+              <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6">
                     <input
                   type="file"
                   multiple
@@ -897,8 +945,8 @@ const JobRequestForm = ({ onJobCreated }) => {
                 Notes
               </label>
               <textarea
-                className={`w-full p-3 rounded-lg border bg-background-light dark:bg-background-dark focus:border-primary focus:ring-primary focus:ring-2 placeholder:text-black/40 dark:placeholder:text-white/40 ${
-                  jobErrors.notes ? 'border-red-500' : 'border-black/10 dark:border-white/10'
+                className={`w-full p-3 rounded-xl border bg-gray-50 dark:bg-gray-900 focus:border-primary focus:ring-primary focus:ring-2 placeholder:text-gray-500 dark:placeholder:text-gray-400 ${
+                  jobErrors.notes ? 'border-red-500' : 'border-gray-200 dark:border-gray-700'
                 }`}
                 id="notes"
                 placeholder="Describe the issue in detail, e.g., 'Leaky pipe under the kitchen sink, water dripping constantly, started yesterday after using garbage disposal.'"
@@ -911,16 +959,19 @@ const JobRequestForm = ({ onJobCreated }) => {
             </div>
 
                 {/* Primary Action Button */}
-            <div className="pt-6">
+                <div className="pt-6">
                   <button
-                type="button"
-                onClick={handleProceedToReview}
-                className="w-full bg-primary text-black font-bold text-lg py-4 px-6 rounded-lg hover:bg-opacity-80 transition-colors shadow-lg"
+                    type="button"
+                    onClick={handleProceedToReview}
+                    className="w-full bg-primary text-black font-bold text-lg py-4 px-6 rounded-xl hover:bg-opacity-80 transition-colors shadow-lg"
                   >
-                Proceed to Review
-              </button>
+                    Proceed to Review
+                  </button>
+                </div>
+              </form>
             </div>
-          </form>
+          </div>
+        </div>
       </div>
     </div>
   );
