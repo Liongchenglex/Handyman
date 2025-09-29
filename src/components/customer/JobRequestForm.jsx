@@ -194,6 +194,8 @@ const JobRequestForm = ({ onJobCreated }) => {
     if (Object.keys(validationErrors).length === 0) {
       setPersonalData(data);
       setCurrentStep(2);
+      // Scroll to top of the page
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -209,6 +211,8 @@ const JobRequestForm = ({ onJobCreated }) => {
 
     if (Object.keys(validationErrors).length === 0) {
       setCurrentStep(3);
+      // Scroll to top of the page
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -242,6 +246,8 @@ const JobRequestForm = ({ onJobCreated }) => {
 
     setJobData(finalJobData);
     setCurrentStep(4); // Go to payment step
+    // Scroll to top of the page
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Function to handle successful payment
@@ -384,6 +390,8 @@ const JobRequestForm = ({ onJobCreated }) => {
   const handleStepClick = (stepNumber) => {
     if (stepNumber < currentStep) {
       setCurrentStep(stepNumber);
+      // Scroll to top of the page
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
@@ -489,7 +497,7 @@ const JobRequestForm = ({ onJobCreated }) => {
         <div className="flex items-center gap-4 mb-6">
           <button
             type="button"
-            onClick={() => setCurrentStep(2)}
+            onClick={() => { setCurrentStep(2); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             <span className="material-symbols-outlined text-lg">arrow_back</span>
@@ -620,7 +628,7 @@ const JobRequestForm = ({ onJobCreated }) => {
         <div className="flex items-center gap-4 mb-6">
           <button
             type="button"
-            onClick={() => setCurrentStep(3)}
+            onClick={() => { setCurrentStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             <span className="material-symbols-outlined text-lg">arrow_back</span>
@@ -659,7 +667,7 @@ const JobRequestForm = ({ onJobCreated }) => {
       <div className="flex items-center gap-4 mb-6">
         <button
           type="button"
-          onClick={() => setCurrentStep(1)}
+          onClick={() => { setCurrentStep(1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
           className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
         >
           <span className="material-symbols-outlined text-lg">arrow_back</span>
