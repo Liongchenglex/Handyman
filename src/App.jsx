@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 // import { JobProvider } from './context/JobContext';
 import Header from './components/common/Header';
 import Footer from './components/common/Footer';
+import HelpContact from './components/common/HelpContact';
 import HomePage from './pages/HomePage';
 import CustomerJobRequest from './pages/CustomerJobRequest';
 import HandymanAuthPage from './pages/HandymanAuth';
@@ -30,6 +31,8 @@ function AppContent() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/request-job" element={<CustomerJobRequest />} />
+          <Route path="/help" element={<HelpContact />} />
+          <Route path="/contact" element={<HelpContact />} />
           <Route path="/handyman-auth" element={<HandymanAuthPage />} />
           <Route path="/handyman-registration" element={<HandymanRegistrationPage />} />
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />

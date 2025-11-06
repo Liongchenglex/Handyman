@@ -1,22 +1,8 @@
 import React, { useState, useEffect } from 'react';
 // import { sendWhatsAppNotification } from '../../services/whatsapp/notifications';
-// import { validateSingaporeAddress } from '../../services/onemap/addressValidation'; // Future OneMap integration
 
 const JobConfirmation = ({ job, paymentIntent }) => {
   const [notificationSent, setNotificationSent] = useState(false);
-
-  // Format address for display (prepare for OneMap API integration)
-  const formatJobAddress = (job) => {
-    if (!job) return 'Address to be confirmed';
-
-    // Priority: address > location > fallback
-    const address = job.address || job.location;
-    if (!address) return 'Address to be confirmed';
-
-    // Future: OneMap API will provide standardized Singapore addresses
-    // This can be enhanced to show postal code, building name, etc.
-    return address;
-  };
 
   useEffect(() => {
     const sendNotifications = async () => {
@@ -63,13 +49,13 @@ const JobConfirmation = ({ job, paymentIntent }) => {
               We've sent you a WhatsApp message and an in-app notification with the job details. You'll receive updates from handymen shortly.
             </p>
 
-            {/* Action Button
+            Action Button
             <a
               href="/"
               className="w-full inline-block bg-primary text-background-dark font-bold py-3 px-6 rounded-lg hover:bg-primary/90 transition-colors duration-300"
             >
               Back to Home
-            </a> */}
+            </a>
 
             {/* Job Details Summary */}
             <div className="mt-8 text-left">
@@ -83,12 +69,9 @@ const JobConfirmation = ({ job, paymentIntent }) => {
                   <span className="font-medium">{job.serviceType}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                    <span className="material-symbols-outlined text-xs">location_on</span>
-                    Job Address:
-                  </span>
+                  <span className="text-gray-600 dark:text-gray-400">Job Address:</span>
                   <span className="font-medium text-right max-w-[60%]">
-                    {formatJobAddress(job)}
+                    {job.address || job.location || 'Address to be confirmed'}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">

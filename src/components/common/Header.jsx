@@ -19,16 +19,22 @@ const Header = () => {
           {/* Navigation */}
           <div className="flex items-center gap-1 sm:gap-2">
             {/* Help Button */}
-            <button className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+            <Link
+              to="/help"
+              className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
               <span className="material-symbols-outlined text-lg">help</span>
               <span className="hidden md:inline">Help</span>
-            </button>
+            </Link>
 
-            {/* Contact Us Button */}
-            <button className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+            {/* Contact Us Button - Auto-scroll to contact section */}
+            <Link
+              to="/contact#contact"
+              className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
               <span className="material-symbols-outlined text-lg">mail</span>
               <span className="hidden md:inline">Contact</span>
-            </button>
+            </Link>
 
             {/* Handyman Sign In */}
             <Link
