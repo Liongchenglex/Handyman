@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { updateJob } from '../../services/firebase';
 import ExpressInterestButton from './ExpressInterestButton';
 
 /**
@@ -8,13 +10,20 @@ import ExpressInterestButton from './ExpressInterestButton';
  * Displays detailed view of a specific job with full information
  * Follows the established design patterns and styling of the project
  * Accessed via navigation from JobBoard "See Details" button
+ *
+ * Context-aware: Shows "Express Interest" for available jobs or "Mark Complete" for handyman's own jobs
  */
 const JobCard = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const [isMarkingComplete, setIsMarkingComplete] = useState(false);
 
   // Get job data from navigation state
   const job = location.state?.job;
+
+  // Check if this job belongs to the current handyman
+  const isMyJob = job?.handymanId === user?.uid;
 
   // Handle case where no job data is available
   if (!job) {
@@ -45,6 +54,61 @@ const JobCard = () => {
 
   const handleBackToJobs = () => {
     navigate('/handyman-dashboard');
+  };
+
+  /**
+   * Placeholder function for sending WhatsApp notifications
+   * TODO: Implement actual WhatsApp API integration
+   */
+  const sendWhatsAppNotification = async (customerPhone, message) => {
+    console.log('📱 WhatsApp Notification [PLACEHOLDER]:');
+    console.log(`To: ${customerPhone}`);
+    console.log(`Message: ${message}`);
+    // TODO: Replace with actual WhatsApp Business API call
+    // Example: await whatsappService.sendMessage(customerPhone, message);
+  };
+
+  /**
+   * Handle marking job as complete
+   * Updates job status to 'pending_confirmation' and notifies customer
+   */
+  const handleMarkComplete = async () => {
+    if (!window.confirm('Are you sure you want to mark this job as complete? The customer will be notified to confirm completion.')) {
+      return;
+    }
+
+    setIsMarkingComplete(true);
+
+    try {
+      // Update job status to pending confirmation
+      await updateJob(job.id, {
+        status: 'pending_confirmation',
+        completedAt: new Date().toISOString(),
+        completedBy: {
+          uid: user.uid,
+          name: user.displayName || user.email,
+          email: user.email
+        }
+      });
+
+      console.log('Job marked as complete, awaiting customer confirmation');
+
+      // Send WhatsApp notification to customer (placeholder)
+      if (job.customerPhone) {
+        const message = `Hello ${job.customerName}, your handyman has marked the job "${job.serviceType}" as complete. Please review and confirm completion in the app.`;
+        await sendWhatsAppNotification(job.customerPhone, message);
+      }
+
+      alert('Job marked as complete! Customer has been notified and will confirm completion.');
+
+      // Navigate back to dashboard
+      navigate('/handyman-dashboard');
+    } catch (error) {
+      console.error('Error marking job as complete:', error);
+      alert('Failed to mark job as complete. Please try again.');
+    } finally {
+      setIsMarkingComplete(false);
+    }
   };
 
   const formatDate = (date) => {
@@ -246,17 +310,54 @@ const JobCard = () => {
               </div>
             </div>
 
-            {/* Action Button */}
+            {/* Action Button - Context-aware based on job ownership */}
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <ExpressInterestButton
-                job={job}
-                buttonStyle="full-width"
-                onSuccess={() => navigate('/handyman-dashboard')}
-              />
+              {isMyJob ? (
+                // Show Mark Complete button for handyman's own jobs
+                <>
+                  <button
+                    onClick={handleMarkComplete}
+                    disabled={isMarkingComplete || job.status === 'pending_confirmation'}
+                    className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-6 py-4 rounded-xl hover:bg-green-700 transition-colors font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isMarkingComplete ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        Marking Complete...
+                      </>
+                    ) : job.status === 'pending_confirmation' ? (
+                      <>
+                        <span className="material-symbols-outlined">schedule</span>
+                        Awaiting Customer Confirmation
+                      </>
+                    ) : (
+                      <>
+                        <span className="material-symbols-outlined">check_circle</span>
+                        Mark Complete
+                      </>
+                    )}
+                  </button>
 
-              <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
-                Customer will be notified via WhatsApp if you express interest
-              </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
+                    {job.status === 'pending_confirmation'
+                      ? 'Customer has been notified to confirm job completion'
+                      : 'Mark this job as complete to notify the customer'}
+                  </p>
+                </>
+              ) : (
+                // Show Express Interest button for available jobs
+                <>
+                  <ExpressInterestButton
+                    job={job}
+                    buttonStyle="full-width"
+                    onSuccess={() => navigate('/handyman-dashboard')}
+                  />
+
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-2">
+                    Customer will be notified via WhatsApp if you express interest
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>

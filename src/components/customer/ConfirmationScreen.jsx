@@ -117,7 +117,7 @@ const ConfirmationScreen = ({
           {/* Action Buttons */}
           <div className="space-y-4">
             {/* Primary Action - View Job */}
-            <button
+            {/* <button
               onClick={handleViewJob}
               className="w-full bg-primary text-gray-900 font-bold py-4 px-6 rounded-xl hover:bg-primary/90 focus:ring-4 focus:ring-primary/20 transition-all duration-200 shadow-lg"
             >
@@ -125,12 +125,12 @@ const ConfirmationScreen = ({
                 <span className="material-symbols-outlined">visibility</span>
                 View Job Details
               </span>
-            </button>
+            </button> */}
 
             {/* Secondary Action - Back to Home */}
             <button
               onClick={handleBackToHome}
-              className="w-full bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-3 px-6 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 focus:ring-4 focus:ring-gray-300 dark:focus:ring-gray-500 transition-all duration-200"
+              className="w-full bg-primary text-gray-900 font-bold py-4 px-6 rounded-xl hover:bg-primary/90 focus:ring-4 focus:ring-primary/20 transition-all duration-200 shadow-lg"
             >
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">home</span>

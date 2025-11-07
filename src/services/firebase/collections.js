@@ -33,6 +33,7 @@ export const COLLECTIONS = {
 export const JOB_STATUS = {
   PENDING: 'pending',
   IN_PROGRESS: 'in_progress',
+  PENDING_CONFIRMATION: 'pending_confirmation', // Handyman marked as complete, awaiting customer confirmation
   COMPLETED: 'completed',
   CANCELLED: 'cancelled'
 };

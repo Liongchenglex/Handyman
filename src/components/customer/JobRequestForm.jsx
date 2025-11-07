@@ -731,7 +731,12 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 <button
                   type="button"
                   onClick={() => { setCurrentStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                  className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                  disabled={isSubmitting}
+                  className={`flex items-center gap-2 p-2 rounded-lg transition-colors ${
+                    isSubmitting
+                      ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
                 >
                   <span className="material-symbols-outlined text-lg">arrow_back</span>
                 </button>
