@@ -46,8 +46,9 @@ const HandymanDashboard = () => {
   }, [user, isHandyman, currentView]);
 
   const handleJobSelect = (job) => {
-    console.log('Job selected:', job);
-    navigate(`/job-details/${job.id}`);
+    console.log('Job selected after expressing interest:', job);
+    // After expressing interest, switch to My Jobs tab to see the accepted job
+    setCurrentView('my-jobs');
   };
 
   // Show loading state while checking authentication
@@ -204,6 +205,29 @@ const HandymanDashboard = () => {
                   {job.description}
                 </p>
 
+                {/* Job Images Preview */}
+                {job.imageUrls && job.imageUrls.length > 0 && (
+                  <div className="mb-4">
+                    <div className="flex gap-2 overflow-x-auto">
+                      {job.imageUrls.slice(0, 3).map((imageUrl, index) => (
+                        <img
+                          key={index}
+                          src={imageUrl}
+                          alt={`Job preview ${index + 1}`}
+                          className="h-20 w-20 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                        />
+                      ))}
+                      {job.imageUrls.length > 3 && (
+                        <div className="h-20 w-20 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                            +{job.imageUrls.length - 3}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Job Details */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
@@ -281,9 +305,12 @@ const HandymanDashboard = () => {
                       Mark Complete
                     </button>
                   )}
-                  <button className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium">
-                    <span className="material-symbols-outlined text-sm">location_on</span>
-                    Get Directions
+                  <button
+                    onClick={() => navigate(`/job-details/${job.id}`, { state: { job } })}
+                    className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+                  >
+                    <span className="material-symbols-outlined text-sm">description</span>
+                    View Job Details
                   </button>
                 </div>
               </div>

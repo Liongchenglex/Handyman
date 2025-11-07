@@ -30,12 +30,7 @@ const JobBoard = ({
     sortBy: 'newest'
   });
 
-  // Fetch jobs from Firebase on component mount
-  useEffect(() => {
-    loadJobs();
-  }, []);
-
-  // Set up real-time listener for jobs
+  // Set up real-time listener for jobs (automatically syncs with Firebase)
   useEffect(() => {
     const unsubscribe = subscribeToCollection(
       'jobs',
@@ -43,13 +38,13 @@ const JobBoard = ({
       'createdAt',
       'desc',
       (updatedJobs) => {
-        console.log('Jobs updated:', updatedJobs);
+        console.log('Jobs updated from Firebase:', updatedJobs);
         setJobs(updatedJobs);
         setIsLoading(false);
       }
     );
 
-    // Cleanup subscription on unmount
+    // Cleanup subscription on unmount to prevent memory leaks
     return () => unsubscribe();
   }, []);
 
@@ -66,92 +61,7 @@ const JobBoard = ({
     }
   };
 
-  // Mock job data for fallback (can be removed after testing)
-  const mockJobs = [
-    {
-      id: 'JOB-001',
-      customerName: 'Sarah Chen',
-      serviceType: 'Plumbing',
-      description: 'Kitchen sink is leaking from underneath. Water dripping constantly. Need urgent repair.',
-      location: 'Orchard Road, Central',
-      estimatedBudget: 120,
-      preferredTiming: 'Schedule',
-      preferredDate: '2024-01-15',
-      preferredTime: '09:00 AM - 11:00 AM',
-      materials: 'Handyman to buy (surcharge applies)',
-      siteVisit: 'Yes',
-      urgency: 'urgent',
-      postedAt: '2 hours ago',
-      images: 2,
-      status: 'pending'
-    },
-    {
-      id: 'JOB-002',
-      customerName: 'Michael Tan',
-      serviceType: 'Electrical',
-      description: 'Power outlet in bedroom stopped working. Need electrician to check and fix the wiring issue.',
-      location: 'Tampines, East',
-      estimatedBudget: 80,
-      preferredTiming: 'Immediate',
-      materials: 'I will buy',
-      siteVisit: 'No',
-      urgency: 'normal',
-      postedAt: '4 hours ago',
-      images: 1,
-      status: 'pending'
-    },
-    {
-      id: 'JOB-003',
-      customerName: 'Emily Wong',
-      serviceType: 'Carpentry',
-      description: 'Need to install floating shelves in living room. Have all materials ready, just need installation service.',
-      location: 'Jurong West, West',
-      estimatedBudget: 150,
-      preferredTiming: 'Schedule',
-      preferredDate: '2024-01-20',
-      preferredTime: '01:00 PM - 03:00 PM',
-      materials: 'I will buy',
-      siteVisit: 'Yes',
-      urgency: 'normal',
-      postedAt: '6 hours ago',
-      images: 3,
-      status: 'pending'
-    },
-    {
-      id: 'JOB-004',
-      customerName: 'David Lim',
-      serviceType: 'Appliance Repair',
-      description: 'Washing machine making loud noise during spin cycle. Need diagnosis and repair.',
-      location: 'Clementi, West',
-      estimatedBudget: 100,
-      preferredTiming: 'Schedule',
-      preferredDate: '2024-01-18',
-      preferredTime: '11:00 AM - 01:00 PM',
-      materials: 'Handyman to buy (surcharge applies)',
-      siteVisit: 'Yes',
-      urgency: 'normal',
-      postedAt: '1 day ago',
-      images: 0,
-      status: 'pending'
-    },
-    {
-      id: 'JOB-005',
-      customerName: 'Lisa Koh',
-      serviceType: 'Painting',
-      description: 'Touch up paint work in 2-bedroom apartment. Some wall scratches and nail holes need fixing.',
-      location: 'Toa Payoh, Central',
-      estimatedBudget: 200,
-      preferredTiming: 'Schedule',
-      preferredDate: '2024-01-25',
-      preferredTime: '09:00 AM - 11:00 AM',
-      materials: 'Handyman to buy (surcharge applies)',
-      siteVisit: 'Yes',
-      urgency: 'normal',
-      postedAt: '2 days ago',
-      images: 4,
-      status: 'pending'
-    }
-  ];
+  // Note: Mock data removed - using real Firebase data only
 
   // Filter and search options
   const serviceTypes = [
@@ -198,11 +108,8 @@ const JobBoard = ({
     { label: 'Urgent First', value: 'urgent' }
   ];
 
-  // Use real jobs data, fallback to mock if empty (for testing)
-  const jobsData = jobs.length > 0 ? jobs : mockJobs;
-
   // Filter jobs based on search and filters
-  const filteredJobs = jobsData.filter(job => {
+  const filteredJobs = jobs.filter(job => {
     const location = job.location || job.address || '';
     const matchesSearch = job.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          job.serviceType.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -502,6 +409,29 @@ const JobBoard = ({
                   <p className="text-gray-700 dark:text-gray-300 mb-4 line-clamp-2">
                     {job.description}
                   </p>
+
+                  {/* Job Images Preview */}
+                  {job.imageUrls && job.imageUrls.length > 0 && (
+                    <div className="mb-4">
+                      <div className="flex gap-2 overflow-x-auto">
+                        {job.imageUrls.slice(0, 3).map((imageUrl, index) => (
+                          <img
+                            key={index}
+                            src={imageUrl}
+                            alt={`Job preview ${index + 1}`}
+                            className="h-20 w-20 object-cover rounded-lg border border-gray-200 dark:border-gray-600 flex-shrink-0"
+                          />
+                        ))}
+                        {job.imageUrls.length > 3 && (
+                          <div className="h-20 w-20 bg-gray-100 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                              +{job.imageUrls.length - 3}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Job Details */}
                   <div className="space-y-2 mb-4 text-sm">

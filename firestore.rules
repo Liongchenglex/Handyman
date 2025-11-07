@@ -55,17 +55,19 @@ service cloud.firestore {
 
     // Jobs collection
     match /jobs/{jobId} {
-      // Anyone can read jobs (for handymen to browse)
+      // Anyone can read jobs (for handymen to browse) - including anonymous users
       allow read: if isSignedIn();
 
-      // Customers can create jobs
+      // Customers can create jobs (including anonymous users)
       allow create: if isSignedIn() &&
                       request.resource.data.customerId == request.auth.uid;
 
       // Job owner or assigned handyman can update
+      // Handymen can also update to assign themselves (express interest)
       allow update: if isSignedIn() && (
         isOwner(resource.data.customerId) ||
-        (resource.data.handymanId != null && isOwner(resource.data.handymanId))
+        (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
+        (resource.data.handymanId == null && request.resource.data.handymanId == request.auth.uid)
       );
 
       // Only job owner can delete (within limits)

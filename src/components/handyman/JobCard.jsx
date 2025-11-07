@@ -135,6 +135,37 @@ const JobCard = () => {
               </p>
             </div>
 
+            {/* Job Images Gallery */}
+            {job.imageUrls && job.imageUrls.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-3">
+                  Job Images
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {job.imageUrls.map((imageUrl, index) => (
+                    <div
+                      key={index}
+                      className="relative group overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 aspect-square"
+                    >
+                      <img
+                        src={imageUrl}
+                        alt={`Job image ${index + 1}`}
+                        className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                      />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
+                        <button
+                          onClick={() => window.open(imageUrl, '_blank')}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity bg-white text-gray-900 px-4 py-2 rounded-lg font-medium"
+                        >
+                          View Full Size
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Job Details Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               {/* Location & Timing */}

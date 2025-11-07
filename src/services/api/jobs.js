@@ -80,6 +80,7 @@ export const createJob = async (jobData) => {
       siteVisit: jobData.siteVisit,
       estimatedBudget: jobData.estimatedBudget || 120,
       status: 'pending',
+      handymanId: null, // Initialize as null, will be set when handyman expresses interest
       imageUrls: imageUrls,
       paymentStatus: jobData.paymentResult ? 'completed' : 'pending',
       paymentIntentId: jobData.paymentResult?.paymentIntent?.id || null
