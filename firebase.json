@@ -6,12 +6,6 @@
   "storage": {
     "rules": "storage.rules"
   },
-  "functions": {
-    "predeploy": [
-      "npm --prefix functions run build"
-    ],
-    "source": "functions"
-  },
   "hosting": {
     "public": "build",
     "ignore": [

@@ -185,7 +185,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     'Electrical',
     'Carpentry',
     'Appliance Repair',
-    'Painting'
+    'Painting',
+    'General handyman'
   ];
 
   const timingOptions = ['Immediate', 'Schedule'];
