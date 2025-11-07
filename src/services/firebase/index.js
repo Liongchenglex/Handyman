@@ -13,7 +13,7 @@
  */
 
 // Core Firebase instances
-export { db, auth } from './config';
+export { db, auth, storage } from './config';
 
 // Authentication functions
 export {
@@ -96,69 +96,131 @@ export {
   listFiles
 } from './storage';
 
+// Import for default export
+import { db as database, auth as authentication, storage as storageInstance } from './config';
+import {
+  COLLECTIONS as COLLECTIONS_CONST,
+  JOB_STATUS as JOB_STATUS_CONST,
+  SERVICE_TYPES as SERVICE_TYPES_CONST,
+  createUser as createUserFunc,
+  getUser as getUserFunc,
+  updateUser as updateUserFunc,
+  createJob as createJobFunc,
+  getJob as getJobFunc,
+  updateJob as updateJobFunc,
+  getJobsByCustomer as getJobsByCustomerFunc,
+  getJobsByHandyman as getJobsByHandymanFunc,
+  getAvailableJobs as getAvailableJobsFunc,
+  subscribeToJob as subscribeToJobFunc,
+  subscribeToCustomerJobs as subscribeToCustomerJobsFunc,
+  createHandyman as createHandymanFunc,
+  getHandyman as getHandymanFunc,
+  updateHandyman as updateHandymanFunc,
+  getVerifiedHandymen as getVerifiedHandymenFunc,
+  subscribeToHandyman as subscribeToHandymanFunc,
+  createJobApplication as createJobApplicationFunc,
+  getJobApplications as getJobApplicationsFunc,
+  getHandymanApplications as getHandymanApplicationsFunc,
+  updateJobApplication as updateJobApplicationFunc,
+  deleteJobApplication as deleteJobApplicationFunc,
+  createReview as createReviewFunc,
+  getHandymanReviews as getHandymanReviewsFunc,
+  createNotification as createNotificationFunc,
+  getUserNotifications as getUserNotificationsFunc,
+  markNotificationAsRead as markNotificationAsReadFunc,
+  markAllNotificationsAsRead as markAllNotificationsAsReadFunc,
+  subscribeToNotifications as subscribeToNotificationsFunc,
+  createPayment as createPaymentFunc,
+  getPayment as getPaymentFunc,
+  getCustomerPayments as getCustomerPaymentsFunc
+} from './collections';
+import {
+  createAnonymousUser as createAnonymousUserFunc,
+  signOutUser as signOutUserFunc,
+  onAuthStateChange as onAuthStateChangeFunc,
+  getCurrentUser as getCurrentUserFunc
+} from './auth';
+import {
+  createDocument as createDocumentFunc,
+  getDocument as getDocumentFunc,
+  updateDocument as updateDocumentFunc,
+  deleteDocument as deleteDocumentFunc,
+  queryDocuments as queryDocumentsFunc,
+  subscribeToDocument as subscribeToDocumentFunc,
+  subscribeToCollection as subscribeToCollectionFunc
+} from './firestore';
+import {
+  uploadFile as uploadFileFunc,
+  uploadImage as uploadImageFunc,
+  deleteFile as deleteFileFunc,
+  getFileURL as getFileURLFunc,
+  listFiles as listFilesFunc
+} from './storage';
+
 // Default export with all services
 export default {
   // Core
-  db,
-  auth,
+  db: database,
+  auth: authentication,
+  storage: storageInstance,
 
   // Constants
-  COLLECTIONS,
-  JOB_STATUS,
-  SERVICE_TYPES,
+  COLLECTIONS: COLLECTIONS_CONST,
+  JOB_STATUS: JOB_STATUS_CONST,
+  SERVICE_TYPES: SERVICE_TYPES_CONST,
 
   // Auth
-  createAnonymousUser,
-  signOutUser,
-  onAuthStateChange,
-  getCurrentUser,
+  createAnonymousUser: createAnonymousUserFunc,
+  signOutUser: signOutUserFunc,
+  onAuthStateChange: onAuthStateChangeFunc,
+  getCurrentUser: getCurrentUserFunc,
 
   // Firestore
-  createDocument,
-  getDocument,
-  updateDocument,
-  deleteDocument,
-  queryDocuments,
-  subscribeToDocument,
-  subscribeToCollection,
+  createDocument: createDocumentFunc,
+  getDocument: getDocumentFunc,
+  updateDocument: updateDocumentFunc,
+  deleteDocument: deleteDocumentFunc,
+  queryDocuments: queryDocumentsFunc,
+  subscribeToDocument: subscribeToDocumentFunc,
+  subscribeToCollection: subscribeToCollectionFunc,
 
   // Collections
-  createUser,
-  getUser,
-  updateUser,
-  createJob,
-  getJob,
-  updateJob,
-  getJobsByCustomer,
-  getJobsByHandyman,
-  getAvailableJobs,
-  subscribeToJob,
-  subscribeToCustomerJobs,
-  createHandyman,
-  getHandyman,
-  updateHandyman,
-  getVerifiedHandymen,
-  subscribeToHandyman,
-  createJobApplication,
-  getJobApplications,
-  getHandymanApplications,
-  updateJobApplication,
-  deleteJobApplication,
-  createReview,
-  getHandymanReviews,
-  createNotification,
-  getUserNotifications,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  subscribeToNotifications,
-  createPayment,
-  getPayment,
-  getCustomerPayments,
+  createUser: createUserFunc,
+  getUser: getUserFunc,
+  updateUser: updateUserFunc,
+  createJob: createJobFunc,
+  getJob: getJobFunc,
+  updateJob: updateJobFunc,
+  getJobsByCustomer: getJobsByCustomerFunc,
+  getJobsByHandyman: getJobsByHandymanFunc,
+  getAvailableJobs: getAvailableJobsFunc,
+  subscribeToJob: subscribeToJobFunc,
+  subscribeToCustomerJobs: subscribeToCustomerJobsFunc,
+  createHandyman: createHandymanFunc,
+  getHandyman: getHandymanFunc,
+  updateHandyman: updateHandymanFunc,
+  getVerifiedHandymen: getVerifiedHandymenFunc,
+  subscribeToHandyman: subscribeToHandymanFunc,
+  createJobApplication: createJobApplicationFunc,
+  getJobApplications: getJobApplicationsFunc,
+  getHandymanApplications: getHandymanApplicationsFunc,
+  updateJobApplication: updateJobApplicationFunc,
+  deleteJobApplication: deleteJobApplicationFunc,
+  createReview: createReviewFunc,
+  getHandymanReviews: getHandymanReviewsFunc,
+  createNotification: createNotificationFunc,
+  getUserNotifications: getUserNotificationsFunc,
+  markNotificationAsRead: markNotificationAsReadFunc,
+  markAllNotificationsAsRead: markAllNotificationsAsReadFunc,
+  subscribeToNotifications: subscribeToNotificationsFunc,
+  createPayment: createPaymentFunc,
+  getPayment: getPaymentFunc,
+  getCustomerPayments: getCustomerPaymentsFunc,
 
   // Storage
-  uploadFile,
-  uploadImage,
-  deleteFile,
-  getFileURL,
-  listFiles
+  uploadFile: uploadFileFunc,
+  uploadImage: uploadImageFunc,
+  deleteFile: deleteFileFunc,
+  getFileURL: getFileURLFunc,
+  listFiles: listFilesFunc
 };
