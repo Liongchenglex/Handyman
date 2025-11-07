@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { getJobsByHandyman } from '../services/firebase';
+import HandymanHeader from '../components/handyman/HandymanHeader';
 import JobBoard from '../components/handyman/JobBoard';
 
 /**
@@ -7,40 +10,48 @@ import JobBoard from '../components/handyman/JobBoard';
  *
  * Main dashboard for authenticated handymen
  * Shows job board and handyman profile/stats
+ * Uses Firebase AuthContext for user data
  */
 const HandymanDashboard = () => {
   const navigate = useNavigate();
-  const [handymanData, setHandymanData] = useState(null);
+  const { user, userProfile, isHandyman, loading } = useAuth();
   const [currentView, setCurrentView] = useState('jobs'); // 'jobs', 'my-jobs', 'profile'
+  const [myJobs, setMyJobs] = useState([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
 
+  // Redirect if not authenticated or not a handyman
   useEffect(() => {
-    // Check if handyman is authenticated
-    const userData = localStorage.getItem('handymanUser');
-    if (!userData) {
+    if (!loading && (!user || !isHandyman)) {
       navigate('/handyman-auth');
-      return;
     }
+  }, [user, isHandyman, loading, navigate]);
 
-    setHandymanData(JSON.parse(userData));
-  }, [navigate]);
+  // Fetch handyman's jobs when viewing My Jobs
+  useEffect(() => {
+    const fetchMyJobs = async () => {
+      if (user && isHandyman && currentView === 'my-jobs') {
+        setLoadingJobs(true);
+        try {
+          const jobs = await getJobsByHandyman(user.uid);
+          setMyJobs(jobs);
+        } catch (error) {
+          console.error('Error fetching my jobs:', error);
+        } finally {
+          setLoadingJobs(false);
+        }
+      }
+    };
 
-  const handleLogout = () => {
-    localStorage.removeItem('handymanUser');
-    localStorage.removeItem('tempHandymanUser');
-    navigate('/');
-  };
+    fetchMyJobs();
+  }, [user, isHandyman, currentView]);
 
   const handleJobSelect = (job) => {
     console.log('Job selected:', job);
-    // In a real app, this would navigate to job details or start application process
-    alert(`You've expressed interest in job ${job.id}. The customer will be notified via WhatsApp.`);
+    navigate(`/job-details/${job.id}`);
   };
 
-  const handleBackToHome = () => {
-    navigate('/');
-  };
-
-  if (!handymanData) {
+  // Show loading state while checking authentication
+  if (loading || !userProfile) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <div className="text-center">
@@ -51,127 +62,20 @@ const HandymanDashboard = () => {
     );
   }
 
-  // Dashboard Navigation
-  const DashboardNav = () => (
-    <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo/Brand */}
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-primary">HandySG</h1>
-            <span className="text-gray-400">|</span>
-            <span className="text-gray-600 dark:text-gray-400">Handyman Dashboard</span>
-          </div>
 
-          {/* Navigation Tabs */}
-          <div className="flex items-center gap-6">
-            <button
-              onClick={() => setCurrentView('jobs')}
-              className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                currentView === 'jobs'
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-              }`}
-            >
-              Available Jobs
-            </button>
-            <button
-              onClick={() => setCurrentView('my-jobs')}
-              className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                currentView === 'my-jobs'
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-              }`}
-            >
-              My Jobs
-            </button>
-            <button
-              onClick={() => setCurrentView('profile')}
-              className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-                currentView === 'profile'
-                  ? 'bg-primary/10 text-primary'
-                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-              }`}
-            >
-              My Profile
-            </button>
-          </div>
-
-          {/* User Menu */}
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-sm font-medium text-gray-900 dark:text-white">
-                {handymanData.fullName || handymanData.email}
-              </p>
-              <p className="text-xs text-gray-600 dark:text-gray-400">
-                {handymanData.serviceTypes?.join(', ') || 'Handyman'}
-              </p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-            >
-              <span className="material-symbols-outlined text-lg">logout</span>
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  // My Jobs View - Shows jobs accepted by this handyman
+  // My Jobs View - Shows jobs assigned to this handyman from Firebase
   const MyJobsView = () => {
-    // Mock accepted jobs data (replace with API call)
-    const acceptedJobs = [
-      {
-        id: 'JOB-001',
-        customerName: 'Sarah Chen',
-        customerPhone: '+65 9123 4567',
-        serviceType: 'Plumbing',
-        description: 'Kitchen sink is leaking from underneath. Water dripping constantly. Need urgent repair.',
-        location: 'Orchard Road, Central',
-        estimatedBudget: 120,
-        preferredTiming: 'Schedule',
-        preferredDate: '2024-01-15',
-        preferredTime: '09:00 AM - 11:00 AM',
-        materials: 'Handyman to buy (surcharge applies)',
-        siteVisit: 'Yes',
-        urgency: 'urgent',
-        status: 'accepted',
-        acceptedAt: '1 hour ago',
-        scheduledDate: '2024-01-15',
-        scheduledTime: '09:00 AM - 11:00 AM'
-      },
-      {
-        id: 'JOB-003',
-        customerName: 'Emily Wong',
-        customerPhone: '+65 8765 4321',
-        serviceType: 'Carpentry',
-        description: 'Need to install floating shelves in living room. Have all materials ready, just need installation service.',
-        location: 'Jurong West, West',
-        estimatedBudget: 150,
-        preferredTiming: 'Schedule',
-        preferredDate: '2024-01-20',
-        preferredTime: '01:00 PM - 03:00 PM',
-        materials: 'I will buy',
-        siteVisit: 'Yes',
-        urgency: 'normal',
-        status: 'in_progress',
-        acceptedAt: '2 days ago',
-        scheduledDate: '2024-01-20',
-        scheduledTime: '01:00 PM - 03:00 PM'
-      }
-    ];
 
     const getStatusColor = (status) => {
       switch (status) {
-        case 'accepted':
-          return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+        case 'pending':
+          return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
         case 'in_progress':
-          return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+          return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
         case 'completed':
-          return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+          return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+        case 'cancelled':
+          return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
         default:
           return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
       }
@@ -179,54 +83,77 @@ const HandymanDashboard = () => {
 
     const getStatusText = (status) => {
       switch (status) {
-        case 'accepted':
-          return 'Accepted';
+        case 'pending':
+          return 'Pending';
         case 'in_progress':
           return 'In Progress';
         case 'completed':
           return 'Completed';
+        case 'cancelled':
+          return 'Cancelled';
         default:
           return 'Unknown';
       }
     };
 
-    const handleMarkInProgress = (jobId) => {
-      console.log('Marking job as in progress:', jobId);
-      // In a real app, this would update the job status via API
-      alert('Job marked as in progress. Customer will be notified via WhatsApp.');
+    const handleMarkInProgress = async (jobId) => {
+      try {
+        const { updateJob } = await import('../services/firebase');
+        await updateJob(jobId, { status: 'in_progress' });
+        // Refresh jobs list
+        const jobs = await getJobsByHandyman(user.uid);
+        setMyJobs(jobs);
+        alert('Job marked as in progress!');
+      } catch (error) {
+        console.error('Error updating job:', error);
+        alert('Failed to update job status. Please try again.');
+      }
     };
 
-    const handleMarkCompleted = (jobId) => {
-      console.log('Marking job as completed:', jobId);
-      // In a real app, this would update the job status via API
-      alert('Job marked as completed. Customer will be notified and payment will be processed.');
+    const handleMarkCompleted = async (jobId) => {
+      try {
+        const { updateJob } = await import('../services/firebase');
+        await updateJob(jobId, { status: 'completed' });
+        // Refresh jobs list
+        const jobs = await getJobsByHandyman(user.uid);
+        setMyJobs(jobs);
+        alert('Job marked as completed!');
+      } catch (error) {
+        console.error('Error updating job:', error);
+        alert('Failed to update job status. Please try again.');
+      }
     };
 
     return (
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-            My Jobs ({acceptedJobs.length})
-          </h1>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+            My Jobs ({myJobs.length})
+          </h2>
           <p className="text-gray-600 dark:text-gray-400">
-            Jobs you have accepted and are working on
+            Jobs assigned to you
           </p>
         </div>
 
-        {acceptedJobs.length === 0 ? (
+        {loadingJobs ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-gray-600 dark:text-gray-400">Loading your jobs...</p>
+          </div>
+        ) : myJobs.length === 0 ? (
           <div className="text-center py-12">
             <div className="bg-gray-100 dark:bg-gray-800 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-4">
               <span className="material-symbols-outlined text-gray-400 text-2xl">work</span>
             </div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-              No accepted jobs
+              No jobs yet
             </h3>
             <p className="text-gray-600 dark:text-gray-400 mb-6">
-              You haven't accepted any jobs yet. Check the Available Jobs tab to find work.
+              You haven't been assigned any jobs yet. Check the Available Jobs tab to find work.
             </p>
             <button
               onClick={() => setCurrentView('jobs')}
-              className="inline-flex items-center gap-2 bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-medium"
+              className="inline-flex items-center gap-2 bg-primary text-gray-900 px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-medium"
             >
               <span className="material-symbols-outlined">search</span>
               Browse Available Jobs
@@ -234,7 +161,7 @@ const HandymanDashboard = () => {
           </div>
         ) : (
           <div className="space-y-6">
-            {acceptedJobs.map((job) => (
+            {myJobs.map((job) => (
               <div
                 key={job.id}
                 className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
@@ -367,121 +294,164 @@ const HandymanDashboard = () => {
     );
   };
 
-  // Profile View
-  const ProfileView = () => (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-4">
-            <span className="material-symbols-outlined text-primary text-2xl">person</span>
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {handymanData.fullName || 'Handyman Profile'}
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">
-              Registered {handymanData.registeredAt ? new Date(handymanData.registeredAt).toLocaleDateString() : 'Recently'}
-            </p>
-          </div>
-        </div>
+  // Profile View - Using Firebase data from AuthContext
+  const ProfileView = () => {
+    const handymanProfile = userProfile?.handyman || {};
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Contact Information */}
-          <div>
-            <h3 className="text-lg font-bold mb-4">Contact Information</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Email</label>
-                <p className="font-medium">{handymanData.email}</p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Phone</label>
-                <p className="font-medium">{handymanData.phone || 'Not provided'}</p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Address</label>
-                <p className="font-medium">{handymanData.address || 'Not provided'}</p>
-              </div>
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8">
+          <div className="flex items-center gap-4 mb-8">
+            <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-4">
+              <span className="material-symbols-outlined text-primary text-2xl">engineering</span>
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                {userProfile.name || user.displayName || 'Handyman Profile'}
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400">
+                {user.email}
+              </p>
             </div>
           </div>
 
-          {/* Professional Information */}
-          <div>
-            <h3 className="text-lg font-bold mb-4">Professional Information</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Service Types</label>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {handymanData.serviceTypes?.map(service => (
-                    <span
-                      key={service}
-                      className="px-2 py-1 bg-primary/10 text-primary rounded-lg text-sm"
-                    >
-                      {service}
-                    </span>
-                  )) || <p className="font-medium">Not specified</p>}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Contact Information */}
+            <div>
+              <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">
+                Contact Information
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Email</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {userProfile.email || user.email}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Phone</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {userProfile.phone || handymanProfile.phone || 'Not provided'}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Email Verified</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {user.emailVerified ? (
+                      <span className="text-green-600">✓ Verified</span>
+                    ) : (
+                      <span className="text-yellow-600">⚠ Not verified</span>
+                    )}
+                  </p>
                 </div>
               </div>
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Experience Level</label>
-                <p className="font-medium">{handymanData.experienceLevel || 'Not specified'}</p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Hourly Rate</label>
-                <p className="font-medium">
-                  {handymanData.hourlyRate ? `$${handymanData.hourlyRate}/hour` : 'Not specified'}
-                </p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600 dark:text-gray-400">Service Areas</label>
-                <p className="font-medium">
-                  {handymanData.serviceAreas?.join(', ') || 'Not specified'}
-                </p>
+            </div>
+
+            {/* Professional Information */}
+            <div>
+              <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">
+                Professional Information
+              </h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Service Types</label>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {handymanProfile.serviceTypes && handymanProfile.serviceTypes.length > 0 ? (
+                      handymanProfile.serviceTypes.map(service => (
+                        <span
+                          key={service}
+                          className="px-2 py-1 bg-primary/10 text-primary rounded-lg text-sm font-medium"
+                        >
+                          {service}
+                        </span>
+                      ))
+                    ) : (
+                      <p className="font-medium text-gray-500">Not specified</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Experience Level</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {handymanProfile.experience || 'Not specified'}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Verification Status</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {handymanProfile.verified ? (
+                      <span className="text-green-600">✓ Verified Handyman</span>
+                    ) : (
+                      <span className="text-yellow-600">⚠ Pending Verification</span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600 dark:text-gray-400">Availability</label>
+                  <p className="font-medium text-gray-900 dark:text-white">
+                    {handymanProfile.isAvailable ? (
+                      <span className="text-green-600">✓ Available</span>
+                    ) : (
+                      <span className="text-red-600">✗ Not Available</span>
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Description */}
-        {handymanData.description && (
-          <div className="mt-8">
-            <h3 className="text-lg font-bold mb-4">About Me</h3>
-            <p className="text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
-              {handymanData.description}
-            </p>
-          </div>
-        )}
+          {/* Bio */}
+          {handymanProfile.bio && (
+            <div className="mt-8">
+              <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">About Me</h3>
+              <p className="text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-900 p-4 rounded-lg">
+                {handymanProfile.bio}
+              </p>
+            </div>
+          )}
 
-        {/* Stats */}
-        <div className="mt-8 grid grid-cols-3 gap-4">
-          <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
-            <div className="text-2xl font-bold text-primary">0</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Jobs Completed</div>
-          </div>
-          <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
-            <div className="text-2xl font-bold text-primary">0</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Active Applications</div>
-          </div>
-          <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
-            <div className="text-2xl font-bold text-primary">5.0</div>
-            <div className="text-sm text-gray-600 dark:text-gray-400">Average Rating</div>
+          {/* Stats */}
+          <div className="mt-8 grid grid-cols-3 gap-4">
+            <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="text-2xl font-bold text-primary">
+                {handymanProfile.totalJobs || 0}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Jobs Completed</div>
+            </div>
+            <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="text-2xl font-bold text-primary">
+                {myJobs.filter(j => j.status === 'in_progress').length}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Active Jobs</div>
+            </div>
+            <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
+              <div className="text-2xl font-bold text-primary">
+                {handymanProfile.rating || 0}
+              </div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Average Rating</div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <DashboardNav />
+      <HandymanHeader
+        currentView={currentView}
+        onViewChange={setCurrentView}
+      />
 
-      {currentView === 'jobs' && (
-        <JobBoard
-          onJobSelect={handleJobSelect}
-        />
-      )}
-      {currentView === 'my-jobs' && <MyJobsView />}
-      {currentView === 'profile' && <ProfileView />}
+      <main>
+        {currentView === 'jobs' && (
+          <JobBoard
+            onJobSelect={handleJobSelect}
+          />
+        )}
+        {currentView === 'my-jobs' && <MyJobsView />}
+        {currentView === 'profile' && <ProfileView />}
+      </main>
     </div>
   );
 };

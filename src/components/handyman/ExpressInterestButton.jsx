@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
 
 /**
@@ -21,6 +23,7 @@ const ExpressInterestButton = ({
   onSuccess
 }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
@@ -28,15 +31,28 @@ const ExpressInterestButton = ({
     setShowConfirmModal(true);
   };
 
-  const handleConfirmInterest = () => {
+  const handleConfirmInterest = async () => {
     setIsLoading(true);
     setShowConfirmModal(false);
 
-    // Simulate API call
-    setTimeout(() => {
-      console.log('Expressing interest in job:', job);
-      alert(`Interest expressed in job ${job.id}. Customer will be notified via WhatsApp!`);
-      setIsLoading(false);
+    try {
+      // Update job in Firebase to link with handyman
+      // NOTE: Current behavior - status changes to 'in_progress' and job is assigned to handyman
+      // FUTURE CONSIDERATION: You may want to change this to 'accepted' status or create a separate
+      // 'applications' collection to allow multiple handymen to express interest before customer selects one
+      await updateJob(job.id, {
+        handymanId: user.uid,
+        status: 'in_progress', // Job is now assigned to this handyman
+        acceptedAt: new Date().toISOString(),
+        acceptedBy: {
+          uid: user.uid,
+          name: user.displayName || user.email,
+          email: user.email
+        }
+      });
+
+      console.log('Successfully expressed interest in job:', job.id);
+      alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
 
       // Execute callbacks
       if (onJobSelect) {
@@ -45,7 +61,13 @@ const ExpressInterestButton = ({
       if (onSuccess) {
         onSuccess();
       }
-    }, 1500);
+
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error expressing interest:', error);
+      alert('Failed to express interest. Please try again.');
+      setIsLoading(false);
+    }
   };
 
   // Button style variants

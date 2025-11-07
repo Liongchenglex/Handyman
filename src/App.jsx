@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 // import { QueryClient, QueryClientProvider } from 'react-query';
-// import { AuthProvider } from './context/AuthContext';
+import { AuthProvider } from './context/AuthContext';
 // import { JobProvider } from './context/JobContext';
 import Header from './components/common/Header';
 import Footer from './components/common/Footer';
@@ -15,9 +15,6 @@ import JobCard from './components/handyman/JobCard';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
 // import './styles/globals.css';
-
-// Temporary: Test auth setup
-import './testAuthSetup';
 
 // const queryClient = new QueryClient();
 
@@ -52,13 +49,13 @@ function AppContent() {
 function App() {
   return (
     // <QueryClientProvider client={queryClient}>
-      // <AuthProvider>
-        // <JobProvider>
+      <AuthProvider>
+        {/* <JobProvider> */}
           <Router>
             <AppContent />
           </Router>
-        // </JobProvider>
-      // </AuthProvider>
+        {/* </JobProvider> */}
+      </AuthProvider>
     // </QueryClientProvider>
   );
 }

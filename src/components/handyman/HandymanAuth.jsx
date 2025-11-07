@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { signInHandyman } from '../../services/firebase';
 
 /**
  * HandymanAuth Component
@@ -79,34 +80,38 @@ const HandymanAuth = ({
     if (Object.keys(validationErrors).length === 0) {
       try {
         if (authMode === 'login') {
-          // Simulate login API call
-          setTimeout(() => {
-            console.log('Login successful:', formData.email);
-            if (onLoginSuccess) {
-              onLoginSuccess({
-                email: formData.email,
-                handymanId: 'hm_' + Date.now(),
-                isAuthenticated: true
-              });
-            }
-            setIsSubmitting(false);
-          }, 1500);
+          // Firebase login
+          const { user, profile } = await signInHandyman(formData.email, formData.password);
+          console.log('Login successful:', user.email);
+
+          if (onLoginSuccess) {
+            onLoginSuccess({
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName,
+              role: profile.role,
+              isAuthenticated: true
+            });
+          }
         } else {
-          // Simulate signup API call
-          setTimeout(() => {
-            console.log('Signup successful:', formData.email);
-            if (onSignupSuccess) {
-              onSignupSuccess({
-                email: formData.email,
-                tempUserId: 'temp_' + Date.now()
-              });
-            }
-            setIsSubmitting(false);
-          }, 1500);
+          // For signup, we just pass credentials to the registration page
+          // The full registration happens in HandymanRegistration component
+          console.log('Proceeding to registration:', formData.email);
+
+          if (onSignupSuccess) {
+            onSignupSuccess({
+              email: formData.email,
+              password: formData.password
+            });
+          }
         }
+        setIsSubmitting(false);
       } catch (error) {
         console.error('Auth error:', error);
-        setErrors({ general: 'Authentication failed. Please try again.' });
+        // Display user-friendly error message
+        setErrors({
+          general: error.message || 'Authentication failed. Please try again.'
+        });
         setIsSubmitting(false);
       }
     } else {

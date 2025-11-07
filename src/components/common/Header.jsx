@@ -1,8 +1,22 @@
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const Header = () => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, userProfile, isAuthenticated, isHandyman, logout } = useAuth();
+  const [showUserMenu, setShowUserMenu] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setShowUserMenu(false);
+      navigate('/');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700">
@@ -36,14 +50,77 @@ const Header = () => {
               <span className="hidden md:inline">Contact</span>
             </Link>
 
-            {/* Handyman Sign In */}
-            <Link
-              to="/handyman-dashboard"
-              className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium bg-primary/10 dark:bg-primary/20 text-primary hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors rounded-lg"
-            >
-              <span className="material-symbols-outlined text-lg">engineering</span>
-              <span className="hidden md:inline">Portal</span>
-            </Link>
+            {/* Authenticated User Menu */}
+            {isAuthenticated && userProfile ? (
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium bg-primary/10 dark:bg-primary/20 text-primary hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors rounded-lg"
+                >
+                  <span className="material-symbols-outlined text-lg">
+                    {isHandyman ? 'engineering' : 'person'}
+                  </span>
+                  <span className="hidden md:inline">{userProfile.name || user.email}</span>
+                  <span className="material-symbols-outlined text-sm">expand_more</span>
+                </button>
+
+                {/* Dropdown Menu */}
+                {showUserMenu && (
+                  <>
+                    {/* Backdrop to close menu */}
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => setShowUserMenu(false)}
+                    />
+                    {/* Menu */}
+                    <div className="absolute right-0 mt-2 w-56 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 py-2 z-20">
+                      {/* User Info */}
+                      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">
+                          {userProfile.name}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                          {user.email}
+                        </p>
+                        <p className="text-xs text-primary mt-1 capitalize">
+                          {userProfile.role}
+                        </p>
+                      </div>
+
+                      {/* Menu Items */}
+                      <div className="py-1">
+                        {isHandyman && (
+                          <Link
+                            to="/handyman-dashboard"
+                            onClick={() => setShowUserMenu(false)}
+                            className="flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          >
+                            <span className="material-symbols-outlined text-lg">dashboard</span>
+                            Dashboard
+                          </Link>
+                        )}
+                        <button
+                          onClick={handleLogout}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                        >
+                          <span className="material-symbols-outlined text-lg">logout</span>
+                          Sign Out
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              /* Handyman Sign In */
+              <Link
+                to="/handyman-auth"
+                className="flex items-center gap-1 px-2 sm:px-3 py-2 text-sm font-medium bg-primary/10 dark:bg-primary/20 text-primary hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors rounded-lg"
+              >
+                <span className="material-symbols-outlined text-lg">engineering</span>
+                <span className="hidden md:inline">Portal</span>
+              </Link>
+            )}
           </div>
         </div>
       </div>

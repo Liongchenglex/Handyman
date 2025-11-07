@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChange, createAnonymousUser, signOutUser } from '../services/firebase/auth';
+import {
+  onAuthStateChange,
+  createAnonymousUser,
+  signOutUser
+} from '../services/firebase/auth';
+import { getUser, getHandyman } from '../services/firebase/collections';
 
 const AuthContext = createContext();
 
@@ -13,11 +18,41 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChange((user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        // User is signed in, fetch their profile
+        try {
+          const profile = await getUser(firebaseUser.uid);
+
+          // If user is a handyman, also fetch handyman profile
+          let handymanProfile = null;
+          if (profile?.role === 'handyman') {
+            try {
+              handymanProfile = await getHandyman(firebaseUser.uid);
+            } catch (error) {
+              console.error('Error fetching handyman profile:', error);
+            }
+          }
+
+          setUser(firebaseUser);
+          setUserProfile({
+            ...profile,
+            handyman: handymanProfile
+          });
+        } catch (error) {
+          console.error('Error fetching user profile:', error);
+          setUser(firebaseUser);
+          setUserProfile(null);
+        }
+      } else {
+        // User is signed out
+        setUser(null);
+        setUserProfile(null);
+      }
       setLoading(false);
     });
 
@@ -45,9 +80,13 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    userProfile,
     login,
     logout,
-    loading
+    loading,
+    isAuthenticated: !!user,
+    isHandyman: userProfile?.role === 'handyman',
+    isCustomer: userProfile?.role === 'customer'
   };
 
   return (

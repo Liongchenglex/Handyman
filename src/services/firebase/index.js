@@ -17,10 +17,19 @@ export { db, auth, storage } from './config';
 
 // Authentication functions
 export {
+  // Handyman auth
+  registerHandyman,
+  signInHandyman,
+  // Customer auth
   createAnonymousUser,
+  // Common auth
   signOutUser,
   onAuthStateChange,
-  getCurrentUser
+  getCurrentUser,
+  isAuthenticated,
+  getCurrentUserRole,
+  // Password management
+  resetPassword
 } from './auth';
 
 // Firestore generic operations
@@ -99,6 +108,17 @@ export {
 // Import for default export
 import { db as database, auth as authentication, storage as storageInstance } from './config';
 import {
+  registerHandyman as registerHandymanFunc,
+  signInHandyman as signInHandymanFunc,
+  createAnonymousUser as createAnonymousUserFunc,
+  signOutUser as signOutUserFunc,
+  onAuthStateChange as onAuthStateChangeFunc,
+  getCurrentUser as getCurrentUserFunc,
+  isAuthenticated as isAuthenticatedFunc,
+  getCurrentUserRole as getCurrentUserRoleFunc,
+  resetPassword as resetPasswordFunc
+} from './auth';
+import {
   COLLECTIONS as COLLECTIONS_CONST,
   JOB_STATUS as JOB_STATUS_CONST,
   SERVICE_TYPES as SERVICE_TYPES_CONST,
@@ -135,12 +155,6 @@ import {
   getCustomerPayments as getCustomerPaymentsFunc
 } from './collections';
 import {
-  createAnonymousUser as createAnonymousUserFunc,
-  signOutUser as signOutUserFunc,
-  onAuthStateChange as onAuthStateChangeFunc,
-  getCurrentUser as getCurrentUserFunc
-} from './auth';
-import {
   createDocument as createDocumentFunc,
   getDocument as getDocumentFunc,
   updateDocument as updateDocumentFunc,
@@ -170,10 +184,15 @@ export default {
   SERVICE_TYPES: SERVICE_TYPES_CONST,
 
   // Auth
+  registerHandyman: registerHandymanFunc,
+  signInHandyman: signInHandymanFunc,
   createAnonymousUser: createAnonymousUserFunc,
   signOutUser: signOutUserFunc,
   onAuthStateChange: onAuthStateChangeFunc,
   getCurrentUser: getCurrentUserFunc,
+  isAuthenticated: isAuthenticatedFunc,
+  getCurrentUserRole: getCurrentUserRoleFunc,
+  resetPassword: resetPasswordFunc,
 
   // Firestore
   createDocument: createDocumentFunc,

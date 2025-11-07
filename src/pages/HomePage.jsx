@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 const HomePage = () => {
+  const { isHandyman } = useAuth();
   const [isLoaded, setIsLoaded] = useState(false);
   const [visibleCards, setVisibleCards] = useState([]);
   const [visibleSections, setVisibleSections] = useState([]);
@@ -116,13 +118,13 @@ const HomePage = () => {
                 I need a handyman
               </Link>
               <Link
-                to="/handyman-auth"
+                to={isHandyman ? "/handyman-dashboard" : "/handyman-auth"}
                 className={`group flex w-full items-center justify-center rounded-lg bg-primary/20 dark:bg-primary/30 px-6 py-3 text-base sm:text-lg font-bold text-gray-900 dark:text-white transition-all duration-500 hover:scale-105 hover:shadow-lg ${
                   isLoaded ? 'opacity-100 translate-y-0 delay-700' : 'opacity-0 translate-y-4'
                 }`}
               >
                 <span className="material-symbols-outlined mr-3 group-hover:animate-pulse">engineering</span>
-                I am a handyman
+                {isHandyman ? "My Dashboard" : "I am a handyman"}
               </Link>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import LoadingSpinner from '../common/LoadingSpinner';
 import FixedStepperContainer from '../common/FixedStepperContainer';
+import { registerHandyman } from '../../services/firebase';
 
 /**
  * HandymanRegistration Component
@@ -25,6 +26,7 @@ const HandymanRegistration = ({
     fullName: '',
     phone: '',
     email: initialData.email || '',
+    password: initialData.password || '', // Store password from signup
     address: '',
     postalCode: ''
   });
@@ -248,28 +250,47 @@ const HandymanRegistration = ({
     setIsSubmitting(true);
 
     try {
-      // Combine all form data
-      const registrationData = {
-        ...personalData,
-        ...professionalData,
-        ...documentsData,
-        ...preferencesData,
-        tempUserId: initialData.tempUserId,
-        registeredAt: new Date().toISOString(),
-        status: 'pending_approval'
+      // Register handyman with Firebase
+      const { user, profile } = await registerHandyman({
+        email: personalData.email,
+        password: personalData.password,
+        name: personalData.fullName,
+        phone: personalData.phone,
+        serviceTypes: professionalData.serviceTypes,
+        experience: professionalData.experienceLevel,
+        bio: professionalData.description
+      });
+
+      console.log('Handyman registered successfully:', user.uid);
+
+      // Combine all form data for local storage
+      const completeData = {
+        uid: user.uid,
+        email: personalData.email,
+        name: personalData.fullName,
+        phone: personalData.phone,
+        address: personalData.address,
+        postalCode: personalData.postalCode,
+        serviceTypes: professionalData.serviceTypes,
+        experienceLevel: professionalData.experienceLevel,
+        hourlyRate: professionalData.hourlyRate,
+        serviceAreas: professionalData.serviceAreas,
+        description: professionalData.description,
+        availability: professionalData.availability,
+        preferences: preferencesData,
+        role: profile.role,
+        isAuthenticated: true,
+        registeredAt: new Date().toISOString()
       };
 
-      // Simulate API call
-      setTimeout(() => {
-        console.log('Registration completed:', registrationData);
-        if (onRegistrationComplete) {
-          onRegistrationComplete(registrationData);
-        }
-        setIsSubmitting(false);
-      }, 2000);
+      if (onRegistrationComplete) {
+        onRegistrationComplete(completeData);
+      }
+      setIsSubmitting(false);
 
     } catch (error) {
       console.error('Registration error:', error);
+      alert(error.message || 'Registration failed. Please try again.');
       setIsSubmitting(false);
     }
   };

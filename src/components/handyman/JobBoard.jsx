@@ -538,6 +538,7 @@ const JobBoard = ({
                       job={job}
                       onJobSelect={onJobSelect}
                       buttonStyle="full-width"
+                      onSuccess={loadJobs}
                     />
                     <button
                       onClick={() => handleSeeDetails(job)}
