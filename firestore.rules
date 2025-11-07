@@ -1,37 +1,172 @@
 rules_version = '2';
+
+/**
+ * Firestore Security Rules for Handyman Platform
+ *
+ * Collections:
+ * - users: User profiles (customers and handymen)
+ * - jobs: Job requests and details
+ * - handymen: Handyman-specific data (profiles, ratings, certifications)
+ * - jobApplications: Applications from handymen for jobs
+ * - reviews: Customer reviews for completed jobs
+ * - notifications: User notifications
+ * - payments: Payment records
+ */
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Jobs collection - read access for all, write only for authenticated users
-    match /jobs/{jobId} {
-      allow read: if true;
-      allow create: if request.auth != null;
-      allow update: if request.auth != null && 
-        (resource.data.customerId == request.auth.uid || 
-         resource.data.handymanId == request.auth.uid);
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
     }
-    
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isHandyman() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/handymen/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/handymen/$(request.auth.uid)).data.verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isSignedIn() && isOwner(userId);
+
+      // Users can create their own profile
+      allow create: if isSignedIn() && isOwner(userId);
+
+      // Users can update their own profile (except role)
+      allow update: if isSignedIn() && isOwner(userId) &&
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+
+    // Jobs collection
+    match /jobs/{jobId} {
+      // Anyone can read jobs (for handymen to browse)
+      allow read: if isSignedIn();
+
+      // Customers can create jobs
+      allow create: if isSignedIn() &&
+                      request.resource.data.customerId == request.auth.uid;
+
+      // Job owner or assigned handyman can update
+      allow update: if isSignedIn() && (
+        isOwner(resource.data.customerId) ||
+        (resource.data.handymanId != null && isOwner(resource.data.handymanId))
+      );
+
+      // Only job owner can delete (within limits)
+      allow delete: if isSignedIn() &&
+                      isOwner(resource.data.customerId) &&
+                      resource.data.status == 'pending';
+    }
+
     // Handymen collection
     match /handymen/{handymanId} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == handymanId;
+      // Anyone can read verified handyman profiles
+      allow read: if isSignedIn();
+
+      // Handyman can create their own profile
+      allow create: if isSignedIn() && isOwner(handymanId);
+
+      // Handyman can update their own profile (except verified status)
+      allow update: if isSignedIn() && isOwner(handymanId) &&
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified']));
+
+      // Admin can update verification status
+      allow update: if isAdmin();
+
+      // Only admins can delete
+      allow delete: if isAdmin();
     }
-    
-    // Customers collection
-    match /customers/{customerId} {
-      allow read, write: if request.auth != null && request.auth.uid == customerId;
+
+    // Job Applications collection
+    match /jobApplications/{applicationId} {
+      // Job owner and applicant can read
+      allow read: if isSignedIn() && (
+        isOwner(resource.data.handymanId) ||
+        isOwner(resource.data.customerId)
+      );
+
+      // Verified handymen can create applications
+      allow create: if isSignedIn() &&
+                      isHandyman() &&
+                      request.resource.data.handymanId == request.auth.uid;
+
+      // Handyman can update their own application
+      allow update: if isSignedIn() && isOwner(resource.data.handymanId);
+
+      // Handyman can delete their own application
+      allow delete: if isSignedIn() && isOwner(resource.data.handymanId);
     }
-    
-    // Payments collection - restricted access
-    match /payments/{paymentId} {
-      allow read, write: if request.auth != null && 
-        (resource.data.customerId == request.auth.uid || 
-         resource.data.handymanId == request.auth.uid);
+
+    // Reviews collection
+    match /reviews/{reviewId} {
+      // Anyone can read reviews
+      allow read: if isSignedIn();
+
+      // Customer who completed job can create review
+      allow create: if isSignedIn() &&
+                      request.resource.data.customerId == request.auth.uid &&
+                      exists(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)) &&
+                      get(/databases/$(database)/documents/jobs/$(request.resource.data.jobId)).data.status == 'completed';
+
+      // Customer can update their own review
+      allow update: if isSignedIn() && isOwner(resource.data.customerId);
+
+      // Customer can delete their own review
+      allow delete: if isSignedIn() && isOwner(resource.data.customerId);
     }
-    
+
     // Notifications collection
     match /notifications/{notificationId} {
-      allow read, write: if request.auth != null && 
-        resource.data.userId == request.auth.uid;
+      // Users can read their own notifications
+      allow read: if isSignedIn() && isOwner(resource.data.userId);
+
+      // System can create notifications (via Cloud Functions)
+      allow create: if true;
+
+      // Users can update their own notifications (mark as read)
+      allow update: if isSignedIn() && isOwner(resource.data.userId);
+
+      // Users can delete their own notifications
+      allow delete: if isSignedIn() && isOwner(resource.data.userId);
+    }
+
+    // Payments collection - restricted access
+    match /payments/{paymentId} {
+      // Only payment owner can read
+      allow read: if isSignedIn() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.handymanId == request.auth.uid
+      );
+
+      // Only authenticated users can create payments
+      allow create: if isSignedIn();
+
+      // Only system/admin can update payments
+      allow update: if isAdmin();
+
+      // No one can delete payments
+      allow delete: if false;
+    }
+
+    // Customers collection (legacy support)
+    match /customers/{customerId} {
+      allow read, write: if isSignedIn() && isOwner(customerId);
     }
   }
 }
