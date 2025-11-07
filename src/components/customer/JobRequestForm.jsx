@@ -2,12 +2,16 @@ import React, { useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 // import { useForm } from 'react-hook-form';
-// import { createJob } from '../../services/api/jobs';
 // import { validateSingaporeAddress } from '../../services/onemap/addressValidation'; // Future OneMap integration
 import LoadingSpinner from '../common/LoadingSpinner';
 import PaymentForm from './PaymentForm';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
+
+// Firebase imports
+import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
+// Jobs API
+import { createJob } from '../../services/api/jobs';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -84,6 +88,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   const [jobErrors, setJobErrors] = useState({});
   const [jobData, setJobData] = useState(null);
   const [paymentResult, setPaymentResult] = useState(null);
+  const [customerId, setCustomerId] = useState(null);
+  const [createdJobId, setCreatedJobId] = useState(null);
 
   // Job form data state for persistence
   const [jobFormData, setJobFormData] = useState({
@@ -264,25 +270,60 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   };
 
   // Function to handle successful payment
-  const handlePaymentSuccess = (paymentResultData) => {
+  const handlePaymentSuccess = async (paymentResultData) => {
     console.log('Payment successful:', paymentResultData);
     console.log('Job data:', jobData);
 
-    // Store payment result for confirmation screen
-    setPaymentResult(paymentResultData);
+    setIsSubmitting(true);
 
-    // Here you would typically:
-    // 1. Create the job with payment confirmation
-    // 2. Call onJobCreated with the final job data
-    // 3. Show confirmation screen
+    try {
+      // Store payment result for confirmation screen
+      setPaymentResult(paymentResultData);
 
-    if (onJobCreated) {
-      onJobCreated({ ...jobData, paymentStatus: 'completed', paymentResult: paymentResultData });
+      // Step 1: Create or get anonymous user
+      let userId = customerId;
+      if (!userId) {
+        console.log('Creating anonymous user for customer...');
+        const user = await createAnonymousUser({
+          name: jobData.customerName,
+          email: jobData.customerEmail,
+          phone: jobData.customerPhone
+        });
+        userId = user.uid;
+        setCustomerId(userId);
+        console.log('Anonymous user created:', userId);
+      }
+
+      // Step 2: Create job in Firebase
+      console.log('Creating job in Firestore...');
+      const completeJobData = {
+        ...jobData,
+        customerId: userId,
+        paymentResult: paymentResultData
+      };
+
+      const createdJob = await createJob(completeJobData);
+      console.log('Job created successfully:', createdJob);
+      setCreatedJobId(createdJob.id);
+
+      // Step 3: Call parent callback if provided
+      if (onJobCreated) {
+        onJobCreated({
+          ...createdJob,
+          paymentStatus: 'completed',
+          paymentResult: paymentResultData
+        });
+      }
+
+      // Move to confirmation screen (step 5)
+      setCurrentStep(5);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      console.error('Error creating job:', error);
+      alert(`Failed to create job: ${error.message}. Please contact support with payment confirmation.`);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    // Move to confirmation screen (step 5)
-    setCurrentStep(5);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleJobSubmit = async (data) => {
@@ -702,12 +743,19 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
 
               {/* Payment Content Container */}
               <div className="space-y-6">
-                {/* Payment Form */}
-                <PaymentForm
-                  amount={120} // Default service fee
-                  jobId={null} // Will be created after payment
-                  onPaymentSuccess={handlePaymentSuccess}
-                />
+                {isSubmitting ? (
+                  <div className="flex flex-col items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-primary mb-4"></div>
+                    <p className="text-gray-600 dark:text-gray-400">Creating your job request...</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">Please wait, this may take a moment</p>
+                  </div>
+                ) : (
+                  <PaymentForm
+                    amount={120} // Default service fee
+                    jobId={null} // Will be created after payment
+                    onPaymentSuccess={handlePaymentSuccess}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -720,7 +768,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   if (currentStep === 5) {
     return (
       <ConfirmationScreen
-        jobData={jobData}
+        jobData={{...jobData, id: createdJobId}}
         paymentResult={paymentResult}
         onBackToHome={onBackToHome}
         onViewJob={(jobData, jobId) => {
