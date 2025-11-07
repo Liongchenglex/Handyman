@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ExpressInterestButton from './ExpressInterestButton';
+
+// Firebase API
+import { getAvailableJobs } from '../../services/api/jobs';
+import { subscribeToCollection } from '../../services/firebase';
 
 /**
  * JobBoard Component
@@ -15,7 +19,8 @@ const JobBoard = ({
   onJobSelect
 }) => {
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [jobs, setJobs] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilters, setSelectedFilters] = useState({
     serviceType: '',
@@ -25,7 +30,43 @@ const JobBoard = ({
     sortBy: 'newest'
   });
 
-  // Mock job data for frontend verification (replace with API call)
+  // Fetch jobs from Firebase on component mount
+  useEffect(() => {
+    loadJobs();
+  }, []);
+
+  // Set up real-time listener for jobs
+  useEffect(() => {
+    const unsubscribe = subscribeToCollection(
+      'jobs',
+      [{ field: 'status', operator: '==', value: 'pending' }],
+      'createdAt',
+      'desc',
+      (updatedJobs) => {
+        console.log('Jobs updated:', updatedJobs);
+        setJobs(updatedJobs);
+        setIsLoading(false);
+      }
+    );
+
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
+  }, []);
+
+  const loadJobs = async () => {
+    setIsLoading(true);
+    try {
+      const availableJobs = await getAvailableJobs();
+      setJobs(availableJobs);
+    } catch (error) {
+      console.error('Error loading jobs:', error);
+      alert('Failed to load jobs. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Mock job data for fallback (can be removed after testing)
   const mockJobs = [
     {
       id: 'JOB-001',
@@ -157,11 +198,15 @@ const JobBoard = ({
     { label: 'Urgent First', value: 'urgent' }
   ];
 
+  // Use real jobs data, fallback to mock if empty (for testing)
+  const jobsData = jobs.length > 0 ? jobs : mockJobs;
+
   // Filter jobs based on search and filters
-  const filteredJobs = mockJobs.filter(job => {
+  const filteredJobs = jobsData.filter(job => {
+    const location = job.location || job.address || '';
     const matchesSearch = job.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          job.serviceType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         job.location.toLowerCase().includes(searchQuery.toLowerCase());
+                         location.toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesService = !selectedFilters.serviceType ||
                           selectedFilters.serviceType === 'All Services' ||
@@ -204,12 +249,8 @@ const JobBoard = ({
   };
 
   const handleRefresh = () => {
-    setIsLoading(true);
-    // Simulate API refresh
-    setTimeout(() => {
-      console.log('Refreshing job listings...');
-      setIsLoading(false);
-    }, 1000);
+    console.log('Refreshing job listings...');
+    loadJobs();
   };
 
   const handleSeeDetails = (job) => {
@@ -217,8 +258,29 @@ const JobBoard = ({
     navigate(`/job-details/${job.id}`, { state: { job } });
   };
 
+  // Format timestamp for display
+  const formatPostedTime = (createdAt) => {
+    if (!createdAt) return 'Just now';
+
+    // Handle Firestore Timestamp
+    const date = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  };
+
   const getUrgencyBadge = (urgency) => {
-    return urgency === 'urgent' ? (
+    // Determine urgency from timing if not specified
+    const isUrgent = urgency === 'urgent' || urgency === 'Immediate';
+
+    return isUrgent ? (
       <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400">
         <span className="material-symbols-outlined text-xs">emergency</span>
         Urgent
@@ -415,7 +477,7 @@ const JobBoard = ({
                         {getUrgencyBadge(job.urgency)}
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Posted {job.postedAt} • Job #{job.id}
+                        Posted {formatPostedTime(job.createdAt)} • Job #{job.id}
                       </p>
                     </div>
                     <div className="text-right">
@@ -433,7 +495,7 @@ const JobBoard = ({
                     <span className="material-symbols-outlined text-gray-400">person</span>
                     <span className="font-medium text-gray-900 dark:text-white">{job.customerName}</span>
                     <span className="text-gray-400">•</span>
-                    <span className="text-gray-600 dark:text-gray-400">{job.location}</span>
+                    <span className="text-gray-600 dark:text-gray-400">{job.location || job.address}</span>
                   </div>
 
                   {/* Job Description */}
@@ -460,10 +522,12 @@ const JobBoard = ({
                         <span className="text-gray-600 dark:text-gray-400">Site visit required</span>
                       </div>
                     )}
-                    {job.images > 0 && (
+                    {((job.imageUrls && job.imageUrls.length > 0) || job.images > 0) && (
                       <div className="flex items-center gap-2">
                         <span className="material-symbols-outlined text-gray-400 text-sm">photo_library</span>
-                        <span className="text-gray-600 dark:text-gray-400">{job.images} image{job.images !== 1 ? 's' : ''} attached</span>
+                        <span className="text-gray-600 dark:text-gray-400">
+                          {job.imageUrls ? job.imageUrls.length : job.images} image{(job.imageUrls ? job.imageUrls.length : job.images) !== 1 ? 's' : ''} attached
+                        </span>
                       </div>
                     )}
                   </div>
