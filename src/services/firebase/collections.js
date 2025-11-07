@@ -56,18 +56,28 @@ export const SERVICE_TYPES = [
 
 /**
  * Create a new user profile
- * @param {string} userId - User ID (not used directly as Firestore auto-generates IDs)
+ * @param {string} userId - Firebase Auth User ID (used as document ID)
  * @param {Object} userData - User data
  * @returns {Promise<Object>} Created user object
  */
 export const createUser = async (userId, userData) => {
   const user = {
-    userId, // Include userId in the document
+    userId, // Include userId in the document data
     ...userData,
     role: userData.role || 'customer',
     createdAt: new Date().toISOString()
   };
-  await createDocument(COLLECTIONS.USERS, user);
+
+  // Use setDoc with specific ID instead of createDocument
+  const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+  const { db } = await import('./config');
+
+  await setDoc(doc(db, COLLECTIONS.USERS, userId), {
+    ...user,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+
   return user;
 };
 
@@ -181,13 +191,13 @@ export const subscribeToCustomerJobs = (customerId, callback) => {
 
 /**
  * Create handyman profile
- * @param {string} handymanId - Handyman user ID
+ * @param {string} handymanId - Handyman user ID (used as document ID)
  * @param {Object} handymanData - Handyman profile data
  * @returns {Promise<Object>} Created handyman object
  */
 export const createHandyman = async (handymanId, handymanData) => {
   const handyman = {
-    handymanId, // Include handymanId in the document
+    handymanId, // Include handymanId in the document data
     ...handymanData,
     verified: false,
     isAvailable: true,
@@ -195,7 +205,17 @@ export const createHandyman = async (handymanId, handymanData) => {
     totalJobs: 0,
     createdAt: new Date().toISOString()
   };
-  await createDocument(COLLECTIONS.HANDYMEN, handyman);
+
+  // Use setDoc with specific ID instead of createDocument
+  const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+  const { db } = await import('./config');
+
+  await setDoc(doc(db, COLLECTIONS.HANDYMEN, handymanId), {
+    ...handyman,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  });
+
   return handyman;
 };
 

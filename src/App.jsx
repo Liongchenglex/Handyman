@@ -16,6 +16,9 @@ import JobCard from './components/handyman/JobCard';
 // import JobDetails from './pages/JobDetails';
 // import './styles/globals.css';
 
+// Temporary: Test auth setup
+import './testAuthSetup';
+
 // const queryClient = new QueryClient();
 
 function AppContent() {
