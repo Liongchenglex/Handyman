@@ -68,6 +68,35 @@ service firebase.storage {
       allow delete: if isSignedIn() && isOwner(handymanId);
     }
 
+    // Handyman work experience / CV documents
+    match /handymen/{handymanId}/work-experience/{filename} {
+      // Read: authenticated users can view work experience
+      allow read: if isSignedIn();
+
+      // Write: only the handyman can upload their work experience (images, PDFs, DOC)
+      allow write: if isSignedIn() &&
+                     isOwner(handymanId) &&
+                     isValidSize();
+
+      // Delete: only the handyman can delete
+      allow delete: if isSignedIn() && isOwner(handymanId);
+    }
+
+    // Handyman portfolio images
+    match /handymen/{handymanId}/portfolio/{filename} {
+      // Read: authenticated users can view portfolio
+      allow read: if isSignedIn();
+
+      // Write: only the handyman can upload portfolio images
+      allow write: if isSignedIn() &&
+                     isOwner(handymanId) &&
+                     isImage() &&
+                     isValidSize();
+
+      // Delete: only the handyman can delete
+      allow delete: if isSignedIn() && isOwner(handymanId);
+    }
+
     // Job-related images
     match /jobs/{jobId}/images/{filename} {
       // Read: authenticated users can view job images

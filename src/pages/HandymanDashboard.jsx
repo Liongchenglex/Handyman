@@ -329,9 +329,17 @@ const HandymanDashboard = () => {
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8">
           <div className="flex items-center gap-4 mb-8">
-            <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-4">
-              <span className="material-symbols-outlined text-primary text-2xl">engineering</span>
-            </div>
+            {handymanProfile.profileImageUrl ? (
+              <img
+                src={handymanProfile.profileImageUrl}
+                alt="Profile"
+                className="w-20 h-20 rounded-full object-cover border-4 border-primary/30"
+              />
+            ) : (
+              <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-4">
+                <span className="material-symbols-outlined text-primary text-2xl">engineering</span>
+              </div>
+            )}
             <div>
               <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {userProfile.name || user.displayName || 'Handyman Profile'}

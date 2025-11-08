@@ -52,11 +52,19 @@ const HandymanHeader = ({ currentView, onViewChange }) => {
                   {userProfile?.handyman?.serviceTypes?.[0] || 'Professional'}
                 </p>
               </div>
-              <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-2">
-                <span className="material-symbols-outlined text-primary text-xl">
-                  engineering
-                </span>
-              </div>
+              {userProfile?.handyman?.profileImageUrl ? (
+                <img
+                  src={userProfile.handyman.profileImageUrl}
+                  alt="Profile"
+                  className="w-10 h-10 rounded-full object-cover border-2 border-primary/30"
+                />
+              ) : (
+                <div className="bg-primary/20 dark:bg-primary/30 rounded-full p-2">
+                  <span className="material-symbols-outlined text-primary text-xl">
+                    engineering
+                  </span>
+                </div>
+              )}
               <span className="material-symbols-outlined text-gray-400 text-sm">
                 expand_more
               </span>

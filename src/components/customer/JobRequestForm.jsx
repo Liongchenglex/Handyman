@@ -12,6 +12,8 @@ import ConfirmationScreen from './ConfirmationScreen';
 import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
 // Jobs API
 import { createJob } from '../../services/api/jobs';
+// Service pricing configuration
+import { SERVICE_PRICING, getServicePrice, PLATFORM_FEE } from '../../config/servicePricing';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -186,14 +188,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     return errors;
   };
 
-  const serviceTypes = [
-    'Plumbing',
-    'Electrical',
-    'Carpentry',
-    'Appliance Repair',
-    'Painting',
-    'General handyman'
-  ];
+  // Get service types from pricing configuration
+  const serviceTypes = Object.keys(SERVICE_PRICING);
 
   const timingOptions = ['Immediate', 'Schedule'];
   const materialsOptions = ['I will buy', 'Handyman to buy (surcharge applies)'];
@@ -257,7 +253,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       preferredTime: jobFormData.time,
       materials: selectedMaterials,
       siteVisit: selectedSiteVisit,
-      estimatedBudget: 120,
+      estimatedBudget: getServicePrice(selectedCategory),
       status: 'pending',
       createdAt: new Date(),
       images: uploadedImages
@@ -344,7 +340,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
         preferredTime: data.time,
         materials: selectedMaterials,
         siteVisit: selectedSiteVisit,
-        estimatedBudget: 120, // Default budget, you can make this dynamic
+        estimatedBudget: getServicePrice(selectedCategory),
         status: 'pending',
         createdAt: new Date()
       };
@@ -693,6 +689,30 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
               </div>
             )}
 
+            {/* Estimated Price Section */}
+            <div className="bg-primary/10 dark:bg-primary/20 border border-primary/30 dark:border-primary/40 rounded-xl p-6">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <span className="material-symbols-outlined">payments</span>
+                Estimated Price
+              </h3>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Service Fee ({selectedCategory}):</span>
+                  <span className="font-medium">${getServicePrice(selectedCategory)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-500">Platform Fee:</span>
+                  <span className="text-gray-500 dark:text-gray-500">${PLATFORM_FEE}</span>
+                </div>
+                <div className="border-t border-primary/20 dark:border-primary/30 pt-2 mt-2">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-lg">Total:</span>
+                    <span className="font-bold text-lg text-primary">${getServicePrice(selectedCategory) + PLATFORM_FEE}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
                 {/* Primary Action Button */}
                 <div className="pt-6">
                   <button
@@ -756,7 +776,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   </div>
                 ) : (
                   <PaymentForm
-                    amount={120} // Default service fee
+                    amount={getServicePrice(selectedCategory)}
                     jobId={null} // Will be created after payment
                     onPaymentSuccess={handlePaymentSuccess}
                   />
@@ -877,7 +897,10 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                         : 'border-gray-200 dark:border-gray-700 text-black/80 dark:text-white/80 hover:bg-primary/10'
                     }`}
                       >
-                    {service}
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="font-medium">{service}</span>
+                      <span className="text-xs opacity-75">${getServicePrice(service)}</span>
+                    </div>
                   </button>
                 ))}
               </div>

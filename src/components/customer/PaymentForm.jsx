@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 // import { createPaymentIntent } from '../../services/stripe/payment';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { PLATFORM_FEE } from '../../config/servicePricing';
 
 const PaymentForm = ({ amount, jobId, onPaymentSuccess }) => {
   const [isProcessing, setIsProcessing] = useState(false);
@@ -8,7 +9,7 @@ const PaymentForm = ({ amount, jobId, onPaymentSuccess }) => {
   const [error, setError] = useState(null);
 
   const serviceFee = parseFloat(amount) || 120;
-  const platformFee = 5;
+  const platformFee = PLATFORM_FEE;
   const totalAmount = serviceFee + platformFee;
 
   const paymentMethods = [

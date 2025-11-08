@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import LoadingSpinner from '../common/LoadingSpinner';
 import FixedStepperContainer from '../common/FixedStepperContainer';
-import { registerHandyman } from '../../services/firebase';
+import { registerHandyman, uploadImage, uploadFile, updateDocument } from '../../services/firebase';
 
 /**
  * HandymanRegistration Component
@@ -41,9 +41,8 @@ const HandymanRegistration = ({
   });
 
   const [documentsData, setDocumentsData] = useState({
-    idDocument: null,
-    certifications: [],
-    portfolioImages: []
+    workExperience: [], // CV and work experience documents
+    profileImage: null // Profile picture (single image)
   });
 
   const [preferencesData, setPreferencesData] = useState({
@@ -161,7 +160,7 @@ const HandymanRegistration = ({
     {
       id: 3,
       title: 'Documents',
-      description: 'ID & certifications'
+      description: 'CV & portfolio'
     },
     {
       id: 4,
@@ -250,7 +249,7 @@ const HandymanRegistration = ({
     setIsSubmitting(true);
 
     try {
-      // Register handyman with Firebase
+      // Step 1: Register handyman with Firebase
       const { user, profile } = await registerHandyman({
         email: personalData.email,
         password: personalData.password,
@@ -263,7 +262,53 @@ const HandymanRegistration = ({
 
       console.log('Handyman registered successfully:', user.uid);
 
-      // Combine all form data for local storage
+      // Step 2: Upload work experience documents if any (PDFs, DOCs, images)
+      let workExperienceUrls = [];
+      if (documentsData.workExperience && documentsData.workExperience.length > 0) {
+        console.log('Uploading work experience documents...');
+        const uploadPromises = documentsData.workExperience.map(async (file, index) => {
+          const path = `handymen/${user.uid}/work-experience/${file.name}`;
+          try {
+            // Use uploadFile instead of uploadImage to support PDFs, DOCs, etc.
+            const url = await uploadFile(file, path);
+            return url;
+          } catch (error) {
+            console.error(`Error uploading work experience document ${index}:`, error);
+            return null;
+          }
+        });
+        workExperienceUrls = (await Promise.all(uploadPromises)).filter(url => url !== null);
+        console.log(`Uploaded ${workExperienceUrls.length} work experience documents`);
+      }
+
+      // Step 3: Upload profile image if provided
+      let profileImageUrl = null;
+      if (documentsData.profileImage) {
+        console.log('Uploading profile image...');
+        const path = `handymen/${user.uid}/profile/${documentsData.profileImage.name}`;
+        try {
+          profileImageUrl = await uploadImage(documentsData.profileImage, path, {
+            maxWidth: 800,
+            maxHeight: 800,
+            quality: 0.85
+          });
+          console.log('Profile image uploaded successfully');
+        } catch (error) {
+          console.error('Error uploading profile image:', error);
+        }
+      }
+
+      // Step 4: Update handyman document with uploaded file URLs
+      if (workExperienceUrls.length > 0 || profileImageUrl) {
+        console.log('Updating handyman profile with document URLs...');
+        await updateDocument('handymen', user.uid, {
+          workExperienceUrls: workExperienceUrls,
+          profileImageUrl: profileImageUrl,
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      // Combine all form data for callback
       const completeData = {
         uid: user.uid,
         email: personalData.email,
@@ -280,6 +325,8 @@ const HandymanRegistration = ({
         preferences: preferencesData,
         role: profile.role,
         isAuthenticated: true,
+        workExperienceUrls: workExperienceUrls,
+        profileImageUrl: profileImageUrl,
         registeredAt: new Date().toISOString()
       };
 
@@ -635,78 +682,112 @@ const HandymanRegistration = ({
                   <span className="material-symbols-outlined text-lg">arrow_back</span>
                 </button>
                 <div className="flex-1">
-                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Documents & Verification</h1>
-                  <p className="text-gray-600 dark:text-gray-400 mt-1">Upload your documents for verification (optional for now)</p>
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Documents & Portfolio</h1>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">Showcase your experience and work (optional)</p>
                 </div>
               </div>
 
               <form onSubmit={handleDocumentsSubmit} className="space-y-8">
-                {/* ID Document */}
+                {/* Work Experience/CV */}
                 <div>
-                  <h3 className="text-lg font-bold mb-4">Identification Document</h3>
-                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6">
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      onChange={(e) => handleFileUpload('idDocument', e.target.files[0])}
-                      className="hidden"
-                      id="id-upload"
-                    />
-                    <label
-                      htmlFor="id-upload"
-                      className="cursor-pointer flex flex-col items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-3xl">badge</span>
-                      <span className="font-medium">Upload NRIC/Passport</span>
-                      <span className="text-sm">PNG, JPG, PDF up to 10MB</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Certifications */}
-                <div>
-                  <h3 className="text-lg font-bold mb-4">Certifications (Optional)</h3>
+                  <h3 className="text-lg font-bold mb-4">Work Experience / CV</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    Upload your CV, resume, or work experience documents to help customers understand your background
+                  </p>
                   <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6">
                     <input
                       type="file"
                       multiple
-                      accept="image/*,.pdf"
-                      onChange={(e) => handleFileUpload('certifications', Array.from(e.target.files))}
+                      accept="image/*,.pdf,.doc,.docx"
+                      onChange={(e) => handleFileUpload('workExperience', Array.from(e.target.files))}
                       className="hidden"
-                      id="cert-upload"
+                      id="cv-upload"
                     />
                     <label
-                      htmlFor="cert-upload"
+                      htmlFor="cv-upload"
                       className="cursor-pointer flex flex-col items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
                     >
-                      <span className="material-symbols-outlined text-3xl">school</span>
-                      <span className="font-medium">Upload Certificates</span>
-                      <span className="text-sm">Trade licenses, certifications, qualifications</span>
+                      <span className="material-symbols-outlined text-3xl">work</span>
+                      <span className="font-medium">Upload CV or Work Experience</span>
+                      <span className="text-sm">PDF, DOC, DOCX, PNG, JPG up to 10MB each</span>
                     </label>
                   </div>
+
+                  {/* File Preview for Work Experience */}
+                  {documentsData.workExperience && documentsData.workExperience.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Uploaded Files:</h4>
+                      {documentsData.workExperience.map((file, index) => (
+                        <div key={index} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center gap-2">
+                            <span className="material-symbols-outlined text-gray-400">description</span>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white">{file.name}</span>
+                            <span className="text-xs text-gray-500">({(file.size / 1024).toFixed(1)} KB)</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = documentsData.workExperience.filter((_, i) => i !== index);
+                              setDocumentsData(prev => ({ ...prev, workExperience: updated }));
+                            }}
+                            className="text-red-500 hover:text-red-700 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-sm">close</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* Portfolio */}
+                {/* Profile Picture */}
                 <div>
-                  <h3 className="text-lg font-bold mb-4">Portfolio Images (Optional)</h3>
+                  <h3 className="text-lg font-bold mb-4">Profile Picture (Optional)</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    Upload a professional photo of yourself to help customers recognize you
+                  </p>
                   <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6">
                     <input
                       type="file"
-                      multiple
                       accept="image/*"
-                      onChange={(e) => handleFileUpload('portfolioImages', Array.from(e.target.files))}
+                      onChange={(e) => handleFileUpload('profileImage', e.target.files[0])}
                       className="hidden"
-                      id="portfolio-upload"
+                      id="profile-upload"
                     />
                     <label
-                      htmlFor="portfolio-upload"
+                      htmlFor="profile-upload"
                       className="cursor-pointer flex flex-col items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
                     >
-                      <span className="material-symbols-outlined text-3xl">photo_library</span>
-                      <span className="font-medium">Upload Work Samples</span>
-                      <span className="text-sm">Photos of your completed projects</span>
+                      <span className="material-symbols-outlined text-3xl">account_circle</span>
+                      <span className="font-medium">Upload Profile Picture</span>
+                      <span className="text-sm">PNG, JPG (square image recommended)</span>
                     </label>
                   </div>
+
+                  {/* Image Preview for Profile Picture */}
+                  {documentsData.profileImage && (
+                    <div className="mt-4">
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Profile Picture Preview:</h4>
+                      <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                        <img
+                          src={URL.createObjectURL(documentsData.profileImage)}
+                          alt="Profile preview"
+                          className="w-24 h-24 rounded-full object-cover border-2 border-primary/20"
+                        />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white">{documentsData.profileImage.name}</p>
+                          <p className="text-xs text-gray-500">({(documentsData.profileImage.size / 1024).toFixed(1)} KB)</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDocumentsData(prev => ({ ...prev, profileImage: null }))}
+                          className="text-red-500 hover:text-red-700 transition-colors"
+                        >
+                          <span className="material-symbols-outlined">delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Info Box */}
@@ -717,11 +798,10 @@ const HandymanRegistration = ({
                     </span>
                     <div className="text-left">
                       <h3 className="font-semibold text-blue-900 dark:text-blue-200 mb-1">
-                        Document Verification
+                        Build Trust with Customers
                       </h3>
                       <p className="text-blue-700 dark:text-blue-300 text-sm">
-                        Documents help build trust with customers. You can upload them now or later from your dashboard.
-                        All documents are securely stored and only used for verification purposes.
+                        These documents are optional but highly recommended. A strong portfolio and CV help customers choose you with confidence. You can always add more later from your dashboard.
                       </p>
                     </div>
                   </div>
