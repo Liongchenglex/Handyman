@@ -3,6 +3,7 @@
  *
  * This file contains the pricing information for all service types.
  * Update prices here to reflect across the entire application.
+ * *you can simply add to thise SERVICEPRICing
  *
  * All prices are in SGD (Singapore Dollars).
  */

@@ -14,8 +14,7 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile,
-  sendPasswordResetEmail,
-  sendEmailVerification
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from './config';
 import { createUser, createHandyman, getUser } from './collections';
@@ -61,8 +60,7 @@ export const registerHandyman = async (registrationData) => {
       email: email,
       name: name,
       phone: phone,
-      role: 'handyman',
-      emailVerified: user.emailVerified
+      role: 'handyman'
     });
 
     // Create handyman profile document
@@ -79,9 +77,8 @@ export const registerHandyman = async (registrationData) => {
       totalJobs: 0
     });
 
-    // Send email verification
-    await sendEmailVerification(user);
-    console.log('Verification email sent to:', email);
+    // Note: Email acknowledgment will be sent after full registration is complete
+    // See HandymanRegistration.jsx -> sendRegistrationEmails()
 
     return {
       user: user,

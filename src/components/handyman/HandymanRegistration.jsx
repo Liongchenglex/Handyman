@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import LoadingSpinner from '../common/LoadingSpinner';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import { registerHandyman, uploadImage, uploadFile, updateDocument } from '../../services/firebase';
+import { sendRegistrationEmails } from '../../services/emailService';
 
 /**
  * HandymanRegistration Component
@@ -329,6 +330,22 @@ const HandymanRegistration = ({
         profileImageUrl: profileImageUrl,
         registeredAt: new Date().toISOString()
       };
+
+      // Step 5: Send registration emails (acknowledgment + operations notification)
+      // Note: Email sending happens in the background and won't block registration
+      try {
+        console.log('Sending registration emails...');
+        const emailResults = await sendRegistrationEmails(completeData);
+
+        if (emailResults.errors && emailResults.errors.length > 0) {
+          console.warn('Some emails failed to send:', emailResults.errors);
+        } else {
+          console.log('✅ Registration emails sent successfully');
+        }
+      } catch (emailError) {
+        // Log the error but don't block registration completion
+        console.error('Email sending failed, but registration completed:', emailError);
+      }
 
       if (onRegistrationComplete) {
         onRegistrationComplete(completeData);
@@ -825,12 +842,46 @@ const HandymanRegistration = ({
 
   // Render Step 4: Preferences & Final Submission
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 relative">
+      {/* Full Page Loading Overlay - Prevents any interaction during registration */}
+      {isSubmitting && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 md:p-12 max-w-md mx-4 text-center">
+            <div className="mb-6">
+              <div className="animate-spin rounded-full h-16 w-16 border-4 border-primary border-t-transparent mx-auto"></div>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">
+              Creating Your Account
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              Please wait while we set up your handyman profile...
+            </p>
+            <div className="space-y-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className="flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-primary text-sm">check_circle</span>
+                <span>Creating account</span>
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-primary text-sm">upload_file</span>
+                <span>Uploading documents</span>
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <span className="material-symbols-outlined text-primary text-sm">email</span>
+                <span>Sending confirmation emails</span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-6">
+              This may take a few moments. Please don't close this page.
+            </p>
+          </div>
+        </div>
+      )}
+
       <FixedStepperContainer
         currentStep={currentStep}
         steps={steps}
-        onStepClick={handleStepClick}
-        allowClickBack={true}
+        onStepClick={isSubmitting ? () => {} : handleStepClick}
+        allowClickBack={!isSubmitting}
       />
 
       <div className="max-w-4xl mx-auto pt-8 px-4">
@@ -840,7 +891,8 @@ const HandymanRegistration = ({
               <button
                 type="button"
                 onClick={() => { setCurrentStep(3); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-                className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
+                disabled={isSubmitting}
+                className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-lg">arrow_back</span>
               </button>
@@ -864,13 +916,16 @@ const HandymanRegistration = ({
                 ].map((pref) => (
                   <label
                     key={pref.key}
-                    className="flex items-start gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+                    className={`flex items-start gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-700 transition-colors ${
+                      isSubmitting ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900'
+                    }`}
                   >
                     <input
                       type="checkbox"
                       checked={preferencesData[pref.key]}
                       onChange={(e) => updatePreferencesData(pref.key, e.target.checked)}
-                      className="mt-1 w-5 h-5 text-primary bg-gray-100 border-gray-300 rounded focus:ring-primary focus:ring-2"
+                      disabled={isSubmitting}
+                      className="mt-1 w-5 h-5 text-primary bg-gray-100 border-gray-300 rounded focus:ring-primary focus:ring-2 disabled:cursor-not-allowed"
                     />
                     <div>
                       <div className="font-semibold text-gray-900 dark:text-white">{pref.label}</div>

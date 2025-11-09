@@ -86,9 +86,13 @@ service cloud.firestore {
 
       // Handyman can update their own profile (except verified status)
       allow update: if isSignedIn() && isOwner(handymanId) &&
-                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified']));
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'status']));
 
-      // Admin can update verification status
+      // Allow approval/rejection for pending handymen (for email approval links)
+      // Anyone can update if current status is 'pending' (newly registered)
+      allow update: if resource.data.status == 'pending';
+
+      // Admin can update verification status anytime
       allow update: if isAdmin();
 
       // Only admins can delete

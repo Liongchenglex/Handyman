@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 // import { QueryClient, QueryClientProvider } from 'react-query';
 import { AuthProvider } from './context/AuthContext';
 // import { JobProvider } from './context/JobContext';
+import { initializeEmailService } from './services/emailService';
 import Header from './components/common/Header';
 import Footer from './components/common/Footer';
 import HelpContact from './components/common/HelpContact';
@@ -11,6 +12,7 @@ import CustomerJobRequest from './pages/CustomerJobRequest';
 import HandymanAuthPage from './pages/HandymanAuth';
 import HandymanRegistrationPage from './pages/HandymanRegistration';
 import HandymanDashboard from './pages/HandymanDashboard';
+import ApproveHandyman from './pages/ApproveHandyman';
 import JobCard from './components/handyman/JobCard';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
@@ -36,6 +38,7 @@ function AppContent() {
           <Route path="/handyman-auth" element={<HandymanAuthPage />} />
           <Route path="/handyman-registration" element={<HandymanRegistrationPage />} />
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
+          <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
           <Route path="/job-details/:jobId" element={<JobCard />} />
           {/* <Route path="/jobs" element={<JobBoard />} /> */}
           {/* <Route path="/jobs/:id" element={<JobDetails />} /> */}
@@ -47,6 +50,11 @@ function AppContent() {
 }
 
 function App() {
+  // Initialize EmailJS service on app mount
+  useEffect(() => {
+    initializeEmailService();
+  }, []);
+
   return (
     // <QueryClientProvider client={queryClient}>
       <AuthProvider>

@@ -201,6 +201,7 @@ export const createHandyman = async (handymanId, handymanData) => {
     handymanId, // Include handymanId in the document data
     ...handymanData,
     verified: false,
+    status: 'pending', // Initial status: awaiting operations approval
     isAvailable: true,
     rating: 0,
     totalJobs: 0,
