@@ -72,6 +72,159 @@ This approach gives you maximum control over escrow and splits.
 └──────────────────┴──────────────────┴──────────────────┘
 ```
 
+## Complete Handyman Journey Flow
+
+Before diving into implementation, understand the complete flow:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ STEP 1: HANDYMAN REGISTRATION                               │
+│ ─────────────────────────────────────────────────────────── │
+│ • Handyman completes registration form                       │
+│ • Account created in Firebase Auth                           │
+│ • Profile created in Firestore                               │
+│                                                              │
+│ Database State:                                              │
+│   verified: false                                            │
+│   status: 'pending'                                          │
+│   stripeConnectAccountId: null                               │
+│                                                              │
+│ Dashboard Shows: ⏳ "Application Under Review"              │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ STEP 2: OPERATIONS TEAM APPROVAL                             │
+│ ─────────────────────────────────────────────────────────── │
+│ • Ops team receives email notification                       │
+│ • Reviews handyman documents and profile                     │
+│ • Clicks "Approve" button in email                           │
+│                                                              │
+│ Database State:                                              │
+│   verified: true  ← Changed                                  │
+│   status: 'active'  ← Changed                                │
+│   stripeConnectAccountId: null  ← Still null                 │
+│                                                              │
+│ Dashboard Shows: 💳 "Set Up Payment Account" (NEW VIEW)    │
+│ Handyman CANNOT accept jobs yet - needs Stripe setup        │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ STEP 3: STRIPE CONNECT ONBOARDING (NEW!)                    │
+│ ─────────────────────────────────────────────────────────── │
+│ • Handyman sees "Connect with Stripe" button                 │
+│ • Clicks button → API creates Stripe Connect account         │
+│ • Redirects to Stripe onboarding URL                         │
+│ • Handyman fills in KYC info on Stripe's secure site         │
+│ • Provides: ID, bank details, tax info                       │
+│ • Stripe redirects back to app                               │
+│ • Webhook updates handyman document                          │
+│                                                              │
+│ Database State:                                              │
+│   verified: true                                             │
+│   status: 'active'                                           │
+│   stripeConnectAccountId: 'acct_xxxxx'  ← Added              │
+│   stripeOnboardingComplete: true  ← Changed                  │
+│   stripePayoutsEnabled: true  ← Changed                      │
+│   stripeChargesEnabled: true  ← Changed                      │
+│   stripeConnectedAt: timestamp  ← Added                      │
+│                                                              │
+│ Dashboard Shows: ✅ Full Dashboard with Job Board           │
+│ Handyman CAN NOW accept jobs and receive payments           │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ STEP 4: ACCEPTING JOBS & GETTING PAID                       │
+│ ─────────────────────────────────────────────────────────── │
+│ • Handyman can browse job board                              │
+│ • Accept jobs and complete work                              │
+│ • Customer pays through platform                             │
+│ • Funds held in escrow until job confirmed                   │
+│ • Payment split 3-ways (cofounder/operator/handyman)         │
+│ • Handyman receives payout to their bank account             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Dashboard View Logic (HandymanDashboard.jsx)
+
+Add this logic to show the correct view based on handyman state:
+
+```javascript
+// Get handyman state
+const handymanStatus = userProfile?.handyman?.status;
+const handymanVerified = userProfile?.handyman?.verified;
+const stripeAccountId = userProfile?.handyman?.stripeConnectAccountId;
+const stripeOnboardingComplete = userProfile?.handyman?.stripeOnboardingComplete;
+
+// Priority order (check top to bottom):
+
+// 1. Not verified yet
+if (status === 'pending') {
+  return <PendingStatusView />;  // ✅ Already exists
+}
+
+// 2. Rejected
+if (status === 'rejected') {
+  return <RejectedStatusView />;  // ✅ Already exists
+}
+
+// 3. Suspended
+if (status === 'suspended') {
+  return <SuspendedStatusView />;  // ✅ Already exists
+}
+
+// 4. ⭐ NEW: Approved but needs Stripe Connect setup
+if (status === 'active' && verified === true && !stripeAccountId) {
+  return <StripeConnectOnboardingView />;  // 🆕 Need to create
+}
+
+// 5. ⭐ NEW: Stripe setup incomplete (started but didn't finish)
+if (status === 'active' && verified === true && stripeAccountId && !stripeOnboardingComplete) {
+  return <StripeOnboardingIncompleteView />;  // 🆕 Need to create
+}
+
+// 6. Fully ready - show full dashboard with job board
+if (status === 'active' && verified === true && stripeOnboardingComplete) {
+  return <FullDashboard />;  // ✅ Already exists - NOW WITH JOB ACCESS
+}
+```
+
+## New Dashboard Views Needed
+
+### 1. StripeConnectOnboardingView
+
+**When to show:** `verified === true` AND `stripeConnectAccountId === null`
+
+**Purpose:** Prompt handyman to set up Stripe Connect account
+
+**Content:**
+- Title: "Set Up Your Payment Account"
+- Explanation of why Stripe is needed
+- Benefits:
+  - Secure payment processing
+  - Direct deposits to bank account
+  - Stripe handles KYC/compliance
+  - Real-time earnings tracking
+- "Connect with Stripe" button (primary CTA)
+- What you'll need:
+  - Government ID
+  - Bank account details
+  - Tax information
+- Security assurance message
+
+### 2. StripeOnboardingIncompleteView
+
+**When to show:** `stripeConnectAccountId` exists BUT `stripeOnboardingComplete === false`
+
+**Purpose:** Prompt handyman to complete Stripe setup they started
+
+**Content:**
+- Title: "Complete Your Stripe Setup"
+- Message: "You started setting up payments but didn't finish"
+- "Resume Stripe Setup" button
+- Time estimate: "Only 2-3 minutes remaining"
+
+---
+
 ## Implementation Steps
 
 ### Phase 1: Stripe Setup
@@ -90,21 +243,45 @@ This approach gives you maximum control over escrow and splits.
 
 ### Phase 2: Database Schema
 
-#### 2.1 New Collections/Tables Needed
+#### 2.1 Updated Collections/Tables
 
-**`stripe_accounts` collection**
+**IMPORTANT ARCHITECTURAL DECISION:**
+Instead of creating a separate `stripe_accounts` collection, we will **embed Stripe Connect fields directly in the `handymen` collection**. This approach is simpler, requires fewer queries, and provides atomic updates.
+
+**Updated `handymen` collection** (add these fields):
 ```javascript
 {
-  userId: "user_id",
-  userType: "cofounder|operator|handyman",
-  stripeAccountId: "acct_xxxxx",
-  accountStatus: "pending|active|restricted",
-  onboardingComplete: true/false,
-  payoutEnabled: true/false,
+  // Existing fields
+  uid: "user_id",
+  name: "John Doe",
+  email: "handyman@example.com",
+  verified: true,
+  status: "active",
+  serviceTypes: [],
+  experienceLevel: "intermediate",
+  // ... other existing fields
+
+  // NEW: Stripe Connect fields
+  stripeConnectAccountId: null, // "acct_xxxxx" after Stripe Connect setup
+  stripeAccountStatus: "pending", // 'pending', 'complete', 'restricted'
+  stripeOnboardingComplete: false, // true when fully onboarded with Stripe
+  stripeDetailsSubmitted: false, // true when KYC details submitted to Stripe
+  stripePayoutsEnabled: false, // true when can receive payouts
+  stripeChargesEnabled: false, // true when can accept payments
+  stripeConnectedAt: null, // timestamp when first connected to Stripe
+  stripeLastSyncedAt: null, // timestamp of last Stripe status sync
+
   createdAt: timestamp,
   updatedAt: timestamp
 }
 ```
+
+**Why embed instead of separate collection?**
+- ✅ Simpler - one document lookup instead of joining two collections
+- ✅ Atomic updates - update handyman and Stripe status together
+- ✅ Easier queries - filter handymen by Stripe status in single query
+- ✅ Less data duplication and consistency issues
+- ✅ Natural relationship - one handyman has one Stripe account
 
 **`payments` collection**
 ```javascript
