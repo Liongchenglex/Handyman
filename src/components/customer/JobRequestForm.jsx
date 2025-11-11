@@ -9,11 +9,11 @@ import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
 
 // Firebase imports
-import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
+import { createAnonymousUser, getCurrentUser, updateJob, createPayment } from '../../services/firebase';
 // Jobs API
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
-import { SERVICE_PRICING, getServicePrice, PLATFORM_FEE } from '../../config/servicePricing';
+import { SERVICE_PRICING, getServicePrice, getPlatformFee } from '../../config/servicePricing';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -237,7 +237,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   };
 
   // Function to handle proceeding to payment
-  const handleProceedToPayment = () => {
+  const handleProceedToPayment = async () => {
     const finalJobData = {
       // Personal details
       customerName: personalData.name,
@@ -260,15 +260,49 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     };
 
     setJobData(finalJobData);
-    setCurrentStep(4); // Go to payment step
-    // Scroll to top of the page
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    try {
+      setIsSubmitting(true);
+
+      // Step 1: Create or get anonymous user FIRST
+      let userId = customerId;
+      if (!userId) {
+        console.log('Creating anonymous user for customer...');
+        const user = await createAnonymousUser({
+          name: finalJobData.customerName,
+          email: finalJobData.customerEmail,
+          phone: finalJobData.customerPhone
+        });
+        userId = user.uid;
+        setCustomerId(userId);
+        console.log('Anonymous user created:', userId);
+      }
+
+      // Step 2: Create job in Firestore BEFORE payment
+      console.log('Creating job in Firestore before payment...');
+      const jobDataWithUser = {
+        ...finalJobData,
+        customerId: userId
+      };
+
+      const createdJob = await createJob(jobDataWithUser);
+      console.log('Job created successfully with ID:', createdJob.id);
+      setCreatedJobId(createdJob.id);
+
+      setIsSubmitting(false);
+      setCurrentStep(4); // Go to payment step
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      console.error('Error creating job:', error);
+      alert(`Failed to create job: ${error.message}`);
+      setIsSubmitting(false);
+    }
   };
 
   // Function to handle successful payment
   const handlePaymentSuccess = async (paymentResultData) => {
     console.log('Payment successful:', paymentResultData);
-    console.log('Job data:', jobData);
+    console.log('Updating job with payment info...');
 
     setIsSubmitting(true);
 
@@ -276,37 +310,42 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       // Store payment result for confirmation screen
       setPaymentResult(paymentResultData);
 
-      // Step 1: Create or get anonymous user
-      let userId = customerId;
-      if (!userId) {
-        console.log('Creating anonymous user for customer...');
-        const user = await createAnonymousUser({
-          name: jobData.customerName,
-          email: jobData.customerEmail,
-          phone: jobData.customerPhone
-        });
-        userId = user.uid;
-        setCustomerId(userId);
-        console.log('Anonymous user created:', userId);
-      }
+      // Update existing job with payment information
+      console.log('Updating job in Firestore with payment info...');
+      await updateJob(createdJobId, {
+        paymentIntentId: paymentResultData.paymentIntent?.id,
+        paymentStatus: 'pending',
+        paymentCreatedAt: new Date().toISOString()
+      });
 
-      // Step 2: Create job in Firebase
-      console.log('Creating job in Firestore...');
-      const completeJobData = {
-        ...jobData,
-        customerId: userId,
-        paymentResult: paymentResultData
-      };
+      console.log('Job updated with payment info');
 
-      const createdJob = await createJob(completeJobData);
-      console.log('Job created successfully:', createdJob);
-      setCreatedJobId(createdJob.id);
+      // Create payment record in payments collection
+      // Use total amount (service fee + platform fee) from paymentResultData
+      const totalAmount = paymentResultData.paymentIntent?.amount || (jobData.estimatedBudget + getPlatformFee(jobData.estimatedBudget));
 
-      // Step 3: Call parent callback if provided
+      await createPayment({
+        jobId: createdJobId,
+        customerId: customerId,
+        amount: totalAmount, // Total including platform fee
+        serviceFee: jobData.estimatedBudget || 120, // Service fee only (for reference)
+        platformFee: getPlatformFee(jobData.estimatedBudget || 120), // Platform fee only (for reference)
+        currency: 'sgd',
+        status: paymentResultData.paymentIntent?.status || 'pending',
+        paymentIntentId: paymentResultData.paymentIntent?.id,
+        paymentMethod: paymentResultData.paymentIntent?.payment_method,
+        clientSecret: paymentResultData.paymentIntent?.client_secret,
+        stripeResponse: paymentResultData
+      });
+
+      console.log('Payment record created');
+
+      // Call parent callback if provided
       if (onJobCreated) {
         onJobCreated({
-          ...createdJob,
-          paymentStatus: 'completed',
+          id: createdJobId,
+          ...jobData,
+          paymentStatus: 'pending',
           paymentResult: paymentResultData
         });
       }
@@ -315,8 +354,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setCurrentStep(5);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
-      console.error('Error creating job:', error);
-      alert(`Failed to create job: ${error.message}. Please contact support with payment confirmation.`);
+      console.error('Error updating job with payment:', error);
+      alert(`Payment recorded but failed to update job: ${error.message}. Please contact support.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -701,13 +740,13 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   <span className="font-medium">${getServicePrice(selectedCategory)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-500">Platform Fee:</span>
-                  <span className="text-gray-500 dark:text-gray-500">${PLATFORM_FEE}</span>
+                  <span className="text-gray-500 dark:text-gray-500">Platform Fee (10%):</span>
+                  <span className="text-gray-500 dark:text-gray-500">${getPlatformFee(getServicePrice(selectedCategory)).toFixed(2)}</span>
                 </div>
                 <div className="border-t border-primary/20 dark:border-primary/30 pt-2 mt-2">
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-lg">Total:</span>
-                    <span className="font-bold text-lg text-primary">${getServicePrice(selectedCategory) + PLATFORM_FEE}</span>
+                    <span className="font-bold text-lg text-primary">${(getServicePrice(selectedCategory) + getPlatformFee(getServicePrice(selectedCategory))).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -777,7 +816,11 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 ) : (
                   <PaymentForm
                     amount={getServicePrice(selectedCategory)}
-                    jobId={null} // Will be created after payment
+                    jobId={createdJobId} // Real job ID - job created before payment
+                    serviceType={selectedCategory}
+                    customerId={customerId}
+                    handymanId={null} // Handyman not yet assigned
+                    customerEmail={jobData.customerEmail}
                     onPaymentSuccess={handlePaymentSuccess}
                   />
                 )}

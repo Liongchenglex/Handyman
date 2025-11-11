@@ -1,5 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { getPlatformFee } from '../../config/servicePricing';
 
 /**
  * ConfirmationScreen Component
@@ -19,6 +20,11 @@ const ConfirmationScreen = ({
 }) => {
   // Generate a mock job ID for display purposes (in real app, this would come from backend)
   const jobId = paymentResult?.jobId || `JOB-${Date.now().toString().slice(-6)}`;
+
+  // Calculate total amount (service fee + platform fee)
+  const serviceFee = jobData.estimatedBudget || 120;
+  const platformFee = getPlatformFee(serviceFee);
+  const totalAmount = serviceFee + platformFee;
 
   // Format payment amount for display
   const formatAmount = (amount) => {
@@ -70,9 +76,9 @@ const ConfirmationScreen = ({
             <p className="text-gray-600 dark:text-gray-400 text-lg leading-relaxed">
               Your job request has been submitted and payment of{' '}
               <span className="font-semibold text-primary">
-                {formatAmount(jobData.estimatedBudget)}
+                {formatAmount(totalAmount)}
               </span>{' '}
-              has been processed successfully.
+              has been authorized successfully (service fee: {formatAmount(serviceFee)} + platform fee: {formatAmount(platformFee)}).
             </p>
           </div>
 

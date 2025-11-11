@@ -11,7 +11,6 @@ import {
   getAvailableJobs as getAvailableJobsFirebase,
   getJobsByCustomer,
   getJobsByHandyman,
-  createPayment,
   uploadImage
 } from '../firebase';
 
@@ -82,7 +81,7 @@ export const createJob = async (jobData) => {
       status: 'pending',
       handymanId: null, // Initialize as null, will be set when handyman expresses interest
       imageUrls: imageUrls,
-      paymentStatus: jobData.paymentResult ? 'completed' : 'pending',
+      paymentStatus: jobData.paymentResult ? 'pending' : 'pending', // Payment intent created but not captured yet
       paymentIntentId: jobData.paymentResult?.paymentIntent?.id || null
     };
 
@@ -90,20 +89,8 @@ export const createJob = async (jobData) => {
     const jobId = await createJobFirebase(firestoreJobData);
     console.log('Job created successfully with ID:', jobId);
 
-    // Create payment record if payment was made
-    if (jobData.paymentResult) {
-      await createPayment({
-        jobId: jobId,
-        customerId: jobData.customerId,
-        amount: jobData.estimatedBudget || 120,
-        currency: 'sgd',
-        status: 'succeeded',
-        paymentIntentId: jobData.paymentResult.paymentIntent?.id,
-        paymentMethod: jobData.paymentResult.paymentIntent?.payment_method,
-        stripeResponse: jobData.paymentResult
-      });
-      console.log('Payment record created for job:', jobId);
-    }
+    // Note: Payment record is now created in JobRequestForm after card confirmation
+    // This ensures the job exists BEFORE payment, and payment data is accurate
 
     // Return complete job object
     return {

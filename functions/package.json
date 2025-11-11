@@ -2,7 +2,7 @@
   "name": "handyman-functions",
   "version": "1.0.0",
   "description": "Firebase Functions for handyman platform",
-  "main": "lib/index.js",
+  "main": "index.js",
   "scripts": {
     "build": "tsc",
     "serve": "npm run build && firebase emulators:start --only functions",
@@ -12,7 +12,7 @@
     "logs": "firebase functions:log"
   },
   "engines": {
-    "node": "18"
+    "node": "20"
   },
   "dependencies": {
     "firebase-admin": "^11.5.0",

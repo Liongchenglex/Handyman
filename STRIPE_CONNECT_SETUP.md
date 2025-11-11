@@ -59,10 +59,10 @@ This approach gives you maximum control over escrow and splits.
 ┌─────────────────────────────────────────┐
 │   Payment Split (3-way)                 │
 ├─────────────────────────────────────────┤
-│   Cofounder: $X                         │
-│   Business Operator: $Y                 │
-│   Service Provider: $Z                  │
-│   (where X + Y + Z = $120)              │
+│   Service Provider: $120 (100% service) │
+│   Cofounder: $2.50 (50% platform fee)   │
+│   Operator: $2.50 (50% platform fee)    │
+│   (Service: $120 + Platform: $5)        │
 └─────────────────────────────────────────┘
        │
        ▼
@@ -304,9 +304,9 @@ Instead of creating a separate `stripe_accounts` collection, we will **embed Str
 
   // Split configuration
   splits: {
-    cofounder: 40,
-    operator: 40,
-    handyman: 40
+    handyman: 120,     // 100% of service fee
+    cofounder: 2.50,   // 50% of platform fee
+    operator: 2.50     // 50% of platform fee
   },
 
   // Transfer IDs (after release)
@@ -346,10 +346,14 @@ export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 export const STRIPE_CONFIG = {
   platformFee: 5, // $5 platform fee
   splits: {
-    cofounder: 0.33, // 33% of service fee
-    operator: 0.33,  // 33% of service fee
-    handyman: 0.34   // 34% of service fee (to handle rounding)
-  }
+    // Handyman gets 100% of service fee
+    // Platform fee is split 50/50 between cofounder and operator
+    cofounderPlatformShare: 0.50, // 50% of platform fee
+    operatorPlatformShare: 0.50,  // 50% of platform fee
+    handymanServiceShare: 1.00    // 100% of service fee
+  },
+  escrowAutoReleaseDays: 3, // Working days before auto-release
+  payoutSchedule: 'daily' // 'daily' or 'instant'
 };
 ```
 
@@ -494,12 +498,14 @@ const serviceFee = 120;
 const platformFee = 5;
 const totalCharged = 125; // Customer pays this
 
-// Service fee split (3-way)
-const cofounderShare = Math.floor(serviceFee * 0.33); // $39.60 → $39
-const operatorShare = Math.floor(serviceFee * 0.33);  // $39.60 → $39
-const handymanShare = serviceFee - cofounderShare - operatorShare; // $42
+// Payment split:
+// - Handyman gets 100% of service fee
+// - Platform fee is split 50/50 between cofounder and operator
+const handymanShare = serviceFee;                    // $120 (100% of service)
+const cofounderShare = platformFee * 0.50;           // $2.50 (50% of platform fee)
+const operatorShare = platformFee * 0.50;            // $2.50 (50% of platform fee)
 
-// Platform keeps the $5 platform fee
+// Total: $120 + $2.50 + $2.50 = $125 ✓
 ```
 
 **Note:** Consider making split percentages configurable per job or service type.
@@ -564,10 +570,10 @@ Stripe fee (3.4% + 0.50): $4.75
 Net received: $120.25
 
 Split:
-- Cofounder: $40.00
-- Operator: $40.00
-- Handyman: $40.00
-- Platform net: $0.25 (after Stripe fees)
+- Cofounder: $12.00
+- Operator: $12.00
+- Handyman: $96.00
+- Platform net: $5.25 (platform fee + remaining after Stripe fees)
 ```
 
 **Important:** Consider who absorbs Stripe fees (customer, platform, or split across parties).
@@ -627,13 +633,13 @@ Split:
 
 ## Questions to Answer Before Implementation
 
-1. **Split percentages:** What % should each party receive?
-   - Cofounder: ____%
-   - Operator: ____%
-   - Handyman: ____%
+1. **Split structure:** ✅ **DECIDED**
+   - Handyman: 100% of service fee
+   - Cofounder: 50% of platform fee ($2.50)
+   - Operator: 50% of platform fee ($2.50)
 
 2. **Escrow period:** How long should we hold funds?
-   - Suggested: 7 days with auto-release
+   - i want to be able to hold a payment in escrow until there is a status change in the db for a job. For context, the a job is created by the customer. A handyman will accept the job. Once accepted there will be a button of mark as complete. when handyman mark a job as complete, customer will get a whatsapp notficiation to confirm. Once confirmed, the payment will only be released. If customer dont confirm, the payment will be released 3 working days after the status remains at pending confirmation
 
 3. **Who pays Stripe fees?**
    - Option A: Customer (add to total)
@@ -646,9 +652,7 @@ Split:
    - Dispute mediation process?
 
 5. **Payout schedule:** How often do handymen get paid?
-   - Instant (more fees)
-   - Daily
-   - Weekly (Stripe default)
+   - daily with the option of instant
 
 ## Resources
 

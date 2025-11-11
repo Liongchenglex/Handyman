@@ -18,10 +18,9 @@ export const SERVICE_PRICING = {
 };
 
 /**
- * Platform fee charged on top of service fee
- * This is a flat fee added to all services
+ * Platform fee percentage (10% of service fee)
  */
-export const PLATFORM_FEE = 5;
+export const PLATFORM_FEE_PERCENTAGE = 0.10;
 
 /**
  * Get the price for a specific service type
@@ -33,13 +32,26 @@ export const getServicePrice = (serviceType) => {
 };
 
 /**
+ * Calculate the platform fee (10% of service price)
+ * @param {string|number} serviceTypeOrPrice - The service type or price
+ * @returns {number} The platform fee amount
+ */
+export const getPlatformFee = (serviceTypeOrPrice) => {
+  const servicePrice = typeof serviceTypeOrPrice === 'string'
+    ? getServicePrice(serviceTypeOrPrice)
+    : serviceTypeOrPrice;
+  return servicePrice * PLATFORM_FEE_PERCENTAGE;
+};
+
+/**
  * Get the total amount including platform fee
  * @param {string} serviceType - The service type
  * @returns {number} The total amount (service price + platform fee)
  */
 export const getTotalAmount = (serviceType) => {
   const servicePrice = getServicePrice(serviceType);
-  return servicePrice + PLATFORM_FEE;
+  const platformFee = getPlatformFee(servicePrice);
+  return servicePrice + platformFee;
 };
 
 /**
