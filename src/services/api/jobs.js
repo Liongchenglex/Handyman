@@ -78,7 +78,7 @@ export const createJob = async (jobData) => {
       materials: jobData.materials,
       siteVisit: jobData.siteVisit,
       estimatedBudget: jobData.estimatedBudget || 120,
-      status: 'pending',
+      status: jobData.status || 'pending', // Use status from jobData (e.g., 'awaiting_payment'), default to 'pending'
       handymanId: null, // Initialize as null, will be set when handyman expresses interest
       imageUrls: imageUrls,
       paymentStatus: jobData.paymentResult ? 'pending' : 'pending', // Payment intent created but not captured yet

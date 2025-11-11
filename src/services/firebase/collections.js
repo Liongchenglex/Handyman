@@ -31,7 +31,8 @@ export const COLLECTIONS = {
  * Job Status Enum
  */
 export const JOB_STATUS = {
-  PENDING: 'pending',
+  AWAITING_PAYMENT: 'awaiting_payment', // Job created but payment not yet authorized
+  PENDING: 'pending', // Payment authorized, job visible to handymen
   IN_PROGRESS: 'in_progress',
   PENDING_CONFIRMATION: 'pending_confirmation', // Handyman marked as complete, awaiting customer confirmation
   COMPLETED: 'completed',
@@ -104,7 +105,8 @@ export const updateUser = async (userId, updates) => {
 export const createJob = async (jobData) => {
   const job = {
     ...jobData,
-    status: JOB_STATUS.PENDING,
+    // Preserve status from jobData (e.g., 'awaiting_payment'), or default to 'pending'
+    status: jobData.status || JOB_STATUS.PENDING,
     createdAt: new Date().toISOString()
   };
   return await createDocument(COLLECTIONS.JOBS, job);
@@ -150,6 +152,8 @@ export const getJobsByHandyman = async (handymanId) => {
 
 /**
  * Get available jobs (pending status)
+ * Only returns jobs with 'pending' status (payment authorized)
+ * Excludes jobs with 'awaiting_payment' status (not yet paid)
  */
 export const getAvailableJobs = async (serviceType = null) => {
   const conditions = [

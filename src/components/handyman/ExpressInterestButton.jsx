@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { sendTemplateMessage } from '../../services/whatsappService';
 
 /**
  * ExpressInterestButton Component
@@ -52,6 +53,30 @@ const ExpressInterestButton = ({
       });
 
       console.log('Successfully expressed interest in job:', job.id);
+
+      // Send WhatsApp notification to customer
+      if (job.customerPhone) {
+        try {
+          console.log('Sending job acceptance WhatsApp notification...');
+          const whatsappResult = await sendTemplateMessage(
+            job.customerPhone,
+            'hello_world',
+            'en_US'
+          );
+
+          if (whatsappResult.success) {
+            console.log('✅ WhatsApp notification sent to customer');
+          } else if (whatsappResult.fallback) {
+            console.log('⚠️ WhatsApp not configured - notification logged to console');
+          } else {
+            console.error('❌ Failed to send WhatsApp notification:', whatsappResult.error);
+          }
+        } catch (whatsappError) {
+          console.error('Error sending WhatsApp notification:', whatsappError);
+          // Don't block the flow if WhatsApp fails
+        }
+      }
+
       alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
 
       // Execute callbacks

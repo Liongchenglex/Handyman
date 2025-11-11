@@ -14,6 +14,8 @@ import { createAnonymousUser, getCurrentUser, updateJob, createPayment } from '.
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
 import { SERVICE_PRICING, getServicePrice, getPlatformFee } from '../../config/servicePricing';
+// WhatsApp service
+import { sendJobCreationNotification } from '../../services/whatsappService';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -254,7 +256,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       materials: selectedMaterials,
       siteVisit: selectedSiteVisit,
       estimatedBudget: getServicePrice(selectedCategory),
-      status: 'pending',
+      status: 'awaiting_payment', // Job not visible to handymen until payment is authorized
       createdAt: new Date(),
       images: uploadedImages
     };
@@ -314,8 +316,9 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       console.log('Updating job in Firestore with payment info...');
       await updateJob(createdJobId, {
         paymentIntentId: paymentResultData.paymentIntent?.id,
-        paymentStatus: 'pending',
-        paymentCreatedAt: new Date().toISOString()
+        paymentStatus: 'authorized', // Payment authorized (held in escrow)
+        paymentCreatedAt: new Date().toISOString(),
+        status: 'pending' // Now visible to handymen - payment has been authorized
       });
 
       console.log('Job updated with payment info');
@@ -339,6 +342,26 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       });
 
       console.log('Payment record created');
+
+      // Send WhatsApp notification to customer after successful payment
+      try {
+        console.log('Sending job creation WhatsApp notification after payment...');
+        const whatsappResult = await sendJobCreationNotification({
+          ...jobData,
+          id: createdJobId
+        });
+
+        if (whatsappResult.success) {
+          console.log('✅ WhatsApp notification sent to customer');
+        } else if (whatsappResult.fallback) {
+          console.log('⚠️ WhatsApp not configured - notification logged to console');
+        } else {
+          console.error('❌ Failed to send WhatsApp notification:', whatsappResult.error);
+        }
+      } catch (whatsappError) {
+        console.error('Error sending WhatsApp notification:', whatsappError);
+        // Don't block the flow if WhatsApp fails
+      }
 
       // Call parent callback if provided
       if (onJobCreated) {

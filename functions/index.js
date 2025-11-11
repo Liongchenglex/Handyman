@@ -781,3 +781,68 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
+
+// ===================================
+// SCHEDULED FUNCTIONS
+// ===================================
+
+/**
+ * Cleanup Abandoned Jobs
+ *
+ * Runs every hour to delete jobs that have been in 'awaiting_payment' status
+ * for more than 30 minutes. These are jobs where the customer started the
+ * payment process but never completed it (closed browser, card declined, etc.)
+ *
+ * This prevents unpaid jobs from cluttering the database and ensures
+ * handymen only see jobs with authorized payments.
+ */
+exports.cleanupAbandonedJobs = functions.pubsub
+  .schedule('every 1 hours')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    try {
+      console.log('🧹 Starting cleanup of abandoned jobs...');
+
+      // Calculate cutoff time (30 minutes ago)
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      const cutoffTime = admin.firestore.Timestamp.fromDate(thirtyMinutesAgo);
+
+      // Query jobs in 'awaiting_payment' status older than 30 minutes
+      const abandonedJobsSnapshot = await admin.firestore()
+        .collection('jobs')
+        .where('status', '==', 'awaiting_payment')
+        .where('createdAt', '<', cutoffTime.toDate().toISOString())
+        .get();
+
+      if (abandonedJobsSnapshot.empty) {
+        console.log('✅ No abandoned jobs found');
+        return null;
+      }
+
+      console.log(`Found ${abandonedJobsSnapshot.size} abandoned jobs to delete`);
+
+      // Delete abandoned jobs in batch
+      const batch = admin.firestore().batch();
+      const deletedJobIds = [];
+
+      abandonedJobsSnapshot.forEach((doc) => {
+        batch.delete(doc.ref);
+        deletedJobIds.push(doc.id);
+        console.log(`Deleting abandoned job: ${doc.id}`);
+      });
+
+      await batch.commit();
+
+      console.log(`✅ Successfully deleted ${deletedJobIds.length} abandoned jobs`);
+      console.log('Deleted job IDs:', deletedJobIds);
+
+      return {
+        success: true,
+        deletedCount: deletedJobIds.length,
+        deletedJobIds: deletedJobIds
+      };
+    } catch (error) {
+      console.error('❌ Error cleaning up abandoned jobs:', error);
+      throw error;
+    }
+  });

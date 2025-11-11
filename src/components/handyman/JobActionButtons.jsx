@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { sendJobCompletionNotification } from '../../services/whatsappService';
 
 /**
  * JobActionButtons Component
@@ -19,17 +20,6 @@ const JobActionButtons = ({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
-
-  /**
-   * Placeholder function for sending WhatsApp notifications
-   * TODO: Implement actual WhatsApp API integration
-   */
-  const sendWhatsAppNotification = async (customerPhone, message) => {
-    console.log('📱 WhatsApp Notification [PLACEHOLDER]:');
-    console.log(`To: ${customerPhone}`);
-    console.log(`Message: ${message}`);
-    // TODO: Replace with actual WhatsApp Business API call
-  };
 
   const handleMarkInProgress = async () => {
     try {
@@ -76,11 +66,23 @@ const JobActionButtons = ({
 
         // Send WhatsApp notification to customer
         if (job.customerPhone) {
-          const message = `Hello ${job.customerName}, your handyman has marked the job "${job.serviceType}" as complete. Please review and confirm completion in the app.`;
-          await sendWhatsAppNotification(job.customerPhone, message);
+          const handymanInfo = {
+            name: user.displayName || user.email,
+            uid: user.uid
+          };
+
+          const whatsappResult = await sendJobCompletionNotification(job, handymanInfo);
+
+          if (whatsappResult.success) {
+            console.log('✅ WhatsApp notification sent to customer');
+          } else if (whatsappResult.fallback) {
+            console.log('⚠️ WhatsApp not configured - notification logged to console');
+          } else {
+            console.error('❌ Failed to send WhatsApp notification:', whatsappResult.error);
+          }
         }
 
-        alert('Job marked as complete! Customer has been notified and will confirm completion.');
+        alert('Job marked as complete! Customer has been notified via WhatsApp.');
 
         // Navigate back to dashboard if on detail page
         if (variant === 'full') {
