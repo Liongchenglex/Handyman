@@ -286,7 +286,7 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
 
       console.log(`Creating payment intent for job: ${jobId}`);
 
-      // Calculate total (service fee + 10% platform fee)
+      // Calculate total (service fee + 10% platform fee) - needed for all code paths
       const platformFeePercentage = 0.10;
       const platformFee = serviceFee * platformFeePercentage;
       const totalAmount = serviceFee + platformFee;
@@ -294,46 +294,100 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
 
       console.log(`Service Fee: $${serviceFee}, Platform Fee (10%): $${platformFee}, Total: $${totalAmount}`);
 
-      // Create payment intent with manual capture (for escrow)
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: amountInCents,
-        currency: 'sgd',
-        payment_method_types: ['card'],
-        capture_method: 'manual', // Hold funds until manually captured
-        receipt_email: customerEmail || null,
-        description: `${serviceType} service - Job #${jobId}`,
-        metadata: {
-          jobId: jobId,
-          customerId: customerId,
-          handymanId: handymanId,
-          serviceFee: serviceFee.toString(),
-          platformFee: platformFee.toString(),
-          totalAmount: totalAmount.toString(),
-          serviceType: serviceType,
-          platform: 'handyman-platform',
-        },
-        statement_descriptor: 'HANDYMAN SVC',
-        statement_descriptor_suffix: serviceType.substring(0, 10),
-      });
+      // Use Firestore transaction to prevent race conditions
+      // This ensures atomic check-and-set of payment intent ID
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      let paymentIntent;
+      let shouldCreateNewIntent = false;
 
-      // Update job document with payment intent ID (if it exists)
       try {
-        const jobRef = admin.firestore().collection('jobs').doc(jobId);
-        const jobDoc = await jobRef.get();
+        await admin.firestore().runTransaction(async (transaction) => {
+          const jobDoc = await transaction.get(jobRef);
 
-        if (jobDoc.exists) {
-          await jobRef.update({
-            paymentIntentId: paymentIntent.id,
-            paymentStatus: 'pending',
-            paymentCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          if (jobDoc.exists && jobDoc.data().paymentIntentId) {
+            // Job already has a payment intent - retrieve and return it
+            const existingPaymentIntentId = jobDoc.data().paymentIntentId;
+            console.log(`⚠️ Job already has payment intent: ${existingPaymentIntentId}`);
+
+            // Note: We can't return from here directly, so we'll set a flag
+            paymentIntent = { id: existingPaymentIntentId, isExisting: true };
+          } else {
+            // Mark that we need to create a new payment intent
+            // Reserve this job by setting a temporary flag in the transaction
+            shouldCreateNewIntent = true;
+
+            if (jobDoc.exists) {
+              transaction.update(jobRef, {
+                paymentIntentCreating: true,
+                paymentIntentReservedAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+            }
+          }
+        });
+
+        // If an existing payment intent was found, retrieve it from Stripe
+        if (paymentIntent && paymentIntent.isExisting) {
+          const existingPaymentIntent = await stripe.paymentIntents.retrieve(paymentIntent.id);
+
+          return res.status(200).json({
+            success: true,
+            paymentIntentId: existingPaymentIntent.id,
+            clientSecret: existingPaymentIntent.client_secret,
+            amount: existingPaymentIntent.amount / 100,
+            currency: existingPaymentIntent.currency,
+            status: existingPaymentIntent.status,
+            message: 'Using existing payment intent'
           });
-          console.log(`✅ Updated job document ${jobId} with payment intent`);
-        } else {
-          console.log(`⚠️ Job document ${jobId} does not exist yet (using temporary ID for testing)`);
         }
-      } catch (firestoreError) {
-        console.warn(`⚠️ Could not update job document: ${firestoreError.message}`);
-        // Don't fail the entire request if Firestore update fails
+
+        // Create new payment intent if needed
+        if (shouldCreateNewIntent) {
+
+          // Create NEW payment intent with manual capture (for escrow)
+          paymentIntent = await stripe.paymentIntents.create({
+            amount: amountInCents,
+            currency: 'sgd',
+            payment_method_types: ['card'],
+            capture_method: 'manual', // Hold funds until manually captured
+            receipt_email: customerEmail || null,
+            description: `${serviceType} service - Job #${jobId}`,
+            metadata: {
+              jobId: jobId,
+              customerId: customerId,
+              handymanId: handymanId,
+              serviceFee: serviceFee.toString(),
+              platformFee: platformFee.toString(),
+              totalAmount: totalAmount.toString(),
+              serviceType: serviceType,
+              platform: 'handyman-platform',
+            },
+            statement_descriptor: 'HANDYMAN SVC',
+            statement_descriptor_suffix: serviceType.substring(0, 10),
+          });
+
+          // Update job document with the actual payment intent ID
+          try {
+            const jobDoc = await jobRef.get();
+
+            if (jobDoc.exists) {
+              await jobRef.update({
+                paymentIntentId: paymentIntent.id,
+                paymentStatus: 'pending',
+                paymentCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                paymentIntentCreating: admin.firestore.FieldValue.delete(), // Remove temporary flag
+              });
+              console.log(`✅ Updated job document ${jobId} with payment intent`);
+            } else {
+              console.log(`⚠️ Job document ${jobId} does not exist yet (using temporary ID for testing)`);
+            }
+          } catch (firestoreError) {
+            console.warn(`⚠️ Could not update job document: ${firestoreError.message}`);
+            // Don't fail the entire request if Firestore update fails
+          }
+        }
+      } catch (transactionError) {
+        console.error('❌ Transaction error:', transactionError);
+        throw new Error(`Failed to check/create payment intent: ${transactionError.message}`);
       }
 
       console.log(`✅ Payment intent created: ${paymentIntent.id}`);

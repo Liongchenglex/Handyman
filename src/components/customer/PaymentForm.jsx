@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements } from '@stripe/react-stripe-js';
 import { createPaymentIntent } from '../../services/stripe/stripeApi';
@@ -7,6 +7,10 @@ import { getPlatformFee } from '../../config/servicePricing';
 
 // Load Stripe with your publishable key
 const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
+
+// Global tracker for payment intents - persists across component mounts/unmounts
+// This prevents duplicate payment intent creation even if component remounts
+const paymentIntentTracker = new Map();
 
 const PaymentForm = ({
   amount,
@@ -20,6 +24,7 @@ const PaymentForm = ({
   const [isCreatingIntent, setIsCreatingIntent] = useState(false);
   const [clientSecret, setClientSecret] = useState(null);
   const [error, setError] = useState(null);
+  const isCreatingRef = useRef(false); // Prevent concurrent creation within same component instance
 
   const serviceFee = parseFloat(amount) || 120;
   const platformFee = getPlatformFee(serviceFee); // 10% of service fee
@@ -27,6 +32,29 @@ const PaymentForm = ({
 
   // Create payment intent on component mount
   useEffect(() => {
+    // Check if this jobId already has a payment intent being created or created
+    if (!jobId || isCreatingRef.current) {
+      return;
+    }
+
+    // Check global tracker - if this jobId was already processed, use cached result
+    if (paymentIntentTracker.has(jobId)) {
+      const cachedResult = paymentIntentTracker.get(jobId);
+      if (cachedResult.clientSecret) {
+        console.log('⚡ Using cached payment intent for job:', jobId);
+        setClientSecret(cachedResult.clientSecret);
+        return;
+      }
+      // If creation is in progress, wait
+      if (cachedResult.isCreating) {
+        console.log('⏳ Payment intent creation already in progress for job:', jobId);
+        return;
+      }
+    }
+
+    // Mark as creating in global tracker
+    paymentIntentTracker.set(jobId, { isCreating: true, clientSecret: null });
+    isCreatingRef.current = true;
     const createIntent = async () => {
       setIsCreatingIntent(true);
       setError(null);
@@ -61,16 +89,32 @@ const PaymentForm = ({
 
         // Store client secret for card collection
         setClientSecret(result.clientSecret);
+
+        // Update global tracker with successful result
+        paymentIntentTracker.set(jobId, {
+          isCreating: false,
+          clientSecret: result.clientSecret,
+          paymentIntentId: result.paymentIntentId
+        });
+
         setIsCreatingIntent(false);
       } catch (err) {
         console.error('❌ Error creating payment intent:', err);
         setError(err.response?.data?.message || err.message || 'Failed to initialize payment. Please try again.');
+
+        // Remove from tracker on error to allow retry
+        paymentIntentTracker.delete(jobId);
+        isCreatingRef.current = false;
+
         setIsCreatingIntent(false);
       }
     };
 
     createIntent();
-  }, [jobId, serviceFee, platformFee, totalAmount, customerId, handymanId, serviceType, customerEmail]);
+
+    // Cleanup: Don't reset refs/tracker - they should persist across remounts
+    // This prevents duplicate payment intent creation if component remounts
+  }, [jobId]); // Only re-create if jobId changes (prevents duplicate payment intents)
 
   // Handle successful card confirmation
   const handleCardSuccess = (paymentIntent) => {
