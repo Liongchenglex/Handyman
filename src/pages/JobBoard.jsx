@@ -9,7 +9,7 @@ const JobBoard = () => {
           <h1>Job Board</h1>
           <p>Browse and apply for available handyman jobs in Singapore</p>
         </div>
-        
+
         <JobBoardComponent />
       </div>
     </div>

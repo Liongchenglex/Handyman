@@ -102,9 +102,9 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
 
       // Update handyman document in Firestore
       await admin.firestore().collection('handymen').doc(uid).update({
-        stripeConnectAccountId: account.id,
+        stripeConnectedAccountId: account.id,
         stripeAccountStatus: 'pending',
-        stripeOnboardingComplete: false,
+        stripeOnboardingCompleted: false,
         stripeDetailsSubmitted: false,
         stripePayoutsEnabled: account.payouts_enabled,
         stripeChargesEnabled: account.charges_enabled,
@@ -140,16 +140,23 @@ exports.createAccountLink = functions.https.onRequest((req, res) => {
     }
 
     try {
-      const { accountId } = req.body;
+      const { accountId, refreshUrl, returnUrl } = req.body;
 
       if (!accountId) {
         return res.status(400).json({ error: 'Missing accountId' });
       }
 
+      // Use provided URLs or fallback to defaults
+      const refresh_url = refreshUrl || 'http://localhost:3000/handyman-dashboard?stripe_refresh=true';
+      const return_url = returnUrl || 'http://localhost:3000/handyman-dashboard?stripe_onboarding=complete';
+
+      console.log(`Creating account link for account: ${accountId}`);
+      console.log(`Return URL: ${return_url}`);
+
       const accountLink = await stripe.accountLinks.create({
         account: accountId,
-        refresh_url: 'http://localhost:3000/handyman/stripe/refresh',
-        return_url: 'http://localhost:3000/handyman/stripe/success',
+        refresh_url: refresh_url,
+        return_url: return_url,
         type: 'account_onboarding',
       });
 
@@ -754,15 +761,15 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         if (firebaseUid) {
           await admin.firestore().collection('handymen').doc(firebaseUid).update({
             stripeAccountStatus: account.details_submitted ? 'complete' : 'pending',
-            stripeOnboardingComplete: account.details_submitted &&
-                                      account.charges_enabled &&
-                                      account.payouts_enabled,
+            stripeOnboardingCompleted: account.details_submitted &&
+                                       account.charges_enabled &&
+                                       account.payouts_enabled,
             stripeDetailsSubmitted: account.details_submitted,
             stripePayoutsEnabled: account.payouts_enabled,
             stripeChargesEnabled: account.charges_enabled,
             stripeLastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
-          console.log(`Account updated for handyman: ${firebaseUid}`);
+          console.log(`✅ Account updated for handyman: ${firebaseUid}, Status: ${account.details_submitted ? 'complete' : 'pending'}`);
         }
         break;
 

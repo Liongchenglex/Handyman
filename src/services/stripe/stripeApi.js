@@ -137,12 +137,15 @@ export const createConnectedAccount = async (handymanData) => {
 /**
  * Generate Stripe onboarding link for handyman
  *
- * @param {string} accountId - Stripe account ID
+ * @param {Object} linkData
+ * @param {string} linkData.accountId - Stripe account ID
+ * @param {string} linkData.refreshUrl - URL to redirect if link expires
+ * @param {string} linkData.returnUrl - URL to redirect after onboarding complete
  * @returns {Promise<Object>} Onboarding link with URL
  */
-export const createAccountLink = async (accountId) => {
+export const createAccountLink = async (linkData) => {
   try {
-    const response = await axios.post(`${BASE_URL}/createAccountLink`, { accountId });
+    const response = await axios.post(`${BASE_URL}/createAccountLink`, linkData);
     return response.data;
   } catch (error) {
     console.error('Error creating account link:', error);

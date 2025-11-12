@@ -209,6 +209,10 @@ export const createHandyman = async (handymanId, handymanData) => {
     isAvailable: true,
     rating: 0,
     totalJobs: 0,
+    // Stripe Connect fields
+    stripeConnectedAccountId: null, // Set when handyman completes Stripe onboarding
+    stripeAccountStatus: null, // 'pending', 'complete', 'disabled'
+    stripeOnboardingCompleted: false, // Boolean for quick checks
     createdAt: new Date().toISOString()
   };
 
