@@ -9,13 +9,11 @@ import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
 
 // Firebase imports
-import { createAnonymousUser, getCurrentUser, updateJob, createPayment } from '../../services/firebase';
+import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
 // Jobs API
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
-import { SERVICE_PRICING, getServicePrice, getPlatformFee } from '../../config/servicePricing';
-// WhatsApp service
-import { sendJobCreationNotification } from '../../services/whatsappService';
+import { SERVICE_PRICING, getServicePrice } from '../../config/servicePricing';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -183,6 +181,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       errors.siteVisit = 'This field is required';
     }
 
+
     if (!notes || notes.trim() === '') {
       errors.notes = 'This field is required';
     }
@@ -190,7 +189,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     return errors;
   };
 
-  // Get service types from pricing configuration
+  // Get service types from pricing configuration in servicePricing.js. This is to uipdate the services provided and their fixed pricing.
   const serviceTypes = Object.keys(SERVICE_PRICING);
 
   const timingOptions = ['Immediate', 'Schedule'];
@@ -239,7 +238,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   };
 
   // Function to handle proceeding to payment
-  const handleProceedToPayment = async () => {
+  const handleProceedToPayment = () => {
     const finalJobData = {
       // Personal details
       customerName: personalData.name,
@@ -256,55 +255,21 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       materials: selectedMaterials,
       siteVisit: selectedSiteVisit,
       estimatedBudget: getServicePrice(selectedCategory),
-      status: 'awaiting_payment', // Job not visible to handymen until payment is authorized
+      status: 'pending',
       createdAt: new Date(),
       images: uploadedImages
     };
 
     setJobData(finalJobData);
-
-    try {
-      setIsSubmitting(true);
-
-      // Step 1: Create or get anonymous user FIRST
-      let userId = customerId;
-      if (!userId) {
-        console.log('Creating anonymous user for customer...');
-        const user = await createAnonymousUser({
-          name: finalJobData.customerName,
-          email: finalJobData.customerEmail,
-          phone: finalJobData.customerPhone
-        });
-        userId = user.uid;
-        setCustomerId(userId);
-        console.log('Anonymous user created:', userId);
-      }
-
-      // Step 2: Create job in Firestore BEFORE payment
-      console.log('Creating job in Firestore before payment...');
-      const jobDataWithUser = {
-        ...finalJobData,
-        customerId: userId
-      };
-
-      const createdJob = await createJob(jobDataWithUser);
-      console.log('Job created successfully with ID:', createdJob.id);
-      setCreatedJobId(createdJob.id);
-
-      setIsSubmitting(false);
-      setCurrentStep(4); // Go to payment step
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } catch (error) {
-      console.error('Error creating job:', error);
-      alert(`Failed to create job: ${error.message}`);
-      setIsSubmitting(false);
-    }
+    setCurrentStep(4); // Go to payment step
+    // Scroll to top of the page
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Function to handle successful payment
   const handlePaymentSuccess = async (paymentResultData) => {
     console.log('Payment successful:', paymentResultData);
-    console.log('Updating job with payment info...');
+    console.log('Job data:', jobData);
 
     setIsSubmitting(true);
 
@@ -312,63 +277,37 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       // Store payment result for confirmation screen
       setPaymentResult(paymentResultData);
 
-      // Update existing job with payment information
-      console.log('Updating job in Firestore with payment info...');
-      await updateJob(createdJobId, {
-        paymentIntentId: paymentResultData.paymentIntent?.id,
-        paymentStatus: 'authorized', // Payment authorized (held in escrow)
-        paymentCreatedAt: new Date().toISOString(),
-        status: 'pending' // Now visible to handymen - payment has been authorized
-      });
-
-      console.log('Job updated with payment info');
-
-      // Create payment record in payments collection
-      // Use total amount (service fee + platform fee) from paymentResultData
-      const totalAmount = paymentResultData.paymentIntent?.amount || (jobData.estimatedBudget + getPlatformFee(jobData.estimatedBudget));
-
-      await createPayment({
-        jobId: createdJobId,
-        customerId: customerId,
-        amount: totalAmount, // Total including platform fee
-        serviceFee: jobData.estimatedBudget || 120, // Service fee only (for reference)
-        platformFee: getPlatformFee(jobData.estimatedBudget || 120), // Platform fee only (for reference)
-        currency: 'sgd',
-        status: paymentResultData.paymentIntent?.status || 'pending',
-        paymentIntentId: paymentResultData.paymentIntent?.id,
-        paymentMethod: paymentResultData.paymentIntent?.payment_method,
-        clientSecret: paymentResultData.paymentIntent?.client_secret,
-        stripeResponse: paymentResultData
-      });
-
-      console.log('Payment record created');
-
-      // Send WhatsApp notification to customer after successful payment
-      try {
-        console.log('Sending job creation WhatsApp notification after payment...');
-        const whatsappResult = await sendJobCreationNotification({
-          ...jobData,
-          id: createdJobId
+      // Step 1: Create or get anonymous user
+      let userId = customerId;
+      if (!userId) {
+        console.log('Creating anonymous user for customer...');
+        const user = await createAnonymousUser({
+          name: jobData.customerName,
+          email: jobData.customerEmail,
+          phone: jobData.customerPhone
         });
-
-        if (whatsappResult.success) {
-          console.log('✅ WhatsApp notification sent to customer');
-        } else if (whatsappResult.fallback) {
-          console.log('⚠️ WhatsApp not configured - notification logged to console');
-        } else {
-          console.error('❌ Failed to send WhatsApp notification:', whatsappResult.error);
-        }
-      } catch (whatsappError) {
-        console.error('Error sending WhatsApp notification:', whatsappError);
-        // Don't block the flow if WhatsApp fails
+        userId = user.uid;
+        setCustomerId(userId);
+        console.log('Anonymous user created:', userId);
       }
 
-      // Call parent callback if provided
+      // Step 2: Create job in Firebase
+      console.log('Creating job in Firestore...');
+      const completeJobData = {
+        ...jobData,
+        customerId: userId,
+        paymentResult: paymentResultData
+      };
+
+      const createdJob = await createJob(completeJobData);
+      console.log('Job created successfully:', createdJob);
+      setCreatedJobId(createdJob.id);
+
+      // Step 3: Call parent callback if provided
       if (onJobCreated) {
         onJobCreated({
-          id: createdJobId,
-          ...jobData,
-          paymentStatus: 'pending',
+          ...createdJob,
+          paymentStatus: 'completed',
           paymentResult: paymentResultData
         });
       }
@@ -377,8 +316,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setCurrentStep(5);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
-      console.error('Error updating job with payment:', error);
-      alert(`Payment recorded but failed to update job: ${error.message}. Please contact support.`);
+      console.error('Error creating job:', error);
+      alert(`Failed to create job: ${error.message}. Please contact support with payment confirmation.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -763,13 +702,13 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   <span className="font-medium">${getServicePrice(selectedCategory)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-500">Platform Fee (10%):</span>
-                  <span className="text-gray-500 dark:text-gray-500">${getPlatformFee(getServicePrice(selectedCategory)).toFixed(2)}</span>
+                  <span className="text-gray-500 dark:text-gray-500">Platform Fee:</span>
+                  <span className="text-gray-500 dark:text-gray-500">$5</span>
                 </div>
                 <div className="border-t border-primary/20 dark:border-primary/30 pt-2 mt-2">
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-lg">Total:</span>
-                    <span className="font-bold text-lg text-primary">${(getServicePrice(selectedCategory) + getPlatformFee(getServicePrice(selectedCategory))).toFixed(2)}</span>
+                    <span className="font-bold text-lg text-primary">${getServicePrice(selectedCategory) + 5}</span>
                   </div>
                 </div>
               </div>
@@ -839,11 +778,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 ) : (
                   <PaymentForm
                     amount={getServicePrice(selectedCategory)}
-                    jobId={createdJobId} // Real job ID - job created before payment
-                    serviceType={selectedCategory}
-                    customerId={customerId}
-                    handymanId={null} // Handyman not yet assigned
-                    customerEmail={jobData.customerEmail}
+                    jobId={null} // Will be created after payment
                     onPaymentSuccess={handlePaymentSuccess}
                   />
                 )}
