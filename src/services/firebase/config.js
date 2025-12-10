@@ -4,6 +4,10 @@
  * This module initializes Firebase and exports core service instances.
  * All environment variables must be set in .env.local file.
  *
+ * Environment-aware configuration:
+ * - Development: Uses 'dev' database on localhost
+ * - Production: Uses '(default)' database on Firebase Hosting
+ *
  * @see FIREBASE_SETUP.md for detailed setup instructions
  */
 
@@ -11,6 +15,7 @@ import { initializeApp } from 'firebase/app';
 import { initializeFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
+import { getFirestoreDatabase } from '../../config/environment';
 
 // Firebase configuration from environment variables
 const firebaseConfig = {
@@ -52,11 +57,20 @@ validateConfig();
 // Initialize Firebase app
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firebase services
+// Get the appropriate database ID based on environment
+const databaseId = getFirestoreDatabase();
+
+// Initialize Firebase services with environment-specific database
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true, // For better compatibility with some environments
-  ignoreUndefinedProperties: true // Ignore undefined properties in documents
+  ignoreUndefinedProperties: true, // Ignore undefined properties in documents
+  databaseId: databaseId // Use environment-specific database ('dev' or '(default)')
 });
+
+// Log which database is being used (only in development)
+if (process.env.NODE_ENV === 'development') {
+  console.log(`🔥 Firebase initialized with database: ${databaseId}`);
+}
 
 export const auth = getAuth(app);
 export const storage = getStorage(app);
