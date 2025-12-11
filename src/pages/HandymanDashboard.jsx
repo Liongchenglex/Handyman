@@ -47,6 +47,13 @@ const HandymanDashboard = () => {
   useEffect(() => {
     const handleStripeReturn = async () => {
       const onboardingParam = searchParams.get('stripe_onboarding');
+      console.log('🔍 [Stripe Return Check]', {
+        onboardingParam,
+        hasUser: !!user,
+        hasUserProfile: !!userProfile,
+        stripeAccountId: userProfile?.handyman?.stripeConnectedAccountId
+      });
+
       if (onboardingParam === 'complete' && user && userProfile?.handyman?.stripeConnectedAccountId) {
         console.log('🔄 Handyman returned from Stripe - verifying completion...');
 
@@ -60,15 +67,16 @@ const HandymanDashboard = () => {
           console.log('📊 Stripe account status:', accountStatus);
 
           // Only mark as complete if Stripe confirms detailsSubmitted and chargesEnabled
-          // Note: Backend returns camelCase fields
-          if (accountStatus.detailsSubmitted && accountStatus.chargesEnabled) {
+          // Note: Backend returns {success: true, status: {...}} structure
+          const status = accountStatus.status;
+          if (status?.detailsSubmitted && status?.chargesEnabled) {
             console.log('✅ Stripe onboarding verified as complete');
 
             await updateHandyman(user.uid, {
               stripeOnboardingCompleted: true,
               stripeAccountStatus: 'complete',
               stripeChargesEnabled: true,
-              stripePayoutsEnabled: accountStatus.payoutsEnabled || false,
+              stripePayoutsEnabled: status.payoutsEnabled || false,
               updatedAt: new Date().toISOString()
             });
 
