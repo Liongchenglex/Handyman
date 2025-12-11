@@ -54,10 +54,10 @@ export const isProduction = () => getEnvironment() === 'production';
 
 /**
  * Get the Firestore database ID based on environment
- * @returns {string} Database ID ('(default)' for production, 'dev' for development)
+ * @returns {string} Database ID ('(default)' for production, 'devs' for development)
  */
 export const getFirestoreDatabase = () => {
-  return isProduction() ? '(default)' : 'dev';
+  return isProduction() ? '(default)' : 'devs';
 };
 
 /**

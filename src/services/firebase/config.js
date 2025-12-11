@@ -5,7 +5,7 @@
  * All environment variables must be set in .env.local file.
  *
  * Environment-aware configuration:
- * - Development: Uses 'dev' database on localhost
+ * - Development: Uses 'devs' database on localhost
  * - Production: Uses '(default)' database on Firebase Hosting
  *
  * @see FIREBASE_SETUP.md for detailed setup instructions
@@ -64,7 +64,7 @@ const databaseId = getFirestoreDatabase();
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true, // For better compatibility with some environments
   ignoreUndefinedProperties: true, // Ignore undefined properties in documents
-  databaseId: databaseId // Use environment-specific database ('dev' or '(default)')
+  databaseId: databaseId // Use environment-specific database ('devs' or '(default)')
 });
 
 // Log which database is being used (only in development)
