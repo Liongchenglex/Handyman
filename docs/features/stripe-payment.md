@@ -689,19 +689,128 @@ await createConnectedAccount({
 ### Onboarding Flow
 
 ```
-1. Create account → Returns accountId
-2. Create onboarding link → Returns URL
-3. Redirect to Stripe Express onboarding
-4. Handyman completes:
-   - Business details
-   - Bank account
-   - ID verification
-5. Return to dashboard
-6. Check account.details_submitted === true
-7. Update Firestore:
-     stripeAccountId: accountId
-     stripeOnboardingComplete: true
+1. Handyman clicks "Set Up Payment Account"
+   → /src/components/handyman/StripeOnboardingPrompt.jsx
+   ↓
+2. Create Stripe Connect account (if not exists)
+   → createConnectedAccount({ uid, email, name, phone })
+   → Returns accountId
+   → Store in Firestore: stripeConnectedAccountId
+   ↓
+3. Create onboarding link
+   → createAccountLink({ accountId, refreshUrl, returnUrl })
+   → returnUrl: /handyman-dashboard?stripe_onboarding=complete
+   → Returns Stripe hosted URL
+   ↓
+4. Redirect to Stripe Express onboarding
+   → window.location.href = stripeOnboardingUrl
+   → Handyman completes on Stripe:
+      - Business details
+      - Bank account information
+      - ID verification
+      - Tax information
+   ↓
+5. Stripe redirects back to returnUrl
+   → /handyman-dashboard?stripe_onboarding=complete
+   ↓
+6. CRITICAL SECURITY CHECK - Verify completion with Stripe API
+   → /src/pages/HandymanDashboard.jsx (useEffect)
+   → Call getAccountStatus(accountId)
+   → Check Stripe response:
+      ✅ account.details_submitted === true
+      ✅ account.charges_enabled === true
+   ↓
+7. If verified complete:
+   → Update Firestore:
+      stripeOnboardingCompleted: true
+      stripeAccountStatus: 'complete'
+      stripeChargesEnabled: true
+      stripePayoutsEnabled: true/false
+   → Reload page → Show full dashboard
+   ↓
+8. If NOT complete:
+   → Remove URL param
+   → Show StripeOnboardingPrompt again
+   → Handyman must complete setup
 ```
+
+### Security: Onboarding Verification
+
+**Critical Edge Case:** Handyman navigates back before completing Stripe onboarding
+
+**Vulnerability (Fixed 2025-12-11):**
+- **Problem**: Previously trusted URL parameter `?stripe_onboarding=complete` blindly
+- **Attack Vector**: Handyman could click browser back button or manually add URL param
+- **Impact**: Dashboard would mark `stripeOnboardingCompleted=true` without verification
+- **Result**: Handyman could accept jobs without payment account setup
+
+**Fix Implementation:**
+```javascript
+// /src/pages/HandymanDashboard.jsx - Stripe Return Handler
+
+useEffect(() => {
+  const handleStripeReturn = async () => {
+    const onboardingParam = searchParams.get('stripe_onboarding');
+
+    if (onboardingParam === 'complete' && user && stripeConnectedAccountId) {
+      // STEP 1: Call Stripe API to verify actual completion
+      const accountStatus = await getAccountStatus(accountId);
+
+      // STEP 2: Check BOTH required fields
+      if (accountStatus.account?.details_submitted &&
+          accountStatus.account?.charges_enabled) {
+        // VERIFIED: Mark as complete
+        await updateHandyman(uid, {
+          stripeOnboardingCompleted: true,
+          stripeAccountStatus: 'complete',
+          stripeChargesEnabled: true,
+          stripePayoutsEnabled: accountStatus.account.payouts_enabled
+        });
+
+        window.location.href = '/handyman-dashboard';
+      } else {
+        // NOT COMPLETE: Remove param, show prompt again
+        window.location.href = '/handyman-dashboard';
+      }
+    }
+  };
+
+  handleStripeReturn();
+}, [user, userProfile, searchParams]);
+```
+
+**Key Security Points:**
+1. ✅ **Never trust URL parameters** - Always verify with authoritative source (Stripe API)
+2. ✅ **Check multiple fields** - Both `details_submitted` AND `charges_enabled` must be true
+3. ✅ **Fail securely** - If verification fails or errors, show onboarding prompt again
+4. ✅ **Server-side verification** - Additional check via Stripe webhooks recommended for production
+
+**Dashboard Access Control:**
+```javascript
+// /src/pages/HandymanDashboard.jsx - Access Gate
+
+// ALWAYS check before showing dashboard
+const hasCompletedStripeOnboarding =
+  handymanProfile?.stripeOnboardingCompleted === true;
+
+if (!hasCompletedStripeOnboarding) {
+  // Block dashboard access, show onboarding prompt
+  return <StripeOnboardingPrompt handyman={handymanProfile} />;
+}
+
+// Only show dashboard if ALL requirements met
+return <FullDashboard />;
+```
+
+**Testing Verification:**
+1. Start onboarding → Redirected to Stripe
+2. Click browser back button → Returns to app
+3. Check Firestore → `stripeOnboardingCompleted` should still be `false`
+4. Dashboard → Should show StripeOnboardingPrompt, NOT full dashboard
+5. Complete Stripe onboarding → Redirected back
+6. Stripe API verification → Confirms completion
+7. Firestore updated → `stripeOnboardingCompleted: true`
+8. Dashboard → Shows full dashboard
 
 ---
 
