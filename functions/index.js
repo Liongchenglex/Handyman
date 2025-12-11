@@ -135,8 +135,8 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         },
       });
 
-      // Update handyman document in Firestore
-      await admin.firestore().collection('handymen').doc(uid).update({
+      // Update or create handyman document in Firestore (use set with merge)
+      await admin.firestore().collection('handymen').doc(uid).set({
         stripeConnectedAccountId: account.id,
         stripeAccountStatus: 'pending',
         stripeOnboardingCompleted: false,
@@ -145,7 +145,7 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         stripeChargesEnabled: account.charges_enabled,
         stripeConnectedAt: admin.firestore.FieldValue.serverTimestamp(),
         stripeLastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      }, { merge: true });
 
       console.log(`✅ Created Stripe account: ${account.id}`);
 
