@@ -59,15 +59,16 @@ const HandymanDashboard = () => {
 
           console.log('📊 Stripe account status:', accountStatus);
 
-          // Only mark as complete if Stripe confirms details_submitted and charges_enabled
-          if (accountStatus.account?.details_submitted && accountStatus.account?.charges_enabled) {
+          // Only mark as complete if Stripe confirms detailsSubmitted and chargesEnabled
+          // Note: Backend returns camelCase fields
+          if (accountStatus.detailsSubmitted && accountStatus.chargesEnabled) {
             console.log('✅ Stripe onboarding verified as complete');
 
             await updateHandyman(user.uid, {
               stripeOnboardingCompleted: true,
               stripeAccountStatus: 'complete',
               stripeChargesEnabled: true,
-              stripePayoutsEnabled: accountStatus.account.payouts_enabled || false,
+              stripePayoutsEnabled: accountStatus.payoutsEnabled || false,
               updatedAt: new Date().toISOString()
             });
 
