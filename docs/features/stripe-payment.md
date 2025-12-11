@@ -37,6 +37,7 @@ Complete Stripe payment system with escrow, manual capture, 3-way payment splits
 - `createConnectedAccount(handymanData)` - Create Stripe Connect account for handyman
 - `createAccountLink(linkData)` - Generate Stripe onboarding URL
 - `getAccountStatus(accountId)` - Check Stripe onboarding completion status
+  - Returns: `{success: true, status: {detailsSubmitted, chargesEnabled, payoutsEnabled, ...}}`
 
 **`/src/components/customer/PaymentForm.jsx`** - Payment UI container
 - Creates payment intent when component mounts
@@ -716,9 +717,10 @@ await createConnectedAccount({
 6. CRITICAL SECURITY CHECK - Verify completion with Stripe API
    → /src/pages/HandymanDashboard.jsx (useEffect)
    → Call getAccountStatus(accountId)
-   → Check Stripe response:
-      ✅ account.details_submitted === true
-      ✅ account.charges_enabled === true
+   → Backend returns: {success: true, status: {...}}
+   → Check Stripe response fields:
+      ✅ status.detailsSubmitted === true
+      ✅ status.chargesEnabled === true
    ↓
 7. If verified complete:
    → Update Firestore:
@@ -752,30 +754,43 @@ useEffect(() => {
   const handleStripeReturn = async () => {
     const onboardingParam = searchParams.get('stripe_onboarding');
 
-    if (onboardingParam === 'complete' && user && stripeConnectedAccountId) {
+    if (onboardingParam === 'complete' && user && userProfile?.handyman?.stripeConnectedAccountId) {
+      console.log('🔄 Handyman returned from Stripe - verifying completion...');
+
       // STEP 1: Call Stripe API to verify actual completion
       const accountStatus = await getAccountStatus(accountId);
 
+      console.log('📊 Stripe account status:', accountStatus);
+
       // STEP 2: Check BOTH required fields
-      if (accountStatus.account?.details_submitted &&
-          accountStatus.account?.charges_enabled) {
+      // Note: Backend returns {success: true, status: {...}} structure
+      const status = accountStatus.status;
+
+      if (status?.detailsSubmitted && status?.chargesEnabled) {
         // VERIFIED: Mark as complete
-        await updateHandyman(uid, {
+        console.log('✅ Stripe onboarding verified as complete');
+
+        await updateHandyman(user.uid, {
           stripeOnboardingCompleted: true,
           stripeAccountStatus: 'complete',
           stripeChargesEnabled: true,
-          stripePayoutsEnabled: accountStatus.account.payouts_enabled
+          stripePayoutsEnabled: status.payoutsEnabled || false,
+          updatedAt: new Date().toISOString()
         });
 
+        console.log('✅ Firestore updated, reloading page...');
         window.location.href = '/handyman-dashboard';
       } else {
         // NOT COMPLETE: Remove param, show prompt again
+        console.log('⚠️ Stripe onboarding NOT complete - handyman must finish setup');
         window.location.href = '/handyman-dashboard';
       }
     }
   };
 
-  handleStripeReturn();
+  if (user && userProfile) {
+    handleStripeReturn();
+  }
 }, [user, userProfile, searchParams]);
 ```
 
