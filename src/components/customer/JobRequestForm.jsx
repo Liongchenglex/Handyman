@@ -779,6 +779,10 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   <PaymentForm
                     amount={getServicePrice(selectedCategory)}
                     jobId={null} // Will be created after payment
+                    serviceType={jobData?.serviceType}
+                    customerId={null} // Will be created with anonymous user
+                    handymanId={null} // Not assigned yet
+                    customerEmail={jobData?.customerEmail}
                     onPaymentSuccess={handlePaymentSuccess}
                   />
                 )}

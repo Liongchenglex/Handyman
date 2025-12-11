@@ -32,28 +32,31 @@ const PaymentForm = ({
 
   // Create payment intent on component mount
   useEffect(() => {
+    // Generate a temporary job ID if not provided (for pre-job-creation payments)
+    const effectiveJobId = jobId || `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     // Check if this jobId already has a payment intent being created or created
-    if (!jobId || isCreatingRef.current) {
+    if (isCreatingRef.current) {
       return;
     }
 
     // Check global tracker - if this jobId was already processed, use cached result
-    if (paymentIntentTracker.has(jobId)) {
-      const cachedResult = paymentIntentTracker.get(jobId);
+    if (paymentIntentTracker.has(effectiveJobId)) {
+      const cachedResult = paymentIntentTracker.get(effectiveJobId);
       if (cachedResult.clientSecret) {
-        console.log('⚡ Using cached payment intent for job:', jobId);
+        console.log('⚡ Using cached payment intent for job:', effectiveJobId);
         setClientSecret(cachedResult.clientSecret);
         return;
       }
       // If creation is in progress, wait
       if (cachedResult.isCreating) {
-        console.log('⏳ Payment intent creation already in progress for job:', jobId);
+        console.log('⏳ Payment intent creation already in progress for job:', effectiveJobId);
         return;
       }
     }
 
     // Mark as creating in global tracker
-    paymentIntentTracker.set(jobId, { isCreating: true, clientSecret: null });
+    paymentIntentTracker.set(effectiveJobId, { isCreating: true, clientSecret: null });
     isCreatingRef.current = true;
     const createIntent = async () => {
       setIsCreatingIntent(true);
@@ -64,16 +67,11 @@ const PaymentForm = ({
         console.log('Service Fee:', serviceFee);
         console.log('Platform Fee (10%):', platformFee);
         console.log('Total Amount:', totalAmount);
-        console.log('Job ID:', jobId);
-
-        // Validate that we have a real job ID
-        if (!jobId) {
-          throw new Error('Job ID is required to create payment intent');
-        }
+        console.log('Job ID:', effectiveJobId);
 
         // Call Stripe API to create payment intent with escrow
         const result = await createPaymentIntent({
-          jobId: jobId, // Real job ID from Firestore
+          jobId: effectiveJobId, // Use effective job ID (real or temporary)
           customerId: customerId || 'temp_customer',
           handymanId: handymanId || 'temp_handyman',
           serviceFee: serviceFee,
@@ -91,7 +89,7 @@ const PaymentForm = ({
         setClientSecret(result.clientSecret);
 
         // Update global tracker with successful result
-        paymentIntentTracker.set(jobId, {
+        paymentIntentTracker.set(effectiveJobId, {
           isCreating: false,
           clientSecret: result.clientSecret,
           paymentIntentId: result.paymentIntentId
@@ -103,7 +101,7 @@ const PaymentForm = ({
         setError(err.response?.data?.message || err.message || 'Failed to initialize payment. Please try again.');
 
         // Remove from tracker on error to allow retry
-        paymentIntentTracker.delete(jobId);
+        paymentIntentTracker.delete(effectiveJobId);
         isCreatingRef.current = false;
 
         setIsCreatingIntent(false);
@@ -114,7 +112,7 @@ const PaymentForm = ({
 
     // Cleanup: Don't reset refs/tracker - they should persist across remounts
     // This prevents duplicate payment intent creation if component remounts
-  }, [jobId]); // Only re-create if jobId changes (prevents duplicate payment intents)
+  }, [jobId, customerId, handymanId, serviceType, customerEmail]); // Re-create if any key params change
 
   // Handle successful card confirmation
   const handleCardSuccess = (paymentIntent) => {

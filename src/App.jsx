@@ -14,6 +14,7 @@ import HandymanRegistrationPage from './pages/HandymanRegistration';
 import HandymanDashboard from './pages/HandymanDashboard';
 import ApproveHandyman from './pages/ApproveHandyman';
 import JobCard from './components/handyman/JobCard';
+import StripeTest from './pages/StripeTest';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
 // import './styles/globals.css';
@@ -40,6 +41,7 @@ function AppContent() {
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
           <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
           <Route path="/job-details/:jobId" element={<JobCard />} />
+          <Route path="/stripe-test" element={<StripeTest />} />
           {/* <Route path="/jobs" element={<JobBoard />} /> */}
           {/* <Route path="/jobs/:id" element={<JobDetails />} /> */}
         </Routes>

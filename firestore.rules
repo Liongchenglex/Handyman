@@ -42,8 +42,8 @@ service cloud.firestore {
       // Users can read their own profile
       allow read: if isSignedIn() && isOwner(userId);
 
-      // Users can create their own profile
-      allow create: if isSignedIn() && isOwner(userId);
+      // Users can create their own profile (including anonymous users)
+      allow create: if isSignedIn();
 
       // Users can update their own profile (except role)
       allow update: if isSignedIn() && isOwner(userId) &&
@@ -58,9 +58,9 @@ service cloud.firestore {
       // Anyone can read jobs (for handymen to browse) - including anonymous users
       allow read: if isSignedIn();
 
-      // Customers can create jobs (including anonymous users)
-      allow create: if isSignedIn() &&
-                      request.resource.data.customerId == request.auth.uid;
+      // Anyone (including anonymous users) can create jobs
+      // Anonymous users are created automatically in the app before job creation
+      allow create: if isSignedIn();
 
       // Job owner or assigned handyman can update
       // Handymen can also update to assign themselves (express interest)

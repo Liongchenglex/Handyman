@@ -4,8 +4,6 @@
  * Configure email settings for the handyman platform
  */
 
-import { getApprovalBaseUrl } from './environment';
-
 export const EMAIL_CONFIG = {
   // Operations team email - receives handyman registration notifications
   OPERATIONS_EMAIL: process.env.REACT_APP_OPERATIONS_EMAIL || 'operations@eazydone.com',
@@ -21,10 +19,10 @@ export const EMAIL_CONFIG = {
   EMAILJS_TEMPLATE_ID_OPERATIONS: process.env.REACT_APP_EMAILJS_TEMPLATE_OPERATIONS || '',
   EMAILJS_PUBLIC_KEY: process.env.REACT_APP_EMAILJS_PUBLIC_KEY || '',
 
-  // Approval link base URL - dynamically set based on environment
+  // Approval link base URL - set in .env file
   // Development: http://localhost:3000/admin/approve-handyman
   // Production: https://eazydone-d06cf.web.app/admin/approve-handyman
-  APPROVAL_BASE_URL: getApprovalBaseUrl()
+  APPROVAL_BASE_URL: process.env.REACT_APP_APPROVAL_BASE_URL || 'http://localhost:3000/admin/approve-handyman'
 };
 
 /**

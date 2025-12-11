@@ -12,10 +12,9 @@
  */
 
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore } from 'firebase/firestore';
+import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
-import { getFirestoreDatabase } from '../../config/environment';
 
 // Firebase configuration from environment variables
 const firebaseConfig = {
@@ -57,15 +56,14 @@ validateConfig();
 // Initialize Firebase app
 const app = initializeApp(firebaseConfig);
 
-// Get the appropriate database ID based on environment
-const databaseId = getFirestoreDatabase();
+// Get database from environment variable
+// Dev: REACT_APP_FIRESTORE_DATABASE=devs
+// Prod: REACT_APP_FIRESTORE_DATABASE=(default)
+const databaseId = process.env.REACT_APP_FIRESTORE_DATABASE || '(default)';
 
-// Initialize Firebase services with environment-specific database
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true, // For better compatibility with some environments
-  ignoreUndefinedProperties: true, // Ignore undefined properties in documents
-  databaseId: databaseId // Use environment-specific database ('devs' or '(default)')
-});
+// Initialize Firestore with the specified database
+// For (default) database, pass undefined as the databaseId
+export const db = getFirestore(app, databaseId === '(default)' ? undefined : databaseId);
 
 // Log which database is being used (only in development)
 if (process.env.NODE_ENV === 'development') {
