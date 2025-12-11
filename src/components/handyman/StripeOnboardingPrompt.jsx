@@ -17,7 +17,8 @@ const StripeOnboardingPrompt = ({ handyman }) => {
     setError(null);
 
     try {
-      console.log('Starting Stripe Connect onboarding for handyman:', handyman.handymanId);
+      const handymanUid = handyman.uid || handyman.handymanId; // Support both old and new field names
+      console.log('Starting Stripe Connect onboarding for handyman:', handymanUid);
 
       // Step 1: Create connected account if not exists
       let accountId = handyman.stripeConnectedAccountId;
@@ -25,7 +26,7 @@ const StripeOnboardingPrompt = ({ handyman }) => {
       if (!accountId) {
         console.log('Creating new Stripe Connected Account...');
         const accountResult = await createConnectedAccount({
-          uid: handyman.handymanId,
+          uid: handymanUid,
           email: handyman.email,
           name: handyman.fullName || handyman.name,
           phone: handyman.phone
@@ -39,7 +40,7 @@ const StripeOnboardingPrompt = ({ handyman }) => {
         console.log('✅ Stripe Connected Account created:', accountId);
 
         // Store account ID in Firestore
-        await updateHandyman(handyman.handymanId, {
+        await updateHandyman(handymanUid, {
           stripeConnectedAccountId: accountId,
           stripeAccountStatus: 'pending',
           updatedAt: new Date().toISOString()
