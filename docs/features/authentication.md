@@ -1,5 +1,8 @@
 # Authentication Feature Documentation
 
+> **Scope:** This document covers Firebase authentication mechanisms, auth state management, and security rules.
+> **For:** Registration UI, document uploads, and approval workflows, see [Handyman Registration](./handyman-registration.md).
+
 ## Overview
 
 The EazyDone platform supports two types of authentication:
@@ -44,10 +47,20 @@ Main authentication service with all auth operations.
 React context provider for global auth state management.
 
 **Provides:**
-- `currentUser` - Current Firebase auth user
-- `userProfile` - User's Firestore profile data
+- `user` - Current Firebase auth user
+- `userProfile` - User's Firestore profile data (includes nested handyman profile for handymen)
 - `loading` - Auth state loading status
-- Auth state listeners and auto-refresh
+- `isAuthenticated` - Boolean indicating if user is logged in
+- `isHandyman` - Boolean indicating if user role is 'handyman'
+- `isCustomer` - Boolean indicating if user role is 'customer'
+- `login()` - Function to create anonymous user (for customers)
+- `logout()` - Function to sign out current user
+
+**Important Implementation Details:**
+- Context always renders children (not conditional on loading state)
+- Auth state changes propagate immediately to all consuming components
+- Each component is responsible for handling its own loading states
+- Automatically fetches user profile from Firestore when auth state changes
 
 #### `/src/hooks/useAuth.js`
 Custom React hook for accessing auth context.
@@ -58,21 +71,29 @@ const { currentUser, userProfile, loading } = useAuth();
 ```
 
 #### `/src/pages/HandymanAuth.jsx`
-Handyman login/register page component.
+Handyman login/register page wrapper component.
 
 **Features:**
-- Login form with email/password
-- Password reset link
-- Error handling
-- Redirect to dashboard after login
-
-#### `/src/services/firebase/collections.js`
-Firestore user profile management.
+- Renders HandymanAuth component with callback handlers
+- Redirects to dashboard if already logged in as handyman
+- Handles successful login → navigates to `/handyman-dashboard` (with replace: true)
+- Handles successful signup → navigates to `/handyman-registration` with email/password in state
+- Shows loading spinner while checking authentication status
 
 **Key Functions:**
-- `createUser(uid, userData)` - Create user document in Firestore
-- `getUser(uid)` - Fetch user profile
-- `updateUser(uid, updates)` - Update user profile
+- `handleLoginSuccess(userData)` - Called after successful login, redirects to dashboard
+- `handleSignupSuccess(userData)` - Called after signup form validation, passes credentials to registration page
+- `handleBackToHome()` - Returns to home page
+
+#### `/src/services/firebase/collections.js`
+Firestore handyman profile management.
+
+**Key Functions:**
+- `createHandyman(uid, handymanData)` - Create handyman document in Firestore (includes role field)
+- `getHandyman(uid)` - Fetch handyman profile
+- `updateHandyman(uid, updates)` - Update handyman profile
+
+**Architecture Note:** This platform uses a single `handymen` collection for all authenticated users (no separate `users` collection). See [Architecture Changes](#architecture-changes) section below for details.
 
 ---
 
@@ -92,13 +113,11 @@ Firestore user profile management.
 4. Update auth profile
    → updateProfile(user, { displayName: name })
    ↓
-5. Create user document in Firestore
-   → /src/services/firebase/collections.js → createUser()
-   ↓
-6. Create handyman profile document
+5. Create handyman profile document in Firestore
    → /src/services/firebase/collections.js → createHandyman()
+   → Creates document in 'handymen' collection with role='handyman'
    ↓
-7. Return user object with profile
+6. Return user object with profile
 ```
 
 ### Handyman Login Flow
@@ -112,16 +131,26 @@ Firestore user profile management.
 3. Authenticate with Firebase
    → signInWithEmailAndPassword()
    ↓
-4. Fetch user profile from Firestore
-   → getUser(uid)
+4. Fetch handyman profile from Firestore
+   → getHandyman(uid) - fetches from 'handymen' collection
    ↓
 5. Verify role is 'handyman'
+   → If not handyman, sign out and throw error
    ↓
-6. Update AuthContext
-   → /src/context/AuthContext.js
+6. Return user and profile data
    ↓
-7. Redirect to dashboard
-   → /src/pages/HandymanDashboard.jsx
+7. HandymanAuth component calls onLoginSuccess callback
+   → /src/pages/HandymanAuth.jsx:25
+   ↓
+8. Navigate to dashboard with replace: true
+   → navigate('/handyman-dashboard', { replace: true })
+   ↓
+9. AuthContext updates automatically via onAuthStateChanged listener
+   → /src/context/AuthContext.js:25
+   ↓
+10. HandymanDashboard renders based on handyman status
+    → /src/pages/HandymanDashboard.jsx
+    → Shows PendingStatusView, RejectedStatusView, or full dashboard
 ```
 
 ### Customer Anonymous Auth Flow
@@ -145,41 +174,22 @@ Firestore user profile management.
 
 ## Firestore Database Structure
 
-### Users Collection (`users/{uid}`)
-
-```javascript
-{
-  uid: "firebase_user_id",
-  email: "user@example.com",
-  name: "John Tan",
-  phone: "+6591234567",
-  role: "handyman" | "customer" | "admin",
-  createdAt: Timestamp,
-  updatedAt: Timestamp
-}
-```
-
 ### Handymen Collection (`handymen/{uid}`)
 
-Created alongside user document for handyman accounts:
+All authenticated users are handymen. For the complete schema including all fields (NRIC, address, documents, Stripe details, etc.), see [Handyman Registration Documentation - Firestore Data Structure](./handyman-registration.md#firestore-data-structure).
 
+**Core Authentication Fields:**
 ```javascript
 {
   uid: "firebase_user_id",
-  name: "John Tan",
   email: "john@example.com",
+  name: "John Tan",
   phone: "+6591234567",
-  serviceTypes: ["Plumbing", "Electrical"],
-  experience: "5 years",
-  bio: "Professional plumber...",
+  role: "handyman", // Always 'handyman' for this platform
+  status: "pending" | "active" | "rejected" | "suspended",
   verified: false,
-  verificationStatus: "pending" | "approved" | "rejected",
-  isAvailable: true,
-  rating: 0,
-  totalJobs: 0,
-  stripeAccountId: "acct_xxxxx", // Added after Stripe onboarding
-  stripeOnboardingComplete: false,
-  createdAt: Timestamp
+  createdAt: Timestamp,
+  updatedAt: Timestamp
 }
 ```
 
@@ -187,23 +197,59 @@ Created alongside user document for handyman accounts:
 
 ## Security Rules
 
-**Firestore Security Rules** (`firestore.rules`):
+**Firestore Security Rules** (`firestore.rules.backup`):
 
 ```javascript
-// Users can read their own profile
-match /users/{userId} {
-  allow read: if request.auth != null && request.auth.uid == userId;
-  allow create: if request.auth != null;
-  allow update: if request.auth != null && request.auth.uid == userId;
-}
-
-// Handymen profiles
+// Handymen profiles (all authenticated users)
 match /handymen/{handymanId} {
+  // Anyone can read verified handyman profiles
   allow read: if request.auth != null;
+
+  // Handyman can create their own profile
   allow create: if request.auth != null && request.auth.uid == handymanId;
-  allow update: if request.auth != null && request.auth.uid == handymanId;
+
+  // Handyman can update their own profile (except verified/status fields)
+  allow update: if request.auth != null && request.auth.uid == handymanId &&
+                  (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'status']));
+
+  // Allow approval/rejection for pending handymen (for email approval links)
+  allow update: if resource.data.status == 'pending';
+
+  // Admin can update verification status anytime
+  allow update: if isAdmin();
 }
 ```
+
+---
+
+## Architecture Changes
+
+### Refactoring: Removed Users Collection (2025-12-11)
+
+**Previous Architecture:**
+- Separate `users` and `handymen` collections
+- Duplicate data: email, name, phone stored in both collections
+- Two database writes on registration
+- `users.role` always 'handyman'
+
+**Current Architecture:**
+- Single `handymen` collection for all authenticated users
+- All user data stored in one place
+- One database write on registration
+- `handymen.role` field included (always 'handyman')
+
+**Benefits:**
+- ✅ Single source of truth - no data duplication
+- ✅ Reduced database operations - 50% fewer writes
+- ✅ Simplified code - easier to maintain
+- ✅ Better performance - fewer Firestore reads
+- ✅ Lower costs - reduced Firestore operations
+
+**Migration Impact:**
+- No migration needed for clean databases
+- All auth logic updated to use `handymen` collection
+- Security rules simplified
+- AuthContext now fetches directly from `handymen`
 
 ---
 

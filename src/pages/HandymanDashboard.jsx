@@ -31,10 +31,17 @@ const HandymanDashboard = () => {
 
   // Redirect if not authenticated or not a handyman
   useEffect(() => {
-    if (!loading && (!user || !isHandyman)) {
-      navigate('/handyman-auth');
+    if (!loading) {
+      if (!user) {
+        console.log('No user found, redirecting to handyman-auth');
+        navigate('/handyman-auth', { replace: true });
+      } else if (!isHandyman && userProfile) {
+        // Only redirect if we have userProfile loaded and it's not a handyman
+        console.log('User is not a handyman, redirecting to handyman-auth');
+        navigate('/handyman-auth', { replace: true });
+      }
     }
-  }, [user, isHandyman, loading, navigate]);
+  }, [user, isHandyman, userProfile, loading, navigate]);
 
   // Handle Stripe onboarding return URL
   useEffect(() => {

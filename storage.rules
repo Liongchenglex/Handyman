@@ -1,148 +1,21 @@
 rules_version = '2';
 
 /**
- * Firebase Storage Security Rules for Handyman Platform
+ * TEMPORARY DEMO RULES - ALLOW ALL ACCESS
  *
- * Storage Structure:
- * - handymen/{handymanId}/profile/{filename} - Handyman profile images
- * - handymen/{handymanId}/certifications/{filename} - Certification documents
- * - jobs/{jobId}/images/{filename} - Job-related images
- * - users/{userId}/profile/{filename} - Customer profile images
+ * ⚠️ WARNING: These rules allow unrestricted access!
+ * ⚠️ RESTORE storage.rules.backup after demo
+ *
+ * To restore after demo:
+ * 1. Run: cp storage.rules.backup storage.rules
+ * 2. Deploy: firebase deploy --only storage
  */
 
 service firebase.storage {
   match /b/{bucket}/o {
-
-    // Helper function to check authentication
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    // Helper function to check ownership
-    function isOwner(userId) {
-      return request.auth.uid == userId;
-    }
-
-    // Helper function to validate image file
-    function isImage() {
-      return request.resource.contentType.matches('image/.*');
-    }
-
-    // Helper function to validate PDF file
-    function isPDF() {
-      return request.resource.contentType == 'application/pdf';
-    }
-
-    // Helper function to check file size (max 5MB)
-    function isValidSize() {
-      return request.resource.size < 5 * 1024 * 1024;
-    }
-
-    // Handyman profile images
-    match /handymen/{handymanId}/profile/{filename} {
-      // Read: anyone can view verified handyman profiles
-      allow read: if isSignedIn();
-
-      // Write: only the handyman can upload their own profile image
-      allow write: if isSignedIn() &&
-                     isOwner(handymanId) &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: only the handyman can delete their own images
-      allow delete: if isSignedIn() && isOwner(handymanId);
-    }
-
-    // Handyman certifications
-    match /handymen/{handymanId}/certifications/{filename} {
-      // Read: only the handyman and admins can view certifications
-      allow read: if isSignedIn() && isOwner(handymanId);
-
-      // Write: only the handyman can upload certifications (images or PDFs)
-      allow write: if isSignedIn() &&
-                     isOwner(handymanId) &&
-                     (isImage() || isPDF()) &&
-                     isValidSize();
-
-      // Delete: only the handyman can delete
-      allow delete: if isSignedIn() && isOwner(handymanId);
-    }
-
-    // Handyman work experience / CV documents
-    match /handymen/{handymanId}/work-experience/{filename} {
-      // Read: authenticated users can view work experience
-      allow read: if isSignedIn();
-
-      // Write: only the handyman can upload their work experience (images, PDFs, DOC)
-      allow write: if isSignedIn() &&
-                     isOwner(handymanId) &&
-                     isValidSize();
-
-      // Delete: only the handyman can delete
-      allow delete: if isSignedIn() && isOwner(handymanId);
-    }
-
-    // Handyman portfolio images
-    match /handymen/{handymanId}/portfolio/{filename} {
-      // Read: authenticated users can view portfolio
-      allow read: if isSignedIn();
-
-      // Write: only the handyman can upload portfolio images
-      allow write: if isSignedIn() &&
-                     isOwner(handymanId) &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: only the handyman can delete
-      allow delete: if isSignedIn() && isOwner(handymanId);
-    }
-
-    // Job-related images
-    match /jobs/{jobId}/images/{filename} {
-      // Read: authenticated users can view job images
-      allow read: if isSignedIn();
-
-      // Write: authenticated users can upload job images
-      allow write: if isSignedIn() &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: authenticated users can delete (will be restricted by app logic)
-      allow delete: if isSignedIn();
-    }
-
-    // Customer/User profile images
-    match /users/{userId}/profile/{filename} {
-      // Read: authenticated users can view profiles
-      allow read: if isSignedIn();
-
-      // Write: only the user can upload their own profile image
-      allow write: if isSignedIn() &&
-                     isOwner(userId) &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: only the user can delete their own images
-      allow delete: if isSignedIn() && isOwner(userId);
-    }
-
-    // Job before/after images
-    match /jobs/{jobId}/before-after/{filename} {
-      // Read: authenticated users can view
-      allow read: if isSignedIn();
-
-      // Write: authenticated users can upload
-      allow write: if isSignedIn() &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: authenticated users can delete
-      allow delete: if isSignedIn();
-    }
-
-    // Default: deny all other access
+    // Allow all read and write access to all storage paths
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
   }
 }

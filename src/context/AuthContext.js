@@ -4,7 +4,7 @@ import {
   createAnonymousUser,
   signOutUser
 } from '../services/firebase/auth';
-import { getUser, getHandyman } from '../services/firebase/collections';
+import { getHandyman } from '../services/firebase/collections';
 
 const AuthContext = createContext();
 
@@ -24,27 +24,25 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
       if (firebaseUser) {
-        // User is signed in, fetch their profile
+        // User is signed in, fetch their handyman profile
+        // (No separate users collection - all data in handymen collection)
         try {
-          const profile = await getUser(firebaseUser.uid);
+          const handymanProfile = await getHandyman(firebaseUser.uid);
 
-          // If user is a handyman, also fetch handyman profile
-          let handymanProfile = null;
-          if (profile?.role === 'handyman') {
-            try {
-              handymanProfile = await getHandyman(firebaseUser.uid);
-            } catch (error) {
-              console.error('Error fetching handyman profile:', error);
-            }
+          if (handymanProfile) {
+            setUser(firebaseUser);
+            setUserProfile({
+              ...handymanProfile,
+              handyman: handymanProfile // Keep nested structure for backwards compatibility
+            });
+          } else {
+            // User exists in Firebase Auth but not in Firestore (incomplete registration)
+            console.warn('User authenticated but no handyman profile found');
+            setUser(firebaseUser);
+            setUserProfile(null);
           }
-
-          setUser(firebaseUser);
-          setUserProfile({
-            ...profile,
-            handyman: handymanProfile
-          });
         } catch (error) {
-          console.error('Error fetching user profile:', error);
+          console.error('Error fetching handyman profile:', error);
           setUser(firebaseUser);
           setUserProfile(null);
         }
@@ -91,7 +89,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 };

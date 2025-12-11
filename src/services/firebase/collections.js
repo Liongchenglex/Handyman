@@ -202,8 +202,9 @@ export const subscribeToCustomerJobs = (customerId, callback) => {
  */
 export const createHandyman = async (handymanId, handymanData) => {
   const handyman = {
-    handymanId, // Include handymanId in the document data
+    uid: handymanId, // Use 'uid' to match Firebase Auth user ID
     ...handymanData,
+    role: handymanData.role || 'handyman', // Role field (always 'handyman' for this platform)
     verified: false,
     status: 'pending', // Initial status: awaiting operations approval
     isAvailable: true,

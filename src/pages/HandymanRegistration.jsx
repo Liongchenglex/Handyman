@@ -20,8 +20,8 @@ const HandymanRegistrationPage = () => {
 
     // Firebase Auth already handles the session persistence
     // Just show success message and navigate to dashboard
-    alert('Registration completed successfully! Welcome to HandySG. Please check your email to verify your account.');
-    navigate('/handyman-dashboard');
+    alert('Registration completed successfully! Welcome to EazyDone. Your application is under review.');
+    navigate('/handyman-dashboard', { replace: true });
   };
 
   const handleBackToAuth = () => {

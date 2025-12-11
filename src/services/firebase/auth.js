@@ -17,7 +17,7 @@ import {
   sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from './config';
-import { createUser, createHandyman, getUser } from './collections';
+import { createHandyman, getHandyman } from './collections';
 
 // ==================== HANDYMAN AUTHENTICATION ====================
 
@@ -55,19 +55,12 @@ export const registerHandyman = async (registrationData) => {
       displayName: name
     });
 
-    // Create user document in Firestore
-    await createUser(user.uid, {
-      email: email,
-      name: name,
-      phone: phone,
-      role: 'handyman'
-    });
-
-    // Create handyman profile document
+    // Create handyman profile document (no separate users collection needed)
     await createHandyman(user.uid, {
       name: name,
       email: email,
       phone: phone,
+      role: 'handyman', // Role field included in handyman document
       serviceTypes: serviceTypes || [],
       experience: experience || '',
       bio: bio || '',
@@ -116,10 +109,10 @@ export const signInHandyman = async (email, password) => {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-    // Try to get user profile from Firestore
-    let userProfile;
+    // Get handyman profile from Firestore (no separate users collection)
+    let handymanProfile;
     try {
-      userProfile = await getUser(user.uid);
+      handymanProfile = await getHandyman(user.uid);
     } catch (error) {
       // If document doesn't exist, user needs to complete registration
       if (error.message.includes('Document not found')) {
@@ -129,20 +122,20 @@ export const signInHandyman = async (email, password) => {
       throw error;
     }
 
-    if (!userProfile) {
+    if (!handymanProfile) {
       await signOut(auth);
       throw new Error('Account registration incomplete. Please complete the registration process.');
     }
 
-    if (userProfile.role !== 'handyman') {
-      // Sign out if not a handyman
+    // Verify role is handyman (should always be true for this platform)
+    if (handymanProfile.role !== 'handyman') {
       await signOut(auth);
       throw new Error('This account is not registered as a handyman.');
     }
 
     return {
       user: user,
-      profile: userProfile
+      profile: handymanProfile
     };
   } catch (error) {
     console.error('Error signing in:', error);
@@ -216,15 +209,15 @@ export const isAuthenticated = () => {
 
 /**
  * Get current user's role
- * @returns {Promise<string|null>} User role (handyman, customer, admin) or null
+ * @returns {Promise<string|null>} User role (always 'handyman' for authenticated users) or null
  */
 export const getCurrentUserRole = async () => {
   const user = getCurrentUser();
   if (!user) return null;
 
   try {
-    const userProfile = await getUser(user.uid);
-    return userProfile?.role || null;
+    const handymanProfile = await getHandyman(user.uid);
+    return handymanProfile?.role || null;
   } catch (error) {
     console.error('Error getting user role:', error);
     return null;

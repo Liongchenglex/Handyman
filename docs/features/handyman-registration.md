@@ -1,5 +1,8 @@
 # Handyman Registration & Stripe Onboarding
 
+> **Scope:** This document covers the registration UI flow, document uploads, email notifications, admin approval process, and Stripe Connect onboarding.
+> **For:** Authentication functions and security rules, see [Authentication](./authentication.md).
+
 ## Overview
 
 Complete workflow for handymen to register on the platform, get verified by operations team, and complete Stripe Connect onboarding to receive payments.
@@ -78,11 +81,10 @@ Prompt to complete Stripe Connect onboarding.
 #### `/src/services/firebase/collections.js`
 Firestore database operations.
 
-**Key Functions:**
-- `createHandyman(uid, data)` - Creates handyman document in Firestore with initial profile data
-- `updateHandyman(uid, updates)` - Updates existing handyman document with new data
-- `getHandyman(uid)` - Retrieves handyman profile document from Firestore
+**Registration-Specific Functions:**
 - `updateHandymanVerificationStatus(uid, status, reason)` - Updates verification status and reason fields
+
+For core database functions (`createHandyman`, `getHandyman`, `updateHandyman`), see [Authentication Documentation](./authentication.md#srcservicesfirebasecollectionsjs).
 
 #### `/src/services/firebase/storage.js`
 Firebase Storage operations for document uploads.
@@ -180,48 +182,10 @@ Create Firebase Auth account
   → /src/services/firebase/auth.js:36
   → registerHandyman()
 ↓
-Create Firestore documents
-  → /src/services/firebase/collections.js:120
+Create handyman document in Firestore
+  → /src/services/firebase/collections.js:203
   → createHandyman(uid, handymanData)
-↓
-Data structure:
-{
-  uid: "firebase_uid",
-  name: "John Tan",
-  email: "john@example.com",
-  phone: "+6591234567",
-  nric: "S1234567D",
-  address: "123 Main Street, Singapore",
-  serviceTypes: ["Plumbing", "Electrical"],
-  experience: "5 years",
-  bio: "Professional handyman...",
-
-  // Verification
-  verificationStatus: "pending",
-  verificationReason: null,
-
-  // Documents
-  documents: {
-    nric: "gs://bucket/handyman-documents/{uid}/nric.pdf",
-    certifications: ["gs://..."],
-    insurance: "gs://..."
-  },
-
-  // Stripe (null initially)
-  stripeAccountId: null,
-  stripeOnboardingComplete: false,
-
-  // Status
-  verified: false,
-  isAvailable: true,
-
-  // Ratings
-  rating: 0,
-  totalJobs: 0,
-
-  createdAt: Timestamp,
-  updatedAt: Timestamp
-}
+  → Single collection: 'handymen' (see [Firestore Data Structure](#firestore-data-structure) below for complete schema)
 ```
 
 ### Step 4: Send Email Notifications

@@ -25,8 +25,8 @@ const HandymanAuthPage = () => {
   const handleLoginSuccess = (userData) => {
     console.log('Handyman logged in:', userData);
     // Firebase Auth automatically persists the session
-    // Navigate to dashboard
-    navigate('/handyman-dashboard');
+    // Navigate to dashboard - use replace to prevent back button issues
+    navigate('/handyman-dashboard', { replace: true });
   };
 
   const handleSignupSuccess = (userData) => {
