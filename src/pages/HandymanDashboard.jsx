@@ -46,33 +46,50 @@ const HandymanDashboard = () => {
   // Handle Stripe onboarding return URL
   useEffect(() => {
     const handleStripeReturn = async () => {
-      const onboardingComplete = searchParams.get('stripe_onboarding');
-      if (onboardingComplete === 'complete' && user) {
-        console.log('✅ Handyman returned from Stripe onboarding');
+      const onboardingParam = searchParams.get('stripe_onboarding');
+      if (onboardingParam === 'complete' && user && userProfile?.handyman?.stripeConnectedAccountId) {
+        console.log('🔄 Handyman returned from Stripe - verifying completion...');
 
         try {
-          // Update handyman document
-          await updateHandyman(user.uid, {
-            stripeOnboardingCompleted: true,
-            stripeAccountStatus: 'pending',
-            updatedAt: new Date().toISOString()
-          });
+          const { getAccountStatus } = await import('../services/stripe/stripeApi');
+          const accountId = userProfile.handyman.stripeConnectedAccountId;
 
-          console.log('✅ Firestore updated, reloading page...');
+          // CRITICAL: Verify with Stripe that onboarding is actually complete
+          const accountStatus = await getAccountStatus(accountId);
 
-          // Reload the page to refresh AuthContext and remove query param
-          // This ensures the UI updates with the new data
-          window.location.href = '/handyman-dashboard';
+          console.log('📊 Stripe account status:', accountStatus);
+
+          // Only mark as complete if Stripe confirms details_submitted and charges_enabled
+          if (accountStatus.account?.details_submitted && accountStatus.account?.charges_enabled) {
+            console.log('✅ Stripe onboarding verified as complete');
+
+            await updateHandyman(user.uid, {
+              stripeOnboardingCompleted: true,
+              stripeAccountStatus: 'complete',
+              stripeChargesEnabled: true,
+              stripePayoutsEnabled: accountStatus.account.payouts_enabled || false,
+              updatedAt: new Date().toISOString()
+            });
+
+            console.log('✅ Firestore updated, reloading page...');
+            window.location.href = '/handyman-dashboard';
+          } else {
+            console.log('⚠️ Stripe onboarding NOT complete - handyman must finish setup');
+            // Remove the query param but don't mark as complete
+            window.location.href = '/handyman-dashboard';
+          }
         } catch (error) {
-          console.error('Error updating handyman after Stripe onboarding:', error);
+          console.error('Error verifying Stripe onboarding:', error);
+          // On error, remove query param and let user try again
+          window.location.href = '/handyman-dashboard';
         }
       }
     };
 
-    if (user) {
+    if (user && userProfile) {
       handleStripeReturn();
     }
-  }, [user, searchParams]);
+  }, [user, userProfile, searchParams]);
 
   const handleJobSelect = (job) => {
     console.log('Job selected after expressing interest:', job);
