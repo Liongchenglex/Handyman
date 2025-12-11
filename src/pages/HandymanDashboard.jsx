@@ -121,20 +121,21 @@ const HandymanDashboard = () => {
     return <PendingStatusView userProfile={userProfile} />;
   }
 
-  // Check if handyman needs Stripe onboarding
-  // Show onboarding if: verified + active + no Stripe onboarding completed
-  const needsStripeOnboarding =
-    handymanStatus === 'active' &&
-    handymanVerified === true &&
-    !handymanProfile?.stripeOnboardingCompleted;
+  // CRITICAL: Stripe onboarding is REQUIRED for active, verified handymen
+  // Check if handyman has completed Stripe onboarding
+  const hasCompletedStripeOnboarding = handymanProfile?.stripeOnboardingCompleted === true;
 
-  console.log('  ➡️ needsStripeOnboarding:', needsStripeOnboarding);
+  console.log('  ➡️ hasCompletedStripeOnboarding:', hasCompletedStripeOnboarding);
+  console.log('  ➡️ stripeConnectedAccountId:', handymanProfile?.stripeConnectedAccountId);
 
-  if (needsStripeOnboarding) {
+  // ALWAYS show Stripe onboarding prompt if not completed, regardless of navigation
+  if (!hasCompletedStripeOnboarding) {
+    console.log('  🚫 Stripe onboarding required - blocking dashboard access');
     return <StripeOnboardingPrompt handyman={handymanProfile} />;
   }
 
   // Active handyman with Stripe onboarding complete - show full dashboard
+  console.log('  ✅ All requirements met - showing full dashboard');
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <HandymanHeader
