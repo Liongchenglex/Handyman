@@ -64,7 +64,7 @@ formatPhoneNumber('6591234567');      // → "6591234567"
 
 ## Future Templates
 
-Templates need Meta approval before use. See `/WHATSAPP_TEMPLATES.md` for:
+Templates need Meta approval before use. See [WhatsApp Templates Setup](../setup/whatsapp-templates.md) for:
 1. **job_payment_confirmation** - Job created notification
 2. **handyman_accepted_job** - Handyman accepted
 3. **job_completion_request** - Handyman marked complete

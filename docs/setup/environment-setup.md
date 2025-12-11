@@ -18,6 +18,9 @@ Create/update `.env.local` in the **dev** branch with:
 # Firestore Database (dev branch uses 'devs', main branch uses '(default)')
 REACT_APP_FIRESTORE_DATABASE=devs
 
+# Platform Fee Percentage (0.10 = 10%, 0.05 = 5%, etc.)
+REACT_APP_PLATFORM_FEE_PERCENTAGE=0.10
+
 # Approval base URL for handyman registration emails
 REACT_APP_APPROVAL_BASE_URL=http://localhost:3000/admin/approve-handyman
 ```
@@ -29,6 +32,9 @@ Create/update `.env.local` in the **main** branch with:
 ```env
 # Firestore Database (dev branch uses 'devs', main branch uses '(default)')
 REACT_APP_FIRESTORE_DATABASE=(default)
+
+# Platform Fee Percentage (0.10 = 10%, 0.05 = 5%, etc.)
+REACT_APP_PLATFORM_FEE_PERCENTAGE=0.10
 
 # Approval base URL for handyman registration emails
 REACT_APP_APPROVAL_BASE_URL=https://eazydone-d06cf.web.app/admin/approve-handyman

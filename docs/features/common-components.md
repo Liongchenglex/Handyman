@@ -289,11 +289,13 @@ function MyComponent() {
 **See:** [Job Creation Flow Documentation](./job-creation-flow.md#service-pricing-configuration)
 
 **Exports:**
-- `SERVICE_CATEGORIES` - Service types with pricing
-- `PLATFORM_FEE_PERCENTAGE` - 10% platform fee
-- `getServicePrice(type)` - Get service base price
-- `getPlatformFee(serviceFee)` - Calculate platform fee
-- `getTotalAmount(serviceFee)` - Total with fee
+- `SERVICE_PRICING` - Service types with pricing (object with key-value pairs)
+- `PLATFORM_FEE_PERCENTAGE` - Configurable platform fee percentage (default 10%)
+  - Reads from `REACT_APP_PLATFORM_FEE_PERCENTAGE` environment variable
+- `getServicePrice(type)` - Get service base price for a service type
+- `getPlatformFee(serviceFee)` - Calculate platform fee using configured percentage
+- `getTotalAmount(serviceType)` - Calculate total amount (service fee + platform fee)
+- `getServiceTypes()` - Get all service types with their prices as array
 
 ---
 
@@ -322,11 +324,21 @@ REACT_APP_APPROVAL_BASE_URL=http://localhost:3000/admin/approve-handyman
 ### Config
 **File:** `/src/services/firebase/config.js`
 
+**Firebase SDK Version:** v9+ (modular API)
+
 **Exports:**
-- `app` - Initialized Firebase app
-- `auth` - Firebase Auth instance
-- `db` - Firestore database instance
-- `storage` - Firebase Storage instance
+- `app` - Initialized Firebase app instance
+- `auth` - Firebase Auth instance for authentication
+- `db` - Firestore database instance (environment-aware: devs or default)
+- `storage` - Firebase Storage instance for file uploads
+
+**Note:** Uses modern modular imports from Firebase v9+:
+```javascript
+import { initializeApp } from 'firebase/app';
+import { getFirestore } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { getStorage } from 'firebase/storage';
+```
 
 ### Collections
 **File:** `/src/services/firebase/collections.js`

@@ -31,14 +31,14 @@ The EazyDone platform supports two types of authentication:
 Main authentication service with all auth operations.
 
 **Key Functions:**
-- `registerHandyman(registrationData)` - Register new handyman with email/password (Line 36)
-- `signInHandyman(email, password)` - Handyman login (Line 114)
-- `createAnonymousUser(userData)` - Create anonymous customer session (Line 174)
-- `signOutUser()` - Sign out current user (Line 192)
-- `getCurrentUser()` - Get currently authenticated user (Line 205)
-- `getCurrentUserRole()` - Get user's role (handyman/customer/admin) (Line 221)
-- `resetPassword(email)` - Send password reset email (Line 238)
-- `isAuthenticated()` - Check if user is logged in (Line 213)
+- `registerHandyman(registrationData)` - Creates Firebase auth user and handyman profile in Firestore
+- `signInHandyman(email, password)` - Authenticates handyman and validates role from Firestore
+- `createAnonymousUser(userData)` - Creates anonymous session for customers (no registration required)
+- `signOutUser()` - Signs out current user and clears session
+- `getCurrentUser()` - Returns currently authenticated user object
+- `getCurrentUserRole()` - Fetches and returns user's role from Firestore (handyman/customer/admin)
+- `resetPassword(email)` - Sends password reset email via Firebase Auth
+- `isAuthenticated()` - Returns boolean indicating if user is currently logged in
 
 #### `/src/context/AuthContext.js`
 React context provider for global auth state management.

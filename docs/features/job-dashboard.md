@@ -60,9 +60,10 @@ Handyman dashboard showing available jobs, current jobs, profile, and earnings. 
 - Verification status badge
 
 **`/src/components/handyman/ExpressInterestButton.jsx`** - Interest in job
-- Button to express interest
-- Creates notification to customer
-- Updates job interested handymen list
+- Renders button to express interest in available job
+- Creates notification document in Firestore for customer
+- Updates job's interestedHandymen array with handyman UID
+- Manages button state (clickable → disabled after interest sent)
 
 ### Status Views
 

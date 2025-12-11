@@ -39,10 +39,10 @@ Main registration page container.
 Core registration form component.
 
 **Key Functions:**
-- `handleSubmit()` - Process registration submission (Line ~450)
-- `handleDocumentUpload()` - Upload documents to Firebase Storage (Line ~320)
-- `sendRegistrationEmails()` - Send confirmation emails (Line ~480)
-- `handleStripeOnboarding()` - Initiate Stripe Connect (Line ~520)
+- `handleSubmit()` - Validates form, creates Firebase user, uploads documents, sends emails
+- `handleDocumentUpload()` - Uploads documents to Firebase Storage with validation and progress tracking
+- `sendRegistrationEmails()` - Sends confirmation email to handyman and notification to operations team
+- `handleStripeOnboarding()` - Creates Stripe Connect account and generates onboarding link
 
 **Form Steps:**
 1. Personal Information (name, email, phone, NRIC)
@@ -70,8 +70,8 @@ Dashboard view shown to rejected handymen.
 Prompt to complete Stripe Connect onboarding.
 
 **Key Functions:**
-- `handleStartOnboarding()` - Create Stripe account and onboarding link (Line ~45)
-- `checkOnboardingStatus()` - Verify Stripe account completion (Line ~80)
+- `handleStartOnboarding()` - Creates Stripe Express account, generates onboarding URL, redirects handyman
+- `checkOnboardingStatus()` - Polls Stripe API to verify onboarding completion and updates Firestore
 
 ### Backend Services
 
@@ -79,18 +79,18 @@ Prompt to complete Stripe Connect onboarding.
 Firestore database operations.
 
 **Key Functions:**
-- `createHandyman(uid, data)` - Create handyman profile (Line ~120)
-- `updateHandyman(uid, updates)` - Update handyman data (Line ~145)
-- `getHandyman(uid)` - Fetch handyman profile (Line ~135)
-- `updateHandymanVerificationStatus(uid, status, reason)` - Update verification status (Line ~160)
+- `createHandyman(uid, data)` - Creates handyman document in Firestore with initial profile data
+- `updateHandyman(uid, updates)` - Updates existing handyman document with new data
+- `getHandyman(uid)` - Retrieves handyman profile document from Firestore
+- `updateHandymanVerificationStatus(uid, status, reason)` - Updates verification status and reason fields
 
 #### `/src/services/firebase/storage.js`
 Firebase Storage operations for document uploads.
 
 **Key Functions:**
-- `uploadHandymanDocument(uid, file, documentType)` - Upload document to Storage (Line ~25)
-- `getHandymanDocumentURL(uid, documentType)` - Get document download URL (Line ~50)
-- `deleteHandymanDocument(uid, documentType)` - Delete document (Line ~70)
+- `uploadHandymanDocument(uid, file, documentType)` - Uploads document to Firebase Storage with proper path structure
+- `getHandymanDocumentURL(uid, documentType)` - Retrieves download URL for uploaded document
+- `deleteHandymanDocument(uid, documentType)` - Removes document from Firebase Storage
 
 **Storage Structure:**
 ```

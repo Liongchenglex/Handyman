@@ -28,21 +28,56 @@ const dollarsToCents = (dollars) => Math.round(dollars * 100);
 const centsToDollars = (cents) => cents / 100;
 
 /**
+ * Get platform fee percentage from config or use default
+ * Configurable via firebase functions:config:set platform.fee_percentage="0.10"
+ * Examples:
+ * - "0.10" = 10%
+ * - "0.05" = 5%
+ * - "0.15" = 15%
+ * @returns {number} Platform fee percentage (decimal)
+ */
+const getPlatformFeePercentage = () => {
+  const configPercentage = functions.config().platform?.fee_percentage;
+  if (configPercentage) {
+    const percentage = parseFloat(configPercentage);
+    if (!isNaN(percentage) && percentage >= 0 && percentage <= 1) {
+      return percentage;
+    }
+  }
+  return 0.10; // Default 10%
+};
+
+/**
+ * Calculate platform fee based on service fee
+ * @param {number} serviceFee - Service fee in SGD
+ * @returns {number} Platform fee amount
+ */
+const calculatePlatformFee = (serviceFee) => {
+  return serviceFee * getPlatformFeePercentage();
+};
+
+/**
  * Calculate payment splits
  * - Handyman gets 100% of service fee
- * - Platform fee ($5) is split 50/50 between cofounder and operator
+ * - Platform fee (configurable %) is split 50/50 between cofounder and operator
+ *
+ * @param {number} serviceFee - Service fee in SGD
+ * @param {number} [platformFee] - Optional platform fee override (calculated if not provided)
+ * @returns {Object} Split breakdown
  */
-const calculateSplits = (serviceFee, platformFee = 5) => {
+const calculateSplits = (serviceFee, platformFee = null) => {
+  const actualPlatformFee = platformFee !== null ? platformFee : calculatePlatformFee(serviceFee);
   const handymanShare = serviceFee; // 100% of service fee
-  const cofounderShare = platformFee / 2; // 50% of platform fee
-  const operatorShare = platformFee / 2; // 50% of platform fee
+  const cofounderShare = actualPlatformFee / 2; // 50% of platform fee
+  const operatorShare = actualPlatformFee / 2; // 50% of platform fee
 
   return {
     cofounder: cofounderShare,
     operator: operatorShare,
     handyman: handymanShare,
-    platformFee: platformFee,
-    totalCollected: serviceFee + platformFee
+    platformFee: actualPlatformFee,
+    platformFeePercentage: getPlatformFeePercentage(),
+    totalCollected: serviceFee + actualPlatformFee
   };
 };
 
@@ -279,27 +314,33 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
       const {
         jobId,
         customerId,
-        handymanId,
+        handymanId = null,  // Optional - will be null for new jobs, assigned later
         serviceFee,
         serviceType,
         customerEmail
       } = req.body;
 
-      if (!jobId || !customerId || !handymanId || !serviceFee || !serviceType) {
+      // Validate required fields (handymanId is optional)
+      if (!jobId || !customerId || !serviceFee || !serviceType) {
         return res.status(400).json({
-          error: 'Missing required fields: jobId, customerId, handymanId, serviceFee, serviceType'
+          error: 'Missing required fields: jobId, customerId, serviceFee, serviceType'
         });
       }
 
       console.log(`Creating payment intent for job: ${jobId}`);
+      if (handymanId) {
+        console.log(`Handyman already assigned: ${handymanId}`);
+      } else {
+        console.log(`No handyman assigned yet - will be assigned after payment authorization`);
+      }
 
-      // Calculate total (service fee + 10% platform fee) - needed for all code paths
-      const platformFeePercentage = 0.10;
-      const platformFee = serviceFee * platformFeePercentage;
+      // Calculate total (service fee + configurable platform fee %)
+      const platformFeePercentage = getPlatformFeePercentage();
+      const platformFee = calculatePlatformFee(serviceFee);
       const totalAmount = serviceFee + platformFee;
       const amountInCents = dollarsToCents(totalAmount);
 
-      console.log(`Service Fee: $${serviceFee}, Platform Fee (10%): $${platformFee}, Total: $${totalAmount}`);
+      console.log(`Service Fee: $${serviceFee}, Platform Fee: $${platformFee} (${platformFeePercentage * 100}%), Total: $${totalAmount}`);
 
       // Use Firestore transaction to prevent race conditions
       // This ensures atomic check-and-set of payment intent ID

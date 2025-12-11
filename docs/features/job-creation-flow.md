@@ -9,11 +9,13 @@ Complete customer journey from requesting a service to job creation in the syste
 ✅ **Implemented**
 - Multi-step job request form
 - Anonymous customer authentication
-- Service type selection with pricing
+- Service type selection with configurable pricing
 - Preferred timing selection
 - Job description and photo upload
 - Job document creation in Firestore
 - Payment integration (create job before payment)
+- Payment with escrow (manual capture)
+- Handyman assigned after payment authorization
 
 ❌ **Not Implemented**
 - Real-time job matching algorithm
@@ -42,10 +44,10 @@ Main container page for job requests.
 Core multi-step job request form component.
 
 **Key Functions:**
-- `handleNext()` - Move to next form step (Line ~180)
-- `handleBack()` - Go to previous step (Line ~190)
-- `handleProceedToPayment()` - Create job and navigate to payment (Line ~240)
-- `handlePaymentSuccess()` - Update job with payment info (Line ~303)
+- `handleNext()` - Validates current step and moves to next form step
+- `handleBack()` - Navigates to previous step without validation
+- `handleProceedToPayment()` - Creates anonymous user, creates job in Firestore, navigates to payment
+- `handlePaymentSuccess()` - Updates job status and payment info after successful payment
 
 **Form Steps:**
 1. Service Selection
@@ -77,12 +79,12 @@ Alternate confirmation component.
 Job CRUD operations and Firestore integration.
 
 **Key Functions:**
-- `createJob(jobData)` - Create job document in Firestore (Line ~30)
-- `updateJob(jobId, updates)` - Update job information (Line ~110)
-- `getJob(jobId)` - Fetch job by ID (Line ~85)
-- `getJobsByCustomer(customerId)` - Get customer's jobs (Line ~130)
-- `getJobsByStatus(status)` - Get jobs by status (Line ~150)
-- `createPayment(paymentData)` - Create payment record (Line ~200)
+- `createJob(jobData)` - Creates job document in Firestore with all job details and images
+- `updateJob(jobId, updates)` - Updates existing job document with new data
+- `getJob(jobId)` - Fetches single job by ID from Firestore
+- `getJobsByCustomer(customerId)` - Retrieves all jobs for a specific customer
+- `getJobsByStatus(status)` - Queries jobs filtered by status (pending, assigned, etc.)
+- `createPayment(paymentData)` - Creates payment record in Firestore after Stripe authorization
 
 #### `/src/services/firebase/collections.js`
 Low-level Firestore operations.
@@ -96,14 +98,13 @@ Low-level Firestore operations.
 Service catalog and pricing configuration.
 
 **Key Data:**
-- `SERVICE_CATEGORIES` - Available service types (Line ~10)
-- `SERVICE_PRICES` - Pricing for each service (Line ~25)
-- `PLATFORM_FEE_PERCENTAGE` - Platform fee (10%) (Line ~40)
+- `SERVICE_PRICING` - Object mapping service types to prices (e.g., Plumbing: 120)
+- `PLATFORM_FEE_PERCENTAGE` - Configurable platform fee percentage (default 10%)
 
 **Key Functions:**
-- `getServicePrice(serviceType)` - Get service base price (Line ~50)
-- `getPlatformFee(serviceFee)` - Calculate 10% platform fee (Line ~60)
-- `getTotalAmount(serviceFee)` - Calculate total with platform fee (Line ~70)
+- `getServicePrice(serviceType)` - Returns base price for given service type
+- `getPlatformFee(serviceFee)` - Calculates platform fee using configured percentage
+- `getTotalAmount(serviceType)` - Calculates total amount (service fee + platform fee)
 
 ---
 
@@ -128,27 +129,35 @@ Initialize form state with empty job data
 ```
 Display service categories
   ↓
-Data from: /src/config/servicePricing.js:10
-  → SERVICE_CATEGORIES = {
-      Plumbing: { price: 120, icon: "🔧" },
-      Electrical: { price: 150, icon: "⚡" },
-      Carpentry: { price: 180, icon: "🪚" },
-      Painting: { price: 200, icon: "🎨" },
-      Aircon: { price: 100, icon: "❄️" },
-      Cleaning: { price: 80, icon: "🧹" },
-      "General Repair": { price: 100, icon: "🔨" }
+Data from: /src/config/servicePricing.js
+  → SERVICE_PRICING = {
+      'Plumbing': 120,
+      'Electrical': 150,
+      'Carpentry': 180,
+      'Appliance Repair': 100,
+      'Painting': 200,
+      'General handyman': 100
     }
+
+  Note: Icons (🔧, ⚡, 🪚, etc.) are handled in UI components
   ↓
 User selects service (e.g., "Plumbing")
+  ↓
+Calculate total with configurable platform fee:
+  → serviceFee = getServicePrice("Plumbing") = 120
+  → platformFee = getPlatformFee(120) = 120 × 0.10 = 12 (default)
+  → estimatedBudget = serviceFee + platformFee = 132
   ↓
 Update form state:
   {
     serviceType: "Plumbing",
-    estimatedBudget: 120 + (120 * 0.10) = 132  // Including 10% platform fee
+    serviceFee: 120,
+    platformFee: 12,
+    estimatedBudget: 132
   }
   ↓
 Click "Next"
-  → handleNext() called (Line ~180)
+  → handleNext() validates and moves to next step
 ```
 
 ### Step 2: Job Details (Step 2)
@@ -517,62 +526,59 @@ Shows:
 **File:** `/src/config/servicePricing.js`
 
 ```javascript
-// Service catalog with base prices
-export const SERVICE_CATEGORIES = {
-  "Plumbing": {
-    price: 120,
-    icon: "🔧",
-    description: "Pipe repairs, fixture installation, leak fixes"
-  },
-  "Electrical": {
-    price: 150,
-    icon: "⚡",
-    description: "Wiring, switches, lighting, electrical repairs"
-  },
-  "Carpentry": {
-    price: 180,
-    icon: "🪚",
-    description: "Furniture assembly, door repair, custom woodwork"
-  },
-  "Painting": {
-    price: 200,
-    icon: "🎨",
-    description: "Interior/exterior painting, touch-ups"
-  },
-  "Aircon": {
-    price: 100,
-    icon: "❄️",
-    description: "AC servicing, repair, installation"
-  },
-  "Cleaning": {
-    price: 80,
-    icon: "🧹",
-    description: "General cleaning, deep cleaning"
-  },
-  "General Repair": {
-    price: 100,
-    icon: "🔨",
-    description: "General handyman repairs and maintenance"
-  }
+// Service catalog with base prices (SGD)
+export const SERVICE_PRICING = {
+  'Plumbing': 120,
+  'Electrical': 150,
+  'Carpentry': 180,
+  'Appliance Repair': 100,
+  'Painting': 200,
+  'General handyman': 100
 };
 
-// Platform fee: 10% of service fee
-export const PLATFORM_FEE_PERCENTAGE = 0.10;
+// Platform fee percentage configuration
+// Configurable via REACT_APP_PLATFORM_FEE_PERCENTAGE environment variable
+// Examples: 0.10 = 10%, 0.05 = 5%, 0.15 = 15%
+export const PLATFORM_FEE_PERCENTAGE = parseFloat(
+  process.env.REACT_APP_PLATFORM_FEE_PERCENTAGE
+) || 0.10;
 
-// Calculate platform fee
-export const getPlatformFee = (serviceFee) => {
-  return serviceFee * PLATFORM_FEE_PERCENTAGE;
-};
-
-// Calculate total amount (service fee + platform fee)
-export const getTotalAmount = (serviceFee) => {
-  return serviceFee + getPlatformFee(serviceFee);
-};
-
-// Get service price by type
+// Get the price for a specific service type
 export const getServicePrice = (serviceType) => {
-  return SERVICE_CATEGORIES[serviceType]?.price || 100;
+  return SERVICE_PRICING[serviceType] || 120;
 };
+
+// Calculate the platform fee as percentage of service price
+export const getPlatformFee = (serviceTypeOrPrice) => {
+  const servicePrice = typeof serviceTypeOrPrice === 'string'
+    ? getServicePrice(serviceTypeOrPrice)
+    : serviceTypeOrPrice;
+
+  return servicePrice * PLATFORM_FEE_PERCENTAGE;
+};
+
+// Get the total amount including platform fee
+export const getTotalAmount = (serviceTypeOrPrice) => {
+  const servicePrice = typeof serviceTypeOrPrice === 'string'
+    ? getServicePrice(serviceTypeOrPrice)
+    : serviceTypeOrPrice;
+  const platformFee = getPlatformFee(servicePrice);
+  return servicePrice + platformFee;
+};
+
+// Get all service types with their prices
+export const getServiceTypes = () => {
+  return Object.entries(SERVICE_PRICING).map(([type, price]) => ({
+    type,
+    price
+  }));
+};
+```
+
+**Configuration:**
+```env
+# In .env.local
+REACT_APP_PLATFORM_FEE_PERCENTAGE=0.10  # 10% (default)
 ```
 
 **Usage Example:**
@@ -581,18 +587,24 @@ import { getServicePrice, getPlatformFee, getTotalAmount } from './config/servic
 
 const serviceType = "Plumbing";
 const serviceFee = getServicePrice(serviceType);  // 120
-const platformFee = getPlatformFee(serviceFee);   // 12
-const total = getTotalAmount(serviceFee);         // 132
+const platformFee = getPlatformFee(serviceFee);   // 12 (10% of 120)
+const total = getTotalAmount(serviceType);        // 132
 ```
+
+**See:** [Platform Fee Configuration Guide](../../PLATFORM_FEE_CONFIGURATION.md) for detailed instructions on changing the percentage.
 
 ---
 
 ## Job Status Lifecycle
 
 ```
-pending
+awaiting_payment (job created, no payment yet)
   ↓
-  [Handyman accepts job]
+  [Customer completes payment]
+  ↓
+pending (payment authorized, waiting for handyman)
+  ↓
+  [Handyman accepts job - handymanId assigned]
   ↓
 assigned
   ↓
@@ -608,6 +620,11 @@ completed
   ↓
 payment_released
 ```
+
+**Important Notes:**
+- `awaiting_payment` jobs are automatically deleted after 30 minutes if payment not completed
+- `handymanId` is `null` until status changes from `pending` to `assigned`
+- See [Scheduled Jobs Documentation](./scheduled-jobs.md) for cleanup details
 
 ### Status Definitions
 

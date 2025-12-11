@@ -3,9 +3,12 @@
  *
  * This file contains the pricing information for all service types.
  * Update prices here to reflect across the entire application.
- * *you can simply add to thise SERVICEPRICing
  *
  * All prices are in SGD (Singapore Dollars).
+ *
+ * Platform fee is configurable via environment variable REACT_APP_PLATFORM_FEE_PERCENTAGE
+ * Set as decimal (e.g., 0.10 for 10%, 0.05 for 5%)
+ * Defaults to 10% if not specified.
  */
 
 export const SERVICE_PRICING = {
@@ -18,9 +21,14 @@ export const SERVICE_PRICING = {
 };
 
 /**
- * Platform fee percentage (10% of service fee)
+ * Platform fee percentage configuration
+ * Configurable via REACT_APP_PLATFORM_FEE_PERCENTAGE environment variable
+ * Examples:
+ * - 0.10 = 10%
+ * - 0.05 = 5%
+ * - 0.15 = 15%
  */
-export const PLATFORM_FEE_PERCENTAGE = 0.10;
+export const PLATFORM_FEE_PERCENTAGE = parseFloat(process.env.REACT_APP_PLATFORM_FEE_PERCENTAGE) || 0.10;
 
 /**
  * Get the price for a specific service type
@@ -32,7 +40,9 @@ export const getServicePrice = (serviceType) => {
 };
 
 /**
- * Calculate the platform fee (10% of service price)
+ * Calculate the platform fee as percentage of service price
+ * Uses configurable PLATFORM_FEE_PERCENTAGE
+ *
  * @param {string|number} serviceTypeOrPrice - The service type or price
  * @returns {number} The platform fee amount
  */
@@ -40,16 +50,19 @@ export const getPlatformFee = (serviceTypeOrPrice) => {
   const servicePrice = typeof serviceTypeOrPrice === 'string'
     ? getServicePrice(serviceTypeOrPrice)
     : serviceTypeOrPrice;
+
   return servicePrice * PLATFORM_FEE_PERCENTAGE;
 };
 
 /**
  * Get the total amount including platform fee
- * @param {string} serviceType - The service type
+ * @param {string|number} serviceTypeOrPrice - The service type or price
  * @returns {number} The total amount (service price + platform fee)
  */
-export const getTotalAmount = (serviceType) => {
-  const servicePrice = getServicePrice(serviceType);
+export const getTotalAmount = (serviceTypeOrPrice) => {
+  const servicePrice = typeof serviceTypeOrPrice === 'string'
+    ? getServicePrice(serviceTypeOrPrice)
+    : serviceTypeOrPrice;
   const platformFee = getPlatformFee(servicePrice);
   return servicePrice + platformFee;
 };
