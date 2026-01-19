@@ -8,6 +8,21 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const stripe = require('stripe')(functions.config().stripe.secret_key);
+const jwt = require('jsonwebtoken'); // SECURITY FIX (Phase 1.3): JWT for approval tokens
+
+// SECURITY FIX (Phase 1.2): Import validation utilities
+const { validate } = require('./validation/middleware');
+const {
+  paymentIntentSchema,
+  connectedAccountSchema,
+  accountLinkSchema,
+  accountIdSchema,
+  paymentIntentIdSchema,
+  escrowReleaseSchema,
+  refundSchema,
+  accountStatusQuerySchema,
+  paymentStatusQuerySchema
+} = require('./validation/schemas');
 
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
@@ -37,39 +52,6 @@ const cors = require('cors')({
 
 // Initialize Firebase Admin
 admin.initializeApp();
-
-// ===================================
-// HELPER FUNCTIONS
-// ===================================
-
-/**
- * Convert dollars to cents for Stripe
- */
-const dollarsToCents = (dollars) => Math.round(dollars * 100);
-
-/**
- * Convert cents to dollars
- */
-const centsToDollars = (cents) => cents / 100;
-
-/**
- * Calculate payment splits
- * - Handyman gets 100% of service fee
- * - Platform fee ($5) is split 50/50 between cofounder and operator
- */
-const calculateSplits = (serviceFee, platformFee = 5) => {
-  const handymanShare = serviceFee; // 100% of service fee
-  const cofounderShare = platformFee / 2; // 50% of platform fee
-  const operatorShare = platformFee / 2; // 50% of platform fee
-
-  return {
-    cofounder: cofounderShare,
-    operator: operatorShare,
-    handyman: handymanShare,
-    platformFee: platformFee,
-    totalCollected: serviceFee + platformFee
-  };
-};
 
 // ===================================
 // AUTHENTICATION HELPERS (Security Fix Phase 0.4)
@@ -103,6 +85,74 @@ const verifyAuthToken = async (req) => {
 };
 
 // ===================================
+// HELPER FUNCTIONS
+// ===================================
+
+/**
+ * Convert dollars to cents for Stripe
+ */
+const dollarsToCents = (dollars) => Math.round(dollars * 100);
+
+/**
+ * Convert cents to dollars
+ */
+const centsToDollars = (cents) => cents / 100;
+
+/**
+ * Get platform fee percentage from config or use default
+ * Configurable via firebase functions:config:set platform.fee_percentage="0.10"
+ * Examples:
+ * - "0.10" = 10%
+ * - "0.05" = 5%
+ * - "0.15" = 15%
+ * @returns {number} Platform fee percentage (decimal)
+ */
+const getPlatformFeePercentage = () => {
+  const configPercentage = functions.config().platform?.fee_percentage;
+  if (configPercentage) {
+    const percentage = parseFloat(configPercentage);
+    if (!isNaN(percentage) && percentage >= 0 && percentage <= 1) {
+      return percentage;
+    }
+  }
+  return 0.10; // Default 10%
+};
+
+/**
+ * Calculate platform fee based on service fee
+ * @param {number} serviceFee - Service fee in SGD
+ * @returns {number} Platform fee amount
+ */
+const calculatePlatformFee = (serviceFee) => {
+  return serviceFee * getPlatformFeePercentage();
+};
+
+/**
+ * Calculate payment splits
+ * - Handyman gets 100% of service fee
+ * - Platform fee (configurable %) is split 50/50 between cofounder and operator
+ *
+ * @param {number} serviceFee - Service fee in SGD
+ * @param {number} [platformFee] - Optional platform fee override (calculated if not provided)
+ * @returns {Object} Split breakdown
+ */
+const calculateSplits = (serviceFee, platformFee = null) => {
+  const actualPlatformFee = platformFee !== null ? platformFee : calculatePlatformFee(serviceFee);
+  const handymanShare = serviceFee; // 100% of service fee
+  const cofounderShare = actualPlatformFee / 2; // 50% of platform fee
+  const operatorShare = actualPlatformFee / 2; // 50% of platform fee
+
+  return {
+    cofounder: cofounderShare,
+    operator: operatorShare,
+    handyman: handymanShare,
+    platformFee: actualPlatformFee,
+    platformFeePercentage: getPlatformFeePercentage(),
+    totalCollected: serviceFee + actualPlatformFee
+  };
+};
+
+// ===================================
 // STRIPE CONNECT ENDPOINTS
 // ===================================
 
@@ -121,13 +171,11 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
       // SECURITY FIX (Phase 0.4): Verify authentication
       const decodedToken = await verifyAuthToken(req);
 
-      const { email, name, phone, uid } = req.body;
+      // SECURITY FIX (Phase 1.2): Validate and sanitize input
+      const validatedData = validate(connectedAccountSchema)(req.body);
+      const { email, name, phone, uid } = validatedData;
 
-      if (!email || !name || !uid) {
-        return res.status(400).json({ error: 'Missing required fields: email, name, uid' });
-      }
-
-      // SECURITY FIX (Phase 0.4): Verify the requesting user is creating account for themselves
+      // SECURITY FIX (Phase 0.4): Verify user can only create account for themselves
       if (decodedToken.uid !== uid) {
         console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to create account for ${uid}`);
         return res.status(403).json({ error: 'Forbidden: Cannot create account for another user' });
@@ -165,8 +213,8 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         },
       });
 
-      // Update handyman document in Firestore
-      await admin.firestore().collection('handymen').doc(uid).update({
+      // Update or create handyman document in Firestore (use set with merge)
+      await admin.firestore().collection('handymen').doc(uid).set({
         stripeConnectedAccountId: account.id,
         stripeAccountStatus: 'pending',
         stripeOnboardingCompleted: false,
@@ -175,7 +223,7 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         stripeChargesEnabled: account.charges_enabled,
         stripeConnectedAt: admin.firestore.FieldValue.serverTimestamp(),
         stripeLastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      }, { merge: true });
 
       console.log(`✅ Created Stripe account: ${account.id}`);
 
@@ -185,6 +233,20 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error creating connected account:', error);
+
+      // SECURITY FIX (Phase 1.2): Handle validation errors
+      if (error.message.includes('Validation failed')) {
+        return res.status(400).json({ error: 'Invalid input', message: error.message });
+      }
+
+      // SECURITY FIX (Phase 0.4): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to create connected account',
         message: error.message
@@ -205,10 +267,18 @@ exports.createAccountLink = functions.https.onRequest((req, res) => {
     }
 
     try {
-      const { accountId, refreshUrl, returnUrl } = req.body;
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
 
-      if (!accountId) {
-        return res.status(400).json({ error: 'Missing accountId' });
+      // SECURITY FIX (Phase 1.2): Validate and sanitize input
+      const validatedData = validate(accountLinkSchema)(req.body);
+      const { accountId, refreshUrl, returnUrl } = validatedData;
+
+      // SECURITY FIX (Phase 1.1): Verify user owns this Stripe account
+      const handymanDoc = await admin.firestore().collection('handymen').doc(decodedToken.uid).get();
+      if (!handymanDoc.exists || handymanDoc.data().stripeConnectedAccountId !== accountId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to create link for account ${accountId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot create link for another user\'s account' });
       }
 
       // Use provided URLs or fallback to defaults
@@ -232,6 +302,15 @@ exports.createAccountLink = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error creating account link:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to create account link',
         message: error.message
@@ -251,10 +330,20 @@ exports.getAccountStatus = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
       const accountId = req.query.accountId;
 
       if (!accountId) {
         return res.status(400).json({ error: 'Missing accountId parameter' });
+      }
+
+      // SECURITY FIX (Phase 1.1): Verify user owns this Stripe account
+      const handymanDoc = await admin.firestore().collection('handymen').doc(decodedToken.uid).get();
+      if (!handymanDoc.exists || handymanDoc.data().stripeConnectedAccountId !== accountId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to access account ${accountId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot access another user\'s account' });
       }
 
       const account = await stripe.accounts.retrieve(accountId);
@@ -282,6 +371,15 @@ exports.getAccountStatus = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error fetching account status:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to fetch account status',
         message: error.message
@@ -302,10 +400,20 @@ exports.createLoginLink = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
       const { accountId } = req.body;
 
       if (!accountId) {
         return res.status(400).json({ error: 'Missing accountId' });
+      }
+
+      // SECURITY FIX (Phase 1.1): Verify user owns this Stripe account
+      const handymanDoc = await admin.firestore().collection('handymen').doc(decodedToken.uid).get();
+      if (!handymanDoc.exists || handymanDoc.data().stripeConnectedAccountId !== accountId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to create login link for account ${accountId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot create login link for another user\'s account' });
       }
 
       const loginLink = await stripe.accounts.createLoginLink(accountId);
@@ -317,6 +425,15 @@ exports.createLoginLink = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error creating login link:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to create login link',
         message: error.message
@@ -341,30 +458,40 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 0.4): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
+      // SECURITY FIX (Phase 1.2): Validate and sanitize input
+      const validatedData = validate(paymentIntentSchema)(req.body);
       const {
         jobId,
         customerId,
-        handymanId,
+        handymanId = null,  // Optional - will be null for new jobs, assigned later
         serviceFee,
         serviceType,
         customerEmail
-      } = req.body;
+      } = validatedData;
 
-      if (!jobId || !customerId || !handymanId || !serviceFee || !serviceType) {
-        return res.status(400).json({
-          error: 'Missing required fields: jobId, customerId, handymanId, serviceFee, serviceType'
-        });
+      // SECURITY FIX (Phase 0.4): Verify the requesting user owns this transaction
+      if (decodedToken.uid !== customerId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to create payment for customer ${customerId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot create payment for another user' });
       }
 
       console.log(`Creating payment intent for job: ${jobId}`);
+      if (handymanId) {
+        console.log(`Handyman already assigned: ${handymanId}`);
+      } else {
+        console.log(`No handyman assigned yet - will be assigned after payment authorization`);
+      }
 
-      // Calculate total (service fee + 10% platform fee) - needed for all code paths
-      const platformFeePercentage = 0.10;
-      const platformFee = serviceFee * platformFeePercentage;
+      // Calculate total (service fee + configurable platform fee %)
+      const platformFeePercentage = getPlatformFeePercentage();
+      const platformFee = calculatePlatformFee(serviceFee);
       const totalAmount = serviceFee + platformFee;
       const amountInCents = dollarsToCents(totalAmount);
 
-      console.log(`Service Fee: $${serviceFee}, Platform Fee (10%): $${platformFee}, Total: $${totalAmount}`);
+      console.log(`Service Fee: $${serviceFee}, Platform Fee: $${platformFee} (${platformFeePercentage * 100}%), Total: $${totalAmount}`);
 
       // Use Firestore transaction to prevent race conditions
       // This ensures atomic check-and-set of payment intent ID
@@ -474,6 +601,22 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error creating payment intent:', error);
+
+      // SECURITY FIX (Phase 0.4): Handle auth errors with appropriate status codes
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({
+          error: 'Unauthorized',
+          message: error.message
+        });
+      }
+
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: error.message
+        });
+      }
+
       return res.status(500).json({
         error: 'Failed to create payment intent',
         message: error.message
@@ -494,16 +637,23 @@ exports.confirmPayment = functions.https.onRequest((req, res) => {
     }
 
     try {
-      const { paymentIntentId } = req.body;
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
 
-      if (!paymentIntentId) {
-        return res.status(400).json({ error: 'Missing paymentIntentId' });
-      }
+      // SECURITY FIX (Phase 1.2): Validate and sanitize input
+      const validatedData = validate(paymentIntentIdSchema)(req.body);
+      const { paymentIntentId } = validatedData;
 
       console.log(`Confirming payment intent: ${paymentIntentId}`);
 
       // Retrieve payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      // SECURITY FIX (Phase 1.1): Verify user owns this payment
+      if (paymentIntent.metadata.customerId !== decodedToken.uid) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to confirm payment ${paymentIntentId} belonging to ${paymentIntent.metadata.customerId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot confirm another user\'s payment' });
+      }
 
       // If already succeeded, return success
       if (paymentIntent.status === 'succeeded') {
@@ -538,6 +688,15 @@ exports.confirmPayment = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error confirming payment:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to confirm payment',
         message: error.message
@@ -557,6 +716,9 @@ exports.getPaymentStatus = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
       const paymentIntentId = req.query.paymentIntentId;
 
       if (!paymentIntentId) {
@@ -564,6 +726,15 @@ exports.getPaymentStatus = functions.https.onRequest((req, res) => {
       }
 
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      // SECURITY FIX (Phase 1.1): Verify user is involved in this payment (either customer or handyman)
+      const customerId = paymentIntent.metadata?.customerId;
+      const handymanId = paymentIntent.metadata?.handymanId;
+
+      if (decodedToken.uid !== customerId && decodedToken.uid !== handymanId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to access payment ${paymentIntentId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot access payment details for another user' });
+      }
 
       const status = {
         id: paymentIntent.id,
@@ -584,6 +755,15 @@ exports.getPaymentStatus = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error fetching payment status:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to fetch payment status',
         message: error.message
@@ -607,21 +787,22 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 0.4): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
+      // SECURITY FIX (Phase 1.2): Validate and sanitize input
+      const validatedData = validate(escrowReleaseSchema)(req.body);
       const {
         paymentIntentId,
         jobId,
         serviceFee,
-        platformFee = 5,
+        platformFee,
         handymanAccountId,
         cofounderAccountId,
         operatorAccountId
-      } = req.body;
+      } = validatedData;
 
-      if (!paymentIntentId || !jobId || !serviceFee || !handymanAccountId || !cofounderAccountId || !operatorAccountId) {
-        return res.status(400).json({
-          error: 'Missing required fields'
-        });
-      }
+      // TODO (Phase 1): Add role-based authorization - only handyman or admin should release escrow
 
       console.log(`Releasing escrow and splitting payment for job: ${jobId}`);
 
@@ -707,6 +888,15 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error releasing escrow:', error);
+
+      // SECURITY FIX (Phase 0.4): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to release escrow',
         message: error.message
@@ -727,6 +917,9 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 1.1): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
       const { paymentIntentId, reason } = req.body;
 
       if (!paymentIntentId) {
@@ -737,6 +930,15 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
 
       // Get payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+      // SECURITY FIX (Phase 1.1): Only customer or handyman can request refund
+      const customerId = paymentIntent.metadata?.customerId;
+      const handymanId = paymentIntent.metadata?.handymanId;
+
+      if (decodedToken.uid !== customerId && decodedToken.uid !== handymanId) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to refund payment ${paymentIntentId}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot refund another user\'s payment' });
+      }
 
       if (paymentIntent.status !== 'succeeded') {
         return res.status(400).json({
@@ -778,6 +980,15 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
       });
     } catch (error) {
       console.error('Error refunding payment:', error);
+
+      // SECURITY FIX (Phase 1.1): Handle auth errors
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+
       return res.status(500).json({
         error: 'Failed to refund payment',
         message: error.message
