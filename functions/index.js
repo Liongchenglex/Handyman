@@ -8,7 +8,32 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const stripe = require('stripe')(functions.config().stripe.secret_key);
-const cors = require('cors')({ origin: true });
+
+// ===================================
+// CORS CONFIGURATION (Security Fix Phase 0.1)
+// ===================================
+// Whitelist approved origins only - prevents unauthorized cross-origin requests
+const allowedOrigins = [
+  'https://eazydone-d06cf.web.app',
+  'https://eazydone-d06cf.firebaseapp.com',
+  'http://localhost:3000',  // Development - React dev server
+  'http://localhost:5000',  // Development - Firebase emulator
+];
+
+const cors = require('cors')({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, server-to-server, Postman)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`🚫 Blocked CORS request from unauthorized origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+});
 
 // Initialize Firebase Admin
 admin.initializeApp();
@@ -47,6 +72,37 @@ const calculateSplits = (serviceFee, platformFee = 5) => {
 };
 
 // ===================================
+// AUTHENTICATION HELPERS (Security Fix Phase 0.4)
+// ===================================
+
+/**
+ * Verify Firebase ID token from request
+ * Prevents unauthorized access to Cloud Functions
+ *
+ * @param {Object} req - Express request object
+ * @returns {Object} Decoded token with uid and other user data
+ * @throws {Error} If token is missing or invalid
+ */
+const verifyAuthToken = async (req) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Unauthorized: Missing authentication token');
+  }
+
+  const idToken = authHeader.split('Bearer ')[1];
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    console.log(`✅ Authenticated user: ${decodedToken.uid}`);
+    return decodedToken;
+  } catch (error) {
+    console.error('❌ Token verification failed:', error.message);
+    throw new Error('Unauthorized: Invalid authentication token');
+  }
+};
+
+// ===================================
 // STRIPE CONNECT ENDPOINTS
 // ===================================
 
@@ -62,10 +118,19 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
     }
 
     try {
+      // SECURITY FIX (Phase 0.4): Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+
       const { email, name, phone, uid } = req.body;
 
       if (!email || !name || !uid) {
         return res.status(400).json({ error: 'Missing required fields: email, name, uid' });
+      }
+
+      // SECURITY FIX (Phase 0.4): Verify the requesting user is creating account for themselves
+      if (decodedToken.uid !== uid) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to create account for ${uid}`);
+        return res.status(403).json({ error: 'Forbidden: Cannot create account for another user' });
       }
 
       console.log(`Creating Stripe Connect account for: ${name} (${email})`);
