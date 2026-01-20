@@ -44,9 +44,17 @@ export const AuthProvider = ({ children }) => {
             handyman: handymanProfile
           });
         } catch (error) {
-          console.error('Error fetching user profile:', error);
-          setUser(firebaseUser);
-          setUserProfile(null);
+          // User document doesn't exist (e.g., anonymous users)
+          // This is OK - anonymous users don't need Firestore profiles
+          if (firebaseUser.isAnonymous) {
+            console.log('ℹ️ Anonymous user - no Firestore profile needed');
+            setUser(firebaseUser);
+            setUserProfile(null);
+          } else {
+            console.error('Error fetching user profile:', error);
+            setUser(firebaseUser);
+            setUserProfile(null);
+          }
         }
       } else {
         // User is signed out

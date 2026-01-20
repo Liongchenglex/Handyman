@@ -174,14 +174,16 @@ export const signInHandyman = async (email, password) => {
 export const createAnonymousUser = async (userData) => {
   try {
     const result = await signInAnonymously(auth);
-    
+
     // Update the user profile with provided data
     if (userData.name) {
       await updateProfile(result.user, {
         displayName: userData.name
       });
     }
-    
+
+    console.log('✅ Anonymous user signed in (no Firestore document needed):', result.user.uid);
+
     return result.user;
   } catch (error) {
     console.error('Error creating anonymous user:', error);
