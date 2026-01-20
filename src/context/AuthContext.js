@@ -28,6 +28,17 @@ export const AuthProvider = ({ children }) => {
         try {
           const profile = await getUser(firebaseUser.uid);
 
+          // If no profile exists (e.g., anonymous users), that's OK
+          if (!profile) {
+            if (firebaseUser.isAnonymous) {
+              console.log('ℹ️ Anonymous user - no Firestore profile needed');
+            }
+            setUser(firebaseUser);
+            setUserProfile(null);
+            setLoading(false);
+            return;
+          }
+
           // If user is a handyman, also fetch handyman profile
           let handymanProfile = null;
           if (profile?.role === 'handyman') {
@@ -44,17 +55,9 @@ export const AuthProvider = ({ children }) => {
             handyman: handymanProfile
           });
         } catch (error) {
-          // User document doesn't exist (e.g., anonymous users)
-          // This is OK - anonymous users don't need Firestore profiles
-          if (firebaseUser.isAnonymous) {
-            console.log('ℹ️ Anonymous user - no Firestore profile needed');
-            setUser(firebaseUser);
-            setUserProfile(null);
-          } else {
-            console.error('Error fetching user profile:', error);
-            setUser(firebaseUser);
-            setUserProfile(null);
-          }
+          console.error('Error fetching user profile:', error);
+          setUser(firebaseUser);
+          setUserProfile(null);
         }
       } else {
         // User is signed out

@@ -85,9 +85,19 @@ export const createUser = async (userId, userData) => {
 
 /**
  * Get user profile by ID
+ * Returns null if user document doesn't exist (e.g., for anonymous users)
  */
 export const getUser = async (userId) => {
-  return await getDocument(COLLECTIONS.USERS, userId);
+  try {
+    return await getDocument(COLLECTIONS.USERS, userId);
+  } catch (error) {
+    // Return null instead of throwing error for missing documents
+    // This is expected for anonymous users who don't have Firestore profiles
+    if (error.message === 'Document not found') {
+      return null;
+    }
+    throw error;
+  }
 };
 
 /**

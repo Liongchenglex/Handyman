@@ -34,14 +34,18 @@ export const getDocument = async (collectionName, docId) => {
   try {
     const docRef = doc(db, collectionName, docId);
     const docSnap = await getDoc(docRef);
-    
+
     if (docSnap.exists()) {
       return { id: docSnap.id, ...docSnap.data() };
     } else {
       throw new Error('Document not found');
     }
   } catch (error) {
-    console.error(`Error getting document from ${collectionName}:`, error);
+    // Don't log "Document not found" errors for users collection
+    // This is expected for anonymous users who don't have Firestore profiles
+    if (!(collectionName === 'users' && error.message === 'Document not found')) {
+      console.error(`Error getting document from ${collectionName}:`, error);
+    }
     throw error;
   }
 };
