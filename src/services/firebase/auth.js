@@ -55,15 +55,13 @@ export const registerHandyman = async (registrationData) => {
       displayName: name
     });
 
-    // Create user document in Firestore
+    // Create minimal user document (just role reference - DRY principle)
+    // All actual data stored in handymen collection to avoid duplication
     await createUser(user.uid, {
-      email: email,
-      name: name,
-      phone: phone,
       role: 'handyman'
     });
 
-    // Create handyman profile document
+    // Create handyman profile document with ALL user data
     await createHandyman(user.uid, {
       name: name,
       email: email,

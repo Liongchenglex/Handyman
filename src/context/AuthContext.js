@@ -39,21 +39,28 @@ export const AuthProvider = ({ children }) => {
             return;
           }
 
-          // If user is a handyman, also fetch handyman profile
-          let handymanProfile = null;
+          // If user is a handyman, fetch complete profile from handymen collection
+          // (users collection only stores role reference for handymen - DRY principle)
           if (profile?.role === 'handyman') {
             try {
-              handymanProfile = await getHandyman(firebaseUser.uid);
+              const handymanProfile = await getHandyman(firebaseUser.uid);
+              // Use handyman profile as main profile (has all data)
+              setUser(firebaseUser);
+              setUserProfile({
+                ...handymanProfile,
+                role: 'handyman' // Ensure role is set
+              });
+              setLoading(false);
+              return;
             } catch (error) {
               console.error('Error fetching handyman profile:', error);
+              // Fallback to minimal user profile
             }
           }
 
+          // For customers or if handyman profile fetch failed
           setUser(firebaseUser);
-          setUserProfile({
-            ...profile,
-            handyman: handymanProfile
-          });
+          setUserProfile(profile);
         } catch (error) {
           console.error('Error fetching user profile:', error);
           setUser(firebaseUser);
