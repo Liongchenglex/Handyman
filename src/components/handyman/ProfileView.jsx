@@ -12,7 +12,8 @@ import { getJobsByHandyman } from '../../services/firebase';
  */
 const ProfileView = ({ user, userProfile }) => {
   const [myJobs, setMyJobs] = useState([]);
-  const handymanProfile = userProfile?.handyman || {};
+  // After DRY refactor: userProfile IS the handyman profile (not nested)
+  const handymanProfile = userProfile || {};
 
   // Fetch jobs for stats display
   useEffect(() => {

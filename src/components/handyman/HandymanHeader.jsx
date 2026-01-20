@@ -49,12 +49,12 @@ const HandymanHeader = ({ currentView, onViewChange }) => {
                   {userProfile?.name || user?.displayName || 'Handyman'}
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {userProfile?.handyman?.serviceTypes?.[0] || 'Professional'}
+                  {userProfile?.serviceTypes?.[0] || 'Professional'}
                 </p>
               </div>
-              {userProfile?.handyman?.profileImageUrl ? (
+              {userProfile?.profileImageUrl ? (
                 <img
-                  src={userProfile.handyman.profileImageUrl}
+                  src={userProfile.profileImageUrl}
                   alt="Profile"
                   className="w-10 h-10 rounded-full object-cover border-2 border-primary/30"
                 />
@@ -89,7 +89,7 @@ const HandymanHeader = ({ currentView, onViewChange }) => {
                       {user?.email}
                     </p>
                     <div className="mt-2 flex items-center gap-2">
-                      {userProfile?.handyman?.verified ? (
+                      {userProfile?.verified ? (
                         <span className="text-xs px-2 py-1 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-full">
                           ✓ Verified
                         </span>

@@ -33,7 +33,7 @@ const RejectedStatusView = ({ userProfile }) => {
           </p>
 
           {/* Reason (if provided) */}
-          {userProfile.handyman?.rejectedReason && (
+          {userProfile.rejectedReason && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6 mb-8">
               <div className="flex items-start gap-3 text-left">
                 <span className="material-symbols-outlined text-red-600 dark:text-red-400 mt-0.5">
@@ -44,7 +44,7 @@ const RejectedStatusView = ({ userProfile }) => {
                     Reason for Rejection
                   </h3>
                   <p className="text-red-800 dark:text-red-300 text-sm">
-                    {userProfile.handyman.rejectedReason}
+                    {userProfile.rejectedReason}
                   </p>
                 </div>
               </div>
@@ -94,11 +94,11 @@ const RejectedStatusView = ({ userProfile }) => {
                 <span className="text-gray-600 dark:text-gray-400">Status:</span>
                 <span className="font-medium text-red-600 dark:text-red-400">Rejected</span>
               </div>
-              {userProfile.handyman?.rejectedAt && (
+              {userProfile.rejectedAt && (
                 <div className="flex justify-between">
                   <span className="text-gray-600 dark:text-gray-400">Rejected On:</span>
                   <span className="font-medium text-gray-900 dark:text-white">
-                    {new Date(userProfile.handyman.rejectedAt).toLocaleDateString()}
+                    {new Date(userProfile.rejectedAt).toLocaleDateString()}
                   </span>
                 </div>
               )}

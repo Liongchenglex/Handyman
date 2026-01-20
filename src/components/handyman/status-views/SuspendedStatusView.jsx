@@ -33,10 +33,10 @@ const SuspendedStatusView = ({ userProfile }) => {
           </p>
 
           {/* Reason (if provided) */}
-          {userProfile.handyman?.suspendedReason && (
+          {userProfile.suspendedReason && (
             <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-xl p-6 mb-8">
               <h3 className="font-semibold text-orange-900 dark:text-orange-200 mb-1">
-                Reason: {userProfile.handyman.suspendedReason}
+                Reason: {userProfile.suspendedReason}
               </h3>
             </div>
           )}
