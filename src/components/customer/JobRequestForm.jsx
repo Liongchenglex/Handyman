@@ -238,32 +238,63 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   };
 
   // Function to handle proceeding to payment
-  const handleProceedToPayment = () => {
-    const finalJobData = {
-      // Personal details
-      customerName: personalData.name,
-      customerEmail: personalData.email,
-      customerPhone: personalData.phone,
-      address: personalData.address,
-      // Job details
-      serviceType: selectedCategory,
-      description: notes || `${selectedCategory} service requested`,
-      location: personalData.address || 'Singapore',
-      preferredTiming: selectedTiming,
-      preferredDate: selectedTiming === 'Schedule' ? selectedDate.toISOString().split('T')[0] : null,
-      preferredTime: jobFormData.time,
-      materials: selectedMaterials,
-      siteVisit: selectedSiteVisit,
-      estimatedBudget: getServicePrice(selectedCategory),
-      status: 'pending',
-      createdAt: new Date(),
-      images: uploadedImages
-    };
+  const handleProceedToPayment = async () => {
+    setIsSubmitting(true);
 
-    setJobData(finalJobData);
-    setCurrentStep(4); // Go to payment step
-    // Scroll to top of the page
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      // Step 1: Create or get anonymous user FIRST
+      let userId = customerId;
+      if (!userId) {
+        console.log('Creating anonymous user for customer...');
+        const user = await createAnonymousUser({
+          name: personalData.name,
+          email: personalData.email,
+          phone: personalData.phone
+        });
+        userId = user.uid;
+        setCustomerId(userId);
+        console.log('Anonymous user created:', userId);
+      }
+
+      // Step 2: Create job with 'awaiting_payment' status
+      const finalJobData = {
+        // Personal details
+        customerName: personalData.name,
+        customerEmail: personalData.email,
+        customerPhone: personalData.phone,
+        address: personalData.address,
+        // Job details
+        serviceType: selectedCategory,
+        description: notes || `${selectedCategory} service requested`,
+        location: personalData.address || 'Singapore',
+        preferredTiming: selectedTiming,
+        preferredDate: selectedTiming === 'Schedule' ? selectedDate.toISOString().split('T')[0] : null,
+        preferredTime: jobFormData.time,
+        materials: selectedMaterials,
+        siteVisit: selectedSiteVisit,
+        estimatedBudget: getServicePrice(selectedCategory),
+        status: 'awaiting_payment', // Job created but payment not yet completed
+        customerId: userId,
+        createdAt: new Date(),
+        images: uploadedImages
+      };
+
+      console.log('Creating job in Firestore with awaiting_payment status...');
+      const createdJob = await createJob(finalJobData);
+      console.log('Job created successfully:', createdJob.id);
+
+      setJobData(finalJobData);
+      setCreatedJobId(createdJob.id);
+      setCurrentStep(4); // Go to payment step
+
+      // Scroll to top of the page
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      console.error('Error creating job:', error);
+      alert('Failed to create job. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Function to handle successful payment
@@ -277,36 +308,22 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       // Store payment result for confirmation screen
       setPaymentResult(paymentResultData);
 
-      // Step 1: Create or get anonymous user
-      let userId = customerId;
-      if (!userId) {
-        console.log('Creating anonymous user for customer...');
-        const user = await createAnonymousUser({
-          name: jobData.customerName,
-          email: jobData.customerEmail,
-          phone: jobData.customerPhone
-        });
-        userId = user.uid;
-        setCustomerId(userId);
-        console.log('Anonymous user created:', userId);
-      }
+      // Update job status from 'awaiting_payment' to 'pending' (visible to handymen)
+      console.log('Updating job status to pending...');
+      const { updateJob } = await import('../../services/firebase/collections');
+      await updateJob(createdJobId, {
+        status: 'pending',
+        paymentResult: paymentResultData,
+        paymentCompletedAt: new Date().toISOString()
+      });
+      console.log('Job status updated to pending');
 
-      // Step 2: Create job in Firebase
-      console.log('Creating job in Firestore...');
-      const completeJobData = {
-        ...jobData,
-        customerId: userId,
-        paymentResult: paymentResultData
-      };
-
-      const createdJob = await createJob(completeJobData);
-      console.log('Job created successfully:', createdJob);
-      setCreatedJobId(createdJob.id);
-
-      // Step 3: Call parent callback if provided
+      // Call parent callback if provided
       if (onJobCreated) {
         onJobCreated({
-          ...createdJob,
+          id: createdJobId,
+          ...jobData,
+          status: 'pending',
           paymentStatus: 'completed',
           paymentResult: paymentResultData
         });
@@ -316,8 +333,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setCurrentStep(5);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
-      console.error('Error creating job:', error);
-      alert(`Failed to create job: ${error.message}. Please contact support with payment confirmation.`);
+      console.error('Error updating job:', error);
+      alert(`Failed to complete job submission: ${error.message}. Please contact support with payment confirmation.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -778,7 +795,10 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 ) : (
                   <PaymentForm
                     amount={getServicePrice(selectedCategory)}
-                    jobId={null} // Will be created after payment
+                    jobId={createdJobId} // Job created before payment with 'awaiting_payment' status
+                    serviceType={selectedCategory}
+                    customerId={customerId}
+                    customerEmail={personalData.email}
                     onPaymentSuccess={handlePaymentSuccess}
                   />
                 )}
