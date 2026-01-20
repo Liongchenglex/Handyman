@@ -86,9 +86,10 @@ const HandymanDashboard = () => {
   }
 
   // Get handyman status from profile
-  const handymanStatus = userProfile?.handyman?.status || 'pending';
-  const handymanVerified = userProfile?.handyman?.verified || false;
-  const handymanProfile = userProfile?.handyman;
+  // After DRY refactor: userProfile IS the handyman profile (not nested)
+  const handymanStatus = userProfile?.status || 'pending';
+  const handymanVerified = userProfile?.verified || false;
+  const handymanProfile = userProfile;
 
   console.log('🔍 [HandymanDashboard] Handyman profile:', handymanProfile);
   console.log('  - status:', handymanStatus);

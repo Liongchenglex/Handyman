@@ -15,13 +15,18 @@ const HandymanRegistrationPage = () => {
   // Get email/password from navigation state
   const initialData = location.state || {};
 
-  const handleRegistrationComplete = (registrationData) => {
-    console.log('Handyman registration completed:', registrationData);
+  const handleRegistrationComplete = async (registrationData) => {
+    console.log('✅ Handyman registration completed:', registrationData);
 
     // Firebase Auth already handles the session persistence
-    // Just show success message and navigate to dashboard
     alert('Registration completed successfully! Welcome to HandySG. Please check your email to verify your account.');
-    navigate('/handyman-dashboard');
+
+    // Small delay to ensure Firestore write has propagated
+    // Then reload to trigger fresh AuthContext initialization
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Force page reload to ensure AuthContext fetches the newly created handyman profile
+    window.location.href = '/handyman-auth';
   };
 
   const handleBackToAuth = () => {

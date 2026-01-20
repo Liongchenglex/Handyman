@@ -4,7 +4,7 @@ import {
   createAnonymousUser,
   signOutUser
 } from '../services/firebase/auth';
-import { getUser, getHandyman } from '../services/firebase/collections';
+import { getHandyman } from '../services/firebase/collections';
 
 const AuthContext = createContext();
 
@@ -24,43 +24,54 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const unsubscribe = onAuthStateChange(async (firebaseUser) => {
       if (firebaseUser) {
-        // User is signed in, fetch their profile
+        // User is signed in
         try {
-          const profile = await getUser(firebaseUser.uid);
-
-          // If no profile exists (e.g., anonymous users), that's OK
-          if (!profile) {
-            if (firebaseUser.isAnonymous) {
-              console.log('ℹ️ Anonymous user - no Firestore profile needed');
-            }
+          // Anonymous users (customers) don't have Firestore profiles
+          if (firebaseUser.isAnonymous) {
+            console.log('ℹ️ Anonymous customer - no Firestore profile needed');
             setUser(firebaseUser);
             setUserProfile(null);
             setLoading(false);
             return;
           }
 
-          // If user is a handyman, fetch complete profile from handymen collection
-          // (users collection only stores role reference for handymen - DRY principle)
-          if (profile?.role === 'handyman') {
-            try {
-              const handymanProfile = await getHandyman(firebaseUser.uid);
-              // Use handyman profile as main profile (has all data)
+          // For non-anonymous users, fetch handyman profile
+          // (handymen collection is the only collection we use now)
+          try {
+            const handymanProfile = await getHandyman(firebaseUser.uid);
+            console.log('🔍 [AuthContext] Fetched handyman profile:', {
+              uid: firebaseUser.uid,
+              hasProfile: !!handymanProfile,
+              role: handymanProfile?.role,
+              status: handymanProfile?.status
+            });
+
+            // Use handyman profile as main profile
+            const profileWithRole = {
+              ...handymanProfile,
+              role: 'handyman' // Ensure role is set
+            };
+
+            console.log('✅ [AuthContext] Setting userProfile:', {
+              role: profileWithRole.role,
+              status: profileWithRole.status
+            });
+
+            setUser(firebaseUser);
+            setUserProfile(profileWithRole);
+            setLoading(false);
+            return;
+          } catch (error) {
+            // If not found in handymen collection, user might be incomplete registration
+            if (error.message === 'Document not found') {
+              console.warn('⚠️ User authenticated but no handyman profile found');
               setUser(firebaseUser);
-              setUserProfile({
-                ...handymanProfile,
-                role: 'handyman' // Ensure role is set
-              });
+              setUserProfile(null);
               setLoading(false);
               return;
-            } catch (error) {
-              console.error('Error fetching handyman profile:', error);
-              // Fallback to minimal user profile
             }
+            throw error;
           }
-
-          // For customers or if handyman profile fetch failed
-          setUser(firebaseUser);
-          setUserProfile(profile);
         } catch (error) {
           console.error('Error fetching user profile:', error);
           setUser(firebaseUser);

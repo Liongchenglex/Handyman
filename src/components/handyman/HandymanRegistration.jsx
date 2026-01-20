@@ -251,6 +251,7 @@ const HandymanRegistration = ({
 
     try {
       // Step 1: Register handyman with Firebase
+      console.log('📝 Starting registration for:', personalData.email);
       const { user, profile } = await registerHandyman({
         email: personalData.email,
         password: personalData.password,
@@ -261,7 +262,11 @@ const HandymanRegistration = ({
         bio: professionalData.description
       });
 
-      console.log('Handyman registered successfully:', user.uid);
+      console.log('✅ Handyman registered successfully!', {
+        uid: user.uid,
+        email: user.email,
+        role: profile.role
+      });
 
       // Step 2: Upload work experience documents if any (PDFs, DOCs, images)
       let workExperienceUrls = [];
@@ -331,23 +336,23 @@ const HandymanRegistration = ({
         registeredAt: new Date().toISOString()
       };
 
-      // Set isSubmitting to false BEFORE emails and callback
-      // This removes the loading overlay immediately so navigation isn't blocked
-      setIsSubmitting(false);
+      // Step 5: Send registration emails (wait for completion)
+      // We need to wait for emails to send before navigation/reload
+      try {
+        const emailResults = await sendRegistrationEmails(completeData);
+        if (emailResults.errors && emailResults.errors.length > 0) {
+          console.warn('⚠️ Some emails failed to send:', emailResults.errors);
+        } else {
+          console.log('✅ Registration emails sent successfully');
+        }
+      } catch (emailError) {
+        console.error('❌ Email sending failed:', emailError);
+        // Continue anyway - email failure shouldn't block registration completion
+      }
 
-      // Step 5: Send registration emails in background (non-blocking)
-      // Even if this fails, registration is complete and user can navigate
-      sendRegistrationEmails(completeData)
-        .then((emailResults) => {
-          if (emailResults.errors && emailResults.errors.length > 0) {
-            console.warn('⚠️ Some emails failed to send:', emailResults.errors);
-          } else {
-            console.log('✅ Registration emails sent successfully');
-          }
-        })
-        .catch((emailError) => {
-          console.error('❌ Email sending failed (non-blocking):', emailError);
-        });
+      // Set isSubmitting to false BEFORE callback
+      // This removes the loading overlay so navigation isn't blocked
+      setIsSubmitting(false);
 
       // Call registration complete callback (triggers navigation)
       if (onRegistrationComplete) {

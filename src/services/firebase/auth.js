@@ -17,7 +17,7 @@ import {
   sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from './config';
-import { createUser, createHandyman, getUser } from './collections';
+import { createHandyman, getHandyman } from './collections';
 
 // ==================== HANDYMAN AUTHENTICATION ====================
 
@@ -47,21 +47,21 @@ export const registerHandyman = async (registrationData) => {
     }
 
     // Create Firebase auth user
+    console.log('🔐 Creating Firebase Auth user for:', email);
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
+    console.log('✅ Firebase Auth user created:', user.uid);
 
     // Update Firebase auth profile
     await updateProfile(user, {
       displayName: name
     });
 
-    // Create minimal user document (just role reference - DRY principle)
-    // All actual data stored in handymen collection to avoid duplication
-    await createUser(user.uid, {
-      role: 'handyman'
-    });
-
     // Create handyman profile document with ALL user data
+    // No users collection needed - handymen collection is the single source of truth
+    // NOTE: AuthContext may try to fetch this before it's created, but that's OK
+    // We'll handle the "document not found" case gracefully
+    console.log('📄 Creating handyman document in Firestore for:', user.uid);
     await createHandyman(user.uid, {
       name: name,
       email: email,
@@ -74,6 +74,7 @@ export const registerHandyman = async (registrationData) => {
       rating: 0,
       totalJobs: 0
     });
+    console.log('✅ Handyman document created in Firestore');
 
     // Note: Email acknowledgment will be sent after full registration is complete
     // See HandymanRegistration.jsx -> sendRegistrationEmails()
@@ -114,10 +115,10 @@ export const signInHandyman = async (email, password) => {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-    // Try to get user profile from Firestore
-    let userProfile;
+    // Try to get handyman profile from Firestore
+    let handymanProfile;
     try {
-      userProfile = await getUser(user.uid);
+      handymanProfile = await getHandyman(user.uid);
     } catch (error) {
       // If document doesn't exist, user needs to complete registration
       if (error.message.includes('Document not found')) {
@@ -127,12 +128,12 @@ export const signInHandyman = async (email, password) => {
       throw error;
     }
 
-    if (!userProfile) {
+    if (!handymanProfile) {
       await signOut(auth);
       throw new Error('Account registration incomplete. Please complete the registration process.');
     }
 
-    if (userProfile.role !== 'handyman') {
+    if (handymanProfile.role !== 'handyman') {
       // Sign out if not a handyman
       await signOut(auth);
       throw new Error('This account is not registered as a handyman.');
@@ -140,7 +141,7 @@ export const signInHandyman = async (email, password) => {
 
     return {
       user: user,
-      profile: userProfile
+      profile: handymanProfile
     };
   } catch (error) {
     console.error('Error signing in:', error);
@@ -223,9 +224,14 @@ export const getCurrentUserRole = async () => {
   if (!user) return null;
 
   try {
-    const userProfile = await getUser(user.uid);
-    return userProfile?.role || null;
+    // Try to get handyman profile (only collection we use now)
+    const handymanProfile = await getHandyman(user.uid);
+    return handymanProfile?.role || null;
   } catch (error) {
+    // If not found in handymen collection, might be customer (anonymous)
+    if (error.message.includes('Document not found')) {
+      return user.isAnonymous ? 'customer' : null;
+    }
     console.error('Error getting user role:', error);
     return null;
   }
