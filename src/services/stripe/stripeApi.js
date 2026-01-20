@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { auth } from '../firebase/config';
 
 /**
  * Stripe API Service
@@ -9,6 +10,26 @@ import axios from 'axios';
 
 // Firebase Functions Base URL
 const BASE_URL = 'https://us-central1-eazydone-d06cf.cloudfunctions.net';
+
+// Add axios interceptor to include Firebase auth token in all requests
+axios.interceptors.request.use(
+  async (config) => {
+    // Only add auth header for requests to our Cloud Functions
+    if (config.url && config.url.startsWith(BASE_URL)) {
+      const user = auth.currentUser;
+      if (user) {
+        const token = await user.getIdToken();
+        config.headers.Authorization = `Bearer ${token}`;
+      } else {
+        console.warn('⚠️ No authenticated user found for API request');
+      }
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 // ===========================================
 // PAYMENT FUNCTIONS
