@@ -151,6 +151,8 @@ export const createConnectedAccount = async (handymanData) => {
     return response.data;
   } catch (error) {
     console.error('Error creating connected account:', error);
+    console.error('Error response:', error.response?.data);
+    console.error('Error status:', error.response?.status);
     throw error;
   }
 };

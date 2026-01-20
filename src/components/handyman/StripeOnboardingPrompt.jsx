@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createConnectedAccount, createAccountLink } from '../../services/stripe/stripeApi';
 import { updateHandyman } from '../../services/firebase/collections';
+import { useAuth } from '../../context/AuthContext';
 
 /**
  * StripeOnboardingPrompt Component
@@ -9,8 +11,19 @@ import { updateHandyman } from '../../services/firebase/collections';
  * Handles the Stripe Express account creation and onboarding flow
  */
 const StripeOnboardingPrompt = ({ handyman }) => {
+  const navigate = useNavigate();
+  const { logout } = useAuth();
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [error, setError] = useState(null);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
 
   const handleStartOnboarding = async () => {
     setIsCreatingAccount(true);
@@ -24,12 +37,22 @@ const StripeOnboardingPrompt = ({ handyman }) => {
 
       if (!accountId) {
         console.log('Creating new Stripe Connected Account...');
-        const accountResult = await createConnectedAccount({
+
+        // Format phone number to include +65 if not already present
+        let formattedPhone = handyman.phone;
+        if (formattedPhone && !formattedPhone.startsWith('+')) {
+          formattedPhone = `+65${formattedPhone}`;
+        }
+
+        const requestData = {
           uid: handyman.handymanId,
           email: handyman.email,
           name: handyman.fullName || handyman.name,
-          phone: handyman.phone
-        });
+          phone: formattedPhone
+        };
+        console.log('📤 Request data:', requestData);
+
+        const accountResult = await createConnectedAccount(requestData);
 
         if (!accountResult.success) {
           throw new Error(accountResult.message || 'Failed to create Stripe account');
@@ -74,13 +97,35 @@ const StripeOnboardingPrompt = ({ handyman }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 md:p-8">
-      <div className="max-w-3xl mx-auto">
-        {/* Status Banner */}
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Simple Header with Logout */}
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-primary text-3xl">
+              handyman
+            </span>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+              HandySG
+            </h1>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl">logout</span>
+            <span className="font-medium">Logout</span>
+          </button>
+        </div>
+      </div>
 
-          {/* Header */}
-          <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-8 border-b border-gray-200 dark:border-gray-700">
+      <div className="p-4 md:p-8">
+        <div className="max-w-3xl mx-auto">
+          {/* Status Banner */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+
+            {/* Header */}
+            <div className="bg-gradient-to-r from-primary/10 to-primary/5 p-8 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-4 mb-4">
               <div className="bg-primary/20 rounded-full p-3">
                 <span className="material-symbols-outlined text-primary text-4xl">
@@ -251,6 +296,7 @@ const StripeOnboardingPrompt = ({ handyman }) => {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 };
