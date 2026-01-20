@@ -331,26 +331,25 @@ const HandymanRegistration = ({
         registeredAt: new Date().toISOString()
       };
 
-      // Step 5: Send registration emails (acknowledgment + operations notification)
-      // Note: Email sending happens in the background and won't block registration
-      try {
-        console.log('Sending registration emails...');
-        const emailResults = await sendRegistrationEmails(completeData);
-
-        if (emailResults.errors && emailResults.errors.length > 0) {
-          console.warn('Some emails failed to send:', emailResults.errors);
-        } else {
-          console.log('✅ Registration emails sent successfully');
-        }
-      } catch (emailError) {
-        // Log the error but don't block registration completion
-        console.error('Email sending failed, but registration completed:', emailError);
-      }
-
-      // Set isSubmitting to false BEFORE calling the callback
-      // This removes the loading overlay so navigation can work
+      // Set isSubmitting to false BEFORE emails and callback
+      // This removes the loading overlay immediately so navigation isn't blocked
       setIsSubmitting(false);
 
+      // Step 5: Send registration emails in background (non-blocking)
+      // Even if this fails, registration is complete and user can navigate
+      sendRegistrationEmails(completeData)
+        .then((emailResults) => {
+          if (emailResults.errors && emailResults.errors.length > 0) {
+            console.warn('⚠️ Some emails failed to send:', emailResults.errors);
+          } else {
+            console.log('✅ Registration emails sent successfully');
+          }
+        })
+        .catch((emailError) => {
+          console.error('❌ Email sending failed (non-blocking):', emailError);
+        });
+
+      // Call registration complete callback (triggers navigation)
       if (onRegistrationComplete) {
         onRegistrationComplete(completeData);
       }
