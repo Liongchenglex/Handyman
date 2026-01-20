@@ -82,7 +82,6 @@ const HandymanAuth = ({
         if (authMode === 'login') {
           // Firebase login
           const { user, profile } = await signInHandyman(formData.email, formData.password);
-          console.log('Login successful:', user.email);
 
           if (onLoginSuccess) {
             onLoginSuccess({
@@ -96,8 +95,6 @@ const HandymanAuth = ({
         } else {
           // For signup, we just pass credentials to the registration page
           // The full registration happens in HandymanRegistration component
-          console.log('Proceeding to registration:', formData.email);
-
           if (onSignupSuccess) {
             onSignupSuccess({
               email: formData.email,

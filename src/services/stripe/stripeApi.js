@@ -20,8 +20,6 @@ axios.interceptors.request.use(
       if (user) {
         const token = await user.getIdToken();
         config.headers.Authorization = `Bearer ${token}`;
-      } else {
-        console.warn('⚠️ No authenticated user found for API request');
       }
     }
     return config;

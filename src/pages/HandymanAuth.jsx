@@ -16,27 +16,17 @@ const HandymanAuthPage = () => {
 
   // Redirect if already logged in as handyman
   useEffect(() => {
-    console.log('🔍 [HandymanAuth] Auth state check:', {
-      loading,
-      user: user?.uid,
-      isHandyman,
-      shouldRedirect: !loading && user && isHandyman
-    });
-
     if (!loading && user && isHandyman) {
-      console.log('✅ Already logged in as handyman, redirecting to dashboard...');
       navigate('/handyman-dashboard', { replace: true });
     }
   }, [user, isHandyman, loading, navigate]);
 
   const handleLoginSuccess = (userData) => {
-    console.log('✅ Handyman logged in:', userData);
     // Don't navigate here - let the useEffect handle it once AuthContext updates
     // This ensures userProfile is loaded and isHandyman is true before redirecting
   };
 
   const handleSignupSuccess = (userData) => {
-    console.log('Handyman signup successful:', userData);
     // Pass email/password to registration page via navigation state
     navigate('/handyman-registration', {
       state: {

@@ -267,7 +267,6 @@ export const getVerifiedHandymen = async (serviceType = null) => {
 
   // Note: serviceType filtering would require array-contains query
   // Can be implemented when needed with serviceTypes array field
-  console.log('Fetching handymen', serviceType ? `for ${serviceType}` : '');
 
   return await queryDocuments(
     COLLECTIONS.HANDYMEN,

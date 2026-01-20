@@ -245,7 +245,6 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       // Step 1: Create or get anonymous user FIRST
       let userId = customerId;
       if (!userId) {
-        console.log('Creating anonymous user for customer...');
         const user = await createAnonymousUser({
           name: personalData.name,
           email: personalData.email,
@@ -253,7 +252,6 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
         });
         userId = user.uid;
         setCustomerId(userId);
-        console.log('Anonymous user created:', userId);
       }
 
       // Step 2: Create job with 'awaiting_payment' status
@@ -279,9 +277,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
         images: uploadedImages
       };
 
-      console.log('Creating job in Firestore with awaiting_payment status...');
       const createdJob = await createJob(finalJobData);
-      console.log('Job created successfully:', createdJob.id);
 
       setJobData(finalJobData);
       setCreatedJobId(createdJob.id);
@@ -299,9 +295,6 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
 
   // Function to handle successful payment
   const handlePaymentSuccess = async (paymentResultData) => {
-    console.log('Payment successful:', paymentResultData);
-    console.log('Job data:', jobData);
-
     setIsSubmitting(true);
 
     try {
@@ -309,14 +302,12 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setPaymentResult(paymentResultData);
 
       // Update job status from 'awaiting_payment' to 'pending' (visible to handymen)
-      console.log('Updating job status to pending...');
       const { updateJob } = await import('../../services/firebase/collections');
       await updateJob(createdJobId, {
         status: 'pending',
         paymentResult: paymentResultData,
         paymentCompletedAt: new Date().toISOString()
       });
-      console.log('Job status updated to pending');
 
       // Call parent callback if provided
       if (onJobCreated) {

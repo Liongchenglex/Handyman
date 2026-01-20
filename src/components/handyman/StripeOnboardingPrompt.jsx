@@ -30,14 +30,10 @@ const StripeOnboardingPrompt = ({ handyman }) => {
     setError(null);
 
     try {
-      console.log('Starting Stripe Connect onboarding for handyman:', handyman.handymanId);
-
       // Step 1: Create connected account if not exists
       let accountId = handyman.stripeConnectedAccountId;
 
       if (!accountId) {
-        console.log('Creating new Stripe Connected Account...');
-
         // Format phone number to include +65 if not already present
         let formattedPhone = handyman.phone;
         if (formattedPhone && !formattedPhone.startsWith('+')) {
@@ -50,7 +46,6 @@ const StripeOnboardingPrompt = ({ handyman }) => {
           name: handyman.fullName || handyman.name,
           phone: formattedPhone
         };
-        console.log('📤 Request data:', requestData);
 
         const accountResult = await createConnectedAccount(requestData);
 
@@ -59,7 +54,6 @@ const StripeOnboardingPrompt = ({ handyman }) => {
         }
 
         accountId = accountResult.accountId;
-        console.log('✅ Stripe Connected Account created:', accountId);
 
         // Store account ID in Firestore
         await updateHandyman(handyman.handymanId, {
@@ -67,13 +61,9 @@ const StripeOnboardingPrompt = ({ handyman }) => {
           stripeAccountStatus: 'pending',
           updatedAt: new Date().toISOString()
         });
-        console.log('✅ Account ID stored in Firestore');
-      } else {
-        console.log('Using existing Stripe Connected Account:', accountId);
       }
 
       // Step 2: Create account link for onboarding
-      console.log('Creating Stripe onboarding link...');
       const linkResult = await createAccountLink({
         accountId: accountId,
         refreshUrl: `${window.location.origin}/handyman-dashboard?stripe_refresh=true`,
@@ -83,8 +73,6 @@ const StripeOnboardingPrompt = ({ handyman }) => {
       if (!linkResult.success) {
         throw new Error(linkResult.message || 'Failed to create onboarding link');
       }
-
-      console.log('✅ Redirecting to Stripe onboarding...');
 
       // Redirect to Stripe onboarding
       window.location.href = linkResult.url;

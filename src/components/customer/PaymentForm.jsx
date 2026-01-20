@@ -41,13 +41,11 @@ const PaymentForm = ({
     if (paymentIntentTracker.has(jobId)) {
       const cachedResult = paymentIntentTracker.get(jobId);
       if (cachedResult.clientSecret) {
-        console.log('⚡ Using cached payment intent for job:', jobId);
         setClientSecret(cachedResult.clientSecret);
         return;
       }
       // If creation is in progress, wait
       if (cachedResult.isCreating) {
-        console.log('⏳ Payment intent creation already in progress for job:', jobId);
         return;
       }
     }
@@ -60,12 +58,6 @@ const PaymentForm = ({
       setError(null);
 
       try {
-        console.log('🎯 Creating payment intent with escrow...');
-        console.log('Service Fee:', serviceFee);
-        console.log('Platform Fee (10%):', platformFee);
-        console.log('Total Amount:', totalAmount);
-        console.log('Job ID:', jobId);
-
         // Validate that we have a real job ID
         if (!jobId) {
           throw new Error('Job ID is required to create payment intent');
@@ -80,12 +72,6 @@ const PaymentForm = ({
           serviceType: serviceType || 'General handyman',
           customerEmail: customerEmail || null
         });
-
-        console.log('✅ Payment intent created successfully!');
-        console.log('Payment Intent ID:', result.paymentIntentId);
-        console.log('Client Secret:', result.clientSecret.substring(0, 30) + '...');
-        console.log('Status:', result.status);
-        console.log('Amount:', result.amount, result.currency.toUpperCase());
 
         // Store client secret for card collection
         setClientSecret(result.clientSecret);
@@ -118,9 +104,6 @@ const PaymentForm = ({
 
   // Handle successful card confirmation
   const handleCardSuccess = (paymentIntent) => {
-    console.log('💳 Card payment confirmed!');
-    console.log('Payment Intent Status:', paymentIntent.status);
-
     // Call parent success callback
     onPaymentSuccess({
       paymentIntent: {

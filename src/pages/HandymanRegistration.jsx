@@ -16,8 +16,6 @@ const HandymanRegistrationPage = () => {
   const initialData = location.state || {};
 
   const handleRegistrationComplete = async (registrationData) => {
-    console.log('✅ Handyman registration completed:', registrationData);
-
     // Firebase Auth already handles the session persistence
     alert('Registration completed successfully! Welcome to HandySG. Please check your email to verify your account.');
 

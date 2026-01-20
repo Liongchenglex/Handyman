@@ -251,7 +251,6 @@ const HandymanRegistration = ({
 
     try {
       // Step 1: Register handyman with Firebase
-      console.log('📝 Starting registration for:', personalData.email);
       const { user, profile } = await registerHandyman({
         email: personalData.email,
         password: personalData.password,
@@ -262,16 +261,9 @@ const HandymanRegistration = ({
         bio: professionalData.description
       });
 
-      console.log('✅ Handyman registered successfully!', {
-        uid: user.uid,
-        email: user.email,
-        role: profile.role
-      });
-
       // Step 2: Upload work experience documents if any (PDFs, DOCs, images)
       let workExperienceUrls = [];
       if (documentsData.workExperience && documentsData.workExperience.length > 0) {
-        console.log('Uploading work experience documents...');
         const uploadPromises = documentsData.workExperience.map(async (file, index) => {
           const path = `handymen/${user.uid}/work-experience/${file.name}`;
           try {
@@ -284,13 +276,11 @@ const HandymanRegistration = ({
           }
         });
         workExperienceUrls = (await Promise.all(uploadPromises)).filter(url => url !== null);
-        console.log(`Uploaded ${workExperienceUrls.length} work experience documents`);
       }
 
       // Step 3: Upload profile image if provided
       let profileImageUrl = null;
       if (documentsData.profileImage) {
-        console.log('Uploading profile image...');
         const path = `handymen/${user.uid}/profile/${documentsData.profileImage.name}`;
         try {
           profileImageUrl = await uploadImage(documentsData.profileImage, path, {
@@ -298,7 +288,6 @@ const HandymanRegistration = ({
             maxHeight: 800,
             quality: 0.85
           });
-          console.log('Profile image uploaded successfully');
         } catch (error) {
           console.error('Error uploading profile image:', error);
         }
@@ -306,7 +295,6 @@ const HandymanRegistration = ({
 
       // Step 4: Update handyman document with uploaded file URLs
       if (workExperienceUrls.length > 0 || profileImageUrl) {
-        console.log('Updating handyman profile with document URLs...');
         await updateDocument('handymen', user.uid, {
           workExperienceUrls: workExperienceUrls,
           profileImageUrl: profileImageUrl,
@@ -341,9 +329,7 @@ const HandymanRegistration = ({
       try {
         const emailResults = await sendRegistrationEmails(completeData);
         if (emailResults.errors && emailResults.errors.length > 0) {
-          console.warn('⚠️ Some emails failed to send:', emailResults.errors);
-        } else {
-          console.log('✅ Registration emails sent successfully');
+          // Email errors logged but don't block registration
         }
       } catch (emailError) {
         console.error('❌ Email sending failed:', emailError);

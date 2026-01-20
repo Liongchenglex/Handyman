@@ -41,8 +41,6 @@ const HandymanDashboard = () => {
     const handleStripeReturn = async () => {
       const onboardingComplete = searchParams.get('stripe_onboarding');
       if (onboardingComplete === 'complete' && user) {
-        console.log('✅ Handyman returned from Stripe onboarding');
-
         try {
           // Update handyman document
           await updateHandyman(user.uid, {
@@ -50,8 +48,6 @@ const HandymanDashboard = () => {
             stripeAccountStatus: 'pending',
             updatedAt: new Date().toISOString()
           });
-
-          console.log('✅ Firestore updated, reloading page...');
 
           // Reload the page to refresh AuthContext and remove query param
           // This ensures the UI updates with the new data
@@ -68,7 +64,6 @@ const HandymanDashboard = () => {
   }, [user, searchParams]);
 
   const handleJobSelect = (job) => {
-    console.log('Job selected after expressing interest:', job);
     // After expressing interest, switch to My Jobs tab to see the accepted job
     setCurrentView('my-jobs');
   };
@@ -90,11 +85,6 @@ const HandymanDashboard = () => {
   const handymanStatus = userProfile?.status || 'pending';
   const handymanVerified = userProfile?.verified || false;
   const handymanProfile = userProfile;
-
-  console.log('🔍 [HandymanDashboard] Handyman profile:', handymanProfile);
-  console.log('  - status:', handymanStatus);
-  console.log('  - verified:', handymanVerified);
-  console.log('  - stripeOnboardingCompleted:', handymanProfile?.stripeOnboardingCompleted);
 
   // Check handyman status and show appropriate view
   // Priority order: pending → rejected → suspended → active
@@ -121,8 +111,6 @@ const HandymanDashboard = () => {
     handymanStatus === 'active' &&
     handymanVerified === true &&
     !handymanProfile?.stripeOnboardingCompleted;
-
-  console.log('  ➡️ needsStripeOnboarding:', needsStripeOnboarding);
 
   if (needsStripeOnboarding) {
     return <StripeOnboardingPrompt handyman={handymanProfile} />;

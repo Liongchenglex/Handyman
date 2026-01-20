@@ -47,10 +47,8 @@ export const registerHandyman = async (registrationData) => {
     }
 
     // Create Firebase auth user
-    console.log('🔐 Creating Firebase Auth user for:', email);
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
-    console.log('✅ Firebase Auth user created:', user.uid);
 
     // Update Firebase auth profile
     await updateProfile(user, {
@@ -61,7 +59,6 @@ export const registerHandyman = async (registrationData) => {
     // No users collection needed - handymen collection is the single source of truth
     // NOTE: AuthContext may try to fetch this before it's created, but that's OK
     // We'll handle the "document not found" case gracefully
-    console.log('📄 Creating handyman document in Firestore for:', user.uid);
     await createHandyman(user.uid, {
       name: name,
       email: email,
@@ -74,7 +71,6 @@ export const registerHandyman = async (registrationData) => {
       rating: 0,
       totalJobs: 0
     });
-    console.log('✅ Handyman document created in Firestore');
 
     // Note: Email acknowledgment will be sent after full registration is complete
     // See HandymanRegistration.jsx -> sendRegistrationEmails()
@@ -181,8 +177,6 @@ export const createAnonymousUser = async (userData) => {
       });
     }
 
-    console.log('✅ Anonymous user signed in (no Firestore document needed):', result.user.uid);
-
     return result.user;
   } catch (error) {
     console.error('Error creating anonymous user:', error);
@@ -244,7 +238,6 @@ export const getCurrentUserRole = async () => {
 export const resetPassword = async (email) => {
   try {
     await sendPasswordResetEmail(auth, email);
-    console.log('Password reset email sent to:', email);
   } catch (error) {
     console.error('Error sending password reset email:', error);
 

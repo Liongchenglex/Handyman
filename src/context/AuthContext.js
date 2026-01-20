@@ -28,7 +28,6 @@ export const AuthProvider = ({ children }) => {
         try {
           // Anonymous users (customers) don't have Firestore profiles
           if (firebaseUser.isAnonymous) {
-            console.log('ℹ️ Anonymous customer - no Firestore profile needed');
             setUser(firebaseUser);
             setUserProfile(null);
             setLoading(false);
@@ -39,23 +38,12 @@ export const AuthProvider = ({ children }) => {
           // (handymen collection is the only collection we use now)
           try {
             const handymanProfile = await getHandyman(firebaseUser.uid);
-            console.log('🔍 [AuthContext] Fetched handyman profile:', {
-              uid: firebaseUser.uid,
-              hasProfile: !!handymanProfile,
-              role: handymanProfile?.role,
-              status: handymanProfile?.status
-            });
 
             // Use handyman profile as main profile
             const profileWithRole = {
               ...handymanProfile,
               role: 'handyman' // Ensure role is set
             };
-
-            console.log('✅ [AuthContext] Setting userProfile:', {
-              role: profileWithRole.role,
-              status: profileWithRole.status
-            });
 
             setUser(firebaseUser);
             setUserProfile(profileWithRole);
@@ -64,7 +52,6 @@ export const AuthProvider = ({ children }) => {
           } catch (error) {
             // If not found in handymen collection, user might be incomplete registration
             if (error.message === 'Document not found') {
-              console.warn('⚠️ User authenticated but no handyman profile found');
               setUser(firebaseUser);
               setUserProfile(null);
               setLoading(false);
