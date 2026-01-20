@@ -214,6 +214,7 @@ export const createHandyman = async (handymanId, handymanData) => {
   const handyman = {
     handymanId, // Include handymanId in the document data
     ...handymanData,
+    role: 'handyman', // Explicit role for consistency
     verified: false,
     status: 'pending', // Initial status: awaiting operations approval
     isAvailable: true,
