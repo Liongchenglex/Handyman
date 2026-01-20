@@ -347,10 +347,13 @@ const HandymanRegistration = ({
         console.error('Email sending failed, but registration completed:', emailError);
       }
 
+      // Set isSubmitting to false BEFORE calling the callback
+      // This removes the loading overlay so navigation can work
+      setIsSubmitting(false);
+
       if (onRegistrationComplete) {
         onRegistrationComplete(completeData);
       }
-      setIsSubmitting(false);
 
     } catch (error) {
       console.error('Registration error:', error);
