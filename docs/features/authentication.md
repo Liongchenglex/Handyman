@@ -44,10 +44,15 @@ Main authentication service with all auth operations.
 React context provider for global auth state management.
 
 **Provides:**
-- `currentUser` - Current Firebase auth user
-- `userProfile` - User's Firestore profile data
+- `user` - Current Firebase auth user
+- `userProfile` - Handyman's Firestore profile data (for handymen) or null (for anonymous customers)
 - `loading` - Auth state loading status
+- `isHandyman` - Boolean flag (userProfile?.role === 'handyman')
+- `isCustomer` - Boolean flag (userProfile?.role === 'customer')
+- `isAuthenticated` - Boolean flag (!!user)
 - Auth state listeners and auto-refresh
+
+**Important:** For handymen, `userProfile` contains the complete handyman document from the `handymen` collection (not nested). For anonymous customers, `userProfile` is null.
 
 #### `/src/hooks/useAuth.js`
 Custom React hook for accessing auth context.
@@ -67,12 +72,14 @@ Handyman login/register page component.
 - Redirect to dashboard after login
 
 #### `/src/services/firebase/collections.js`
-Firestore user profile management.
+Firestore profile management.
 
 **Key Functions:**
-- `createUser(uid, userData)` - Create user document in Firestore
-- `getUser(uid)` - Fetch user profile
-- `updateUser(uid, updates)` - Update user profile
+- `createHandyman(handymanId, handymanData)` - Create handyman document in Firestore
+- `getHandyman(handymanId)` - Fetch handyman profile
+- `updateHandyman(handymanId, updates)` - Update handyman profile
+
+**Note:** `createUser`, `getUser`, `updateUser` functions are no longer used for handymen. The handymen collection is the single source of truth.
 
 ---
 
@@ -92,13 +99,16 @@ Firestore user profile management.
 4. Update auth profile
    → updateProfile(user, { displayName: name })
    ↓
-5. Create user document in Firestore
-   → /src/services/firebase/collections.js → createUser()
-   ↓
-6. Create handyman profile document
+5. Create handyman document in Firestore (single source of truth)
    → /src/services/firebase/collections.js → createHandyman()
    ↓
-7. Return user object with profile
+6. Upload documents and send registration emails
+   ↓
+7. Page reload to refresh AuthContext
+   → window.location.href = '/handyman-auth'
+   ↓
+8. AuthContext fetches handyman profile
+   → Auto-redirect to dashboard
 ```
 
 ### Handyman Login Flow
@@ -107,20 +117,22 @@ Firestore user profile management.
 1. User enters email/password
    ↓
 2. Frontend calls signInHandyman()
-   → /src/services/firebase/auth.js:114
+   → /src/services/firebase/auth.js:107
    ↓
 3. Authenticate with Firebase
    → signInWithEmailAndPassword()
    ↓
-4. Fetch user profile from Firestore
-   → getUser(uid)
+4. Fetch handyman profile from Firestore
+   → getHandyman(uid)
    ↓
 5. Verify role is 'handyman'
    ↓
-6. Update AuthContext
+6. AuthContext automatically updates via onAuthStateChanged
    → /src/context/AuthContext.js
    ↓
-7. Redirect to dashboard
+7. HandymanAuth page detects user && isHandyman
+   ↓
+8. Auto-redirect to dashboard
    → /src/pages/HandymanDashboard.jsx
 ```
 
@@ -145,43 +157,36 @@ Firestore user profile management.
 
 ## Firestore Database Structure
 
-### Users Collection (`users/{uid}`)
+### Handymen Collection (`handymen/{uid}`)
+
+**Single source of truth for handyman data** (no separate users collection):
 
 ```javascript
 {
-  uid: "firebase_user_id",
-  email: "user@example.com",
+  handymanId: "firebase_user_id", // Same as document ID
+  uid: "firebase_user_id", // Deprecated, kept for backward compatibility
   name: "John Tan",
+  email: "john@example.com",
   phone: "+6591234567",
-  role: "handyman" | "customer" | "admin",
+  role: "handyman", // Required for authentication checks
+  serviceTypes: ["Plumbing", "Electrical"],
+  experience: "5 years",
+  bio: "Professional plumber...",
+  verified: false,
+  status: "pending" | "active" | "rejected" | "suspended",
+  isAvailable: true,
+  rating: 0,
+  totalJobs: 0,
+  // Stripe Connect fields
+  stripeConnectedAccountId: "acct_xxxxx", // Added after Stripe onboarding
+  stripeAccountStatus: "pending" | "complete" | "disabled",
+  stripeOnboardingCompleted: false,
   createdAt: Timestamp,
   updatedAt: Timestamp
 }
 ```
 
-### Handymen Collection (`handymen/{uid}`)
-
-Created alongside user document for handyman accounts:
-
-```javascript
-{
-  uid: "firebase_user_id",
-  name: "John Tan",
-  email: "john@example.com",
-  phone: "+6591234567",
-  serviceTypes: ["Plumbing", "Electrical"],
-  experience: "5 years",
-  bio: "Professional plumber...",
-  verified: false,
-  verificationStatus: "pending" | "approved" | "rejected",
-  isAvailable: true,
-  rating: 0,
-  totalJobs: 0,
-  stripeAccountId: "acct_xxxxx", // Added after Stripe onboarding
-  stripeOnboardingComplete: false,
-  createdAt: Timestamp
-}
-```
+**Note:** The `users` collection has been eliminated to follow DRY principles. All handyman data is stored in the `handymen` collection only.
 
 ---
 
@@ -190,19 +195,14 @@ Created alongside user document for handyman accounts:
 **Firestore Security Rules** (`firestore.rules`):
 
 ```javascript
-// Users can read their own profile
-match /users/{userId} {
-  allow read: if request.auth != null && request.auth.uid == userId;
-  allow create: if request.auth != null;
-  allow update: if request.auth != null && request.auth.uid == userId;
-}
-
-// Handymen profiles
+// Handymen profiles - single source of truth
 match /handymen/{handymanId} {
   allow read: if request.auth != null;
   allow create: if request.auth != null && request.auth.uid == handymanId;
   allow update: if request.auth != null && request.auth.uid == handymanId;
 }
+
+// Note: users collection has been removed - no longer needed
 ```
 
 ---
@@ -304,8 +304,10 @@ REACT_APP_FIREBASE_PROJECT_ID=eazydone-d06cf
 - [ ] Shows error for duplicate email
 - [ ] Shows error for weak password (<6 chars)
 - [ ] Shows error for invalid email format
-- [ ] Creates both `users` and `handymen` documents in Firestore
-- [ ] Sets correct role ('handyman')
+- [ ] Creates handyman document in Firestore (no users document)
+- [ ] Sets correct role ('handyman') in handyman document
+- [ ] Sends registration emails successfully
+- [ ] Redirects to dashboard after registration
 
 **Handyman Login:**
 - [ ] Can login with correct credentials
@@ -362,5 +364,26 @@ REACT_APP_FIREBASE_PROJECT_ID=eazydone-d06cf
 
 ---
 
-**Last Updated:** 2025-12-11
+## Recent Changes (2026-01-20)
+
+### Architecture Refactoring
+- **Eliminated `users` collection** - Now using only `handymen` collection as single source of truth
+- **Fixed race condition** in registration flow where AuthContext tried to fetch profile before it was created
+- **Updated data model** to follow DRY principles (no duplication between collections)
+
+### Key Changes
+1. `registerHandyman()` now only creates handyman document (no user document)
+2. `AuthContext` fetches only from handymen collection for non-anonymous users
+3. Registration flow uses page reload to ensure fresh AuthContext initialization
+4. Login flow waits for AuthContext to update before redirecting
+5. HandymanDashboard uses flat `userProfile` structure instead of nested `userProfile.handyman`
+
+### Migration Notes
+- Existing handyman documents must have `role: 'handyman'` field added manually in Firestore
+- The `users` collection can be safely deleted (no longer used)
+- All authentication flows have been tested and verified working
+
+---
+
+**Last Updated:** 2026-01-20
 **Status:** ✅ Fully Implemented and Production-Ready
