@@ -171,17 +171,18 @@ REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXxxxxx
 
 ---
 
-#### Template 3: Job Completion (OPTIONAL)
+#### Template 3: Job Completion with Quick Reply Buttons (REQUIRED for MVP)
 
-**Note:** The code currently uses a plain text message for job completion notifications (within 24-hour window), so this template is optional. Only create if you want guaranteed delivery outside the 24-hour window.
+**Note:** This template includes Quick Reply buttons for customers to instantly confirm or report issues. Required for the button feature to work.
 
-If you want to create it:
+**How to create it:**
 
-1. Create new Content Template
+1. Create new Content Template in Twilio Console
 2. Fill in:
-   - **Name:** `job_completion_confirmed`
+   - **Name:** `job_completion_request`
    - **Language:** English
    - **Channel:** WhatsApp ✓
+   - **Content Type:** Text
 
 3. **Body Text:**
 ```
@@ -191,13 +192,26 @@ Your handyman {{2}} has marked your "{{3}}" job as complete.
 
 Job ID: {{4}}
 
-Please review the work and confirm completion in the EazyDone app. If you're satisfied with the service, you can also leave a review!
-
-Thank you for using EazyDone!
+Please review the work and confirm completion, or report any issues.
 ```
 
-4. Submit for approval (TRANSACTIONAL category)
-5. Add Content SID to `.env.local`:
+4. **Add Quick Reply Buttons:**
+   - Click **+ Add Button**
+   - Type: Quick Reply
+   - Text: `✅ Confirm Complete`
+
+   - Click **+ Add Button** again
+   - Type: Quick Reply
+   - Text: `⚠️ Report Issue`
+
+5. **Footer (Optional):**
+```
+EazyDone - Your Trusted Handyman Service
+```
+
+6. Submit for approval (TRANSACTIONAL category)
+7. Wait 24-48 hours for approval
+8. Add Content SID to `.env.local`:
 ```env
 REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETED=HXxxxxx
 ```
