@@ -105,24 +105,15 @@ Function: `sendJobAcceptanceNotification()`
 
 ---
 
-### 3. Job Completion Notification (Optional - Currently Using Text)
+### 3. Job Completion Notification with Quick Reply Buttons
 
-**Template Name:** `job_completion_confirmed`
-**Purpose:** Notify customer that handyman has marked the job as complete
+**Template Name:** `job_completion_request`
+**Purpose:** Notify customer that handyman has marked the job as complete with action buttons
 **Trigger:** When handyman marks job complete and status changes to `pending_confirmation`
 **Language:** English
 **Category:** TRANSACTIONAL
 
-**Status:** ⚠️ Currently using plain text message (assumes within 24-hour window)
-
-**Note:** This notification is currently sent as a plain text message via `sendTextMessage()` in `src/services/whatsappService.js:241`. This works because the handyman would have accepted the job within the last 24 hours, opening the customer service window.
-
-**Current Message:**
-```
-Hello [CustomerName], your handyman [HandymanName] has marked the job "[ServiceType]" as complete. Please review and confirm completion in the EazyDone app.
-```
-
-**If you want to use a template instead:**
+**Status:** ✅ Recommended for MVP - Includes Quick Reply buttons for instant customer response
 
 **Template Content:**
 ```
@@ -132,9 +123,7 @@ Your handyman {{2}} has marked your "{{3}}" job as complete.
 
 Job ID: {{4}}
 
-Please review the work and confirm completion in the EazyDone app. If you're satisfied with the service, you can also leave a review!
-
-Thank you for using EazyDone!
+Please review the work and confirm completion, or report any issues.
 ```
 
 **Template Variables:**
@@ -143,9 +132,31 @@ Thank you for using EazyDone!
 - `{{3}}` - Service type
 - `{{4}}` - Job ID
 
+**Quick Reply Buttons:**
+1. **Button 1:** "✅ Confirm Complete"
+   - When tapped: Sends "confirm_complete" to webhook
+   - Action: Job status → `completed`, payment released to handyman
+
+2. **Button 2:** "⚠️ Report Issue"
+   - When tapped: Sends "report_issue" to webhook
+   - Action: Job status → `disputed`, notify support team
+
+**Twilio Configuration:**
+In Twilio Content Editor, add these buttons:
+- Button Type: **Quick Reply**
+- Button 1 Text: `✅ Confirm Complete`
+- Button 2 Text: `⚠️ Report Issue`
+
+**Webhook Requirements:**
+- Endpoint: `POST /api/whatsapp/webhook`
+- Handles button responses
+- Updates job status based on customer action
+- Sends confirmation message back to customer
+
 **Code Reference:**
 File: `src/components/handyman/JobActionButtons.jsx:74`
 Function: `sendJobCompletionNotification()`
+Webhook: `functions/index.js` (to be created)
 
 ---
 

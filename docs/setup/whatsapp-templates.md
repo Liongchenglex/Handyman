@@ -195,13 +195,11 @@ REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXxxxxx
 
 ---
 
-### Template 3: Job Completion (Optional)
+### Template 3: Job Completion with Quick Reply Buttons (Recommended for MVP)
 
-**Use Case:** Notify customer when handyman marks job complete
+**Use Case:** Notify customer when handyman marks job complete with instant action buttons
 
-**Note:** Currently using plain text message (assumes within 24-hour window). Only create this template if you want to ensure delivery outside the 24-hour window.
-
-**Template Name:** `job_completion_confirmed`
+**Template Name:** `job_completion_request`
 
 **Category:** TRANSACTIONAL
 
@@ -217,15 +215,35 @@ Your handyman {{2}} has marked your "{{3}}" job as complete.
 
 Job ID: {{4}}
 
-Please review the work and confirm completion in the EazyDone app. If you're satisfied with the service, you can also leave a review!
-
-Thank you for using EazyDone!
+Please review the work and confirm completion, or report any issues.
 ```
 
 **Footer:** (Optional)
 ```
 EazyDone - Your Trusted Handyman Service
 ```
+
+**Quick Reply Buttons:**
+Add these buttons in the Twilio Content Editor:
+
+1. **Button 1:**
+   - Type: Quick Reply
+   - Text: `✅ Confirm Complete`
+
+2. **Button 2:**
+   - Type: Quick Reply
+   - Text: `⚠️ Report Issue`
+
+**How to Add Buttons in Twilio Console:**
+
+1. In the Content Editor, scroll to **Buttons** section
+2. Click **+ Add Button**
+3. Select **Quick Reply** as button type
+4. Enter button text: `✅ Confirm Complete`
+5. Click **+ Add Button** again
+6. Select **Quick Reply** as button type
+7. Enter button text: `⚠️ Report Issue`
+8. Submit for approval
 
 **Variables:**
 - `{{1}}` - Customer name
@@ -246,7 +264,13 @@ EazyDone - Your Trusted Handyman Service
 REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETED=HXxxxxx
 ```
 
-**Code Reference:** `src/services/whatsappService.js:241` → `sendJobCompletionNotification()`
+**Webhook Configuration Required:**
+- You'll need to set up a webhook endpoint to handle button responses
+- See "Webhook Setup" section below for implementation details
+
+**Code Reference:**
+- Template sending: `src/services/whatsappService.js:241` → `sendJobCompletionNotification()`
+- Webhook handler: `functions/index.js` → `whatsappWebhook()` (to be created)
 
 ---
 
@@ -519,6 +543,87 @@ contentVariables: {
   '2': 'Plumbing'
 }
 ```
+
+---
+
+## Webhook Setup for Quick Reply Buttons
+
+If you're using Template 3 with Quick Reply buttons, you need to set up a webhook to handle customer responses.
+
+### 1. Configure Webhook URL in Twilio Console
+
+1. Go to Twilio Console → **Messaging** → **Settings** → **WhatsApp Sandbox Settings**
+2. Find **"WHEN A MESSAGE COMES IN"** section
+3. Enter your webhook URL:
+   ```
+   https://your-domain.com/api/whatsapp/webhook
+   ```
+   Or for Firebase Cloud Functions:
+   ```
+   https://us-central1-your-project.cloudfunctions.net/whatsappWebhook
+   ```
+4. Set HTTP Method to **POST**
+5. Click **Save**
+
+### 2. Webhook Payload Structure
+
+When a customer taps a Quick Reply button, Twilio sends this payload:
+
+```json
+{
+  "MessageSid": "SMxxxxx",
+  "From": "whatsapp:+6591234567",
+  "To": "whatsapp:+14155238886",
+  "Body": "✅ Confirm Complete",
+  "NumMedia": "0",
+  "ButtonPayload": "Confirm Complete"
+}
+```
+
+**Key Fields:**
+- `From`: Customer's WhatsApp number
+- `Body`: Button text that was tapped
+- `ButtonPayload`: Normalized button text
+
+### 3. Implementation Guide
+
+The webhook handler is created in `functions/index.js`. It:
+
+1. ✅ Receives button click from Twilio
+2. ✅ Validates the webhook request
+3. ✅ Extracts customer phone number and button choice
+4. ✅ Finds the job in Firestore
+5. ✅ Updates job status based on button:
+   - "Confirm Complete" → Job status: `completed`, release payment
+   - "Report Issue" → Job status: `disputed`, notify support
+6. ✅ Sends confirmation message back to customer
+
+**See implementation:** `functions/index.js` → `whatsappWebhook()`
+
+### 4. Testing the Webhook
+
+**Local Testing with ngrok:**
+```bash
+# Install ngrok
+npm install -g ngrok
+
+# Start your functions locally
+firebase emulators:start
+
+# In another terminal, expose local server
+ngrok http 5001
+
+# Use the ngrok URL in Twilio webhook settings
+https://abc123.ngrok.io/your-project/us-central1/whatsappWebhook
+```
+
+**Production Testing:**
+1. Deploy Cloud Functions: `firebase deploy --only functions`
+2. Configure Twilio webhook with production URL
+3. Send test job completion notification
+4. Tap button in WhatsApp
+5. Check Firestore - job status should update
+6. Check Firebase Functions logs
 
 ---
 

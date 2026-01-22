@@ -204,7 +204,69 @@ REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETED=HXxxxxx
 
 ---
 
-### Step 5: Test the Integration
+### Step 5: Configure WhatsApp Webhook (For Quick Reply Buttons)
+
+**Time Required:** 10 minutes
+
+If you created Template 3 with Quick Reply buttons, you need to configure a webhook to handle button responses.
+
+#### 5.1 Deploy the Webhook Handler
+
+The webhook handler has already been created in `functions/index.js` as `whatsappWebhook`.
+
+1. Deploy the Cloud Function:
+```bash
+cd functions
+firebase deploy --only functions:whatsappWebhook
+```
+
+2. Note the deployment URL (will look like):
+```
+https://us-central1-your-project-id.cloudfunctions.net/whatsappWebhook
+```
+
+#### 5.2 Configure Webhook in Twilio Console
+
+1. Go to Twilio Console → **Messaging** → **Settings** → **WhatsApp Sandbox Settings**
+2. Scroll to **"WHEN A MESSAGE COMES IN"** section
+3. Enter your webhook URL:
+   ```
+   https://us-central1-your-project-id.cloudfunctions.net/whatsappWebhook
+   ```
+4. Set HTTP Method to **POST**
+5. Click **Save**
+
+#### 5.3 What the Webhook Does
+
+When a customer taps a Quick Reply button:
+
+**"✅ Confirm Complete" button:**
+- Updates job status to `completed`
+- Logs payment release information (manual release required for now)
+- Sends confirmation message to customer
+- Payment: Shows in logs for admin to process
+
+**"⚠️ Report Issue" button:**
+- Updates job status to `disputed`
+- Logs dispute information
+- Sends confirmation message to customer
+- Support team should be notified (check Firebase logs)
+
+#### 5.4 Testing the Webhook Locally (Optional)
+
+For local development:
+
+1. Install ngrok: `npm install -g ngrok`
+2. Start Firebase emulators: `firebase emulators:start`
+3. In another terminal: `ngrok http 5001`
+4. Use the ngrok URL in Twilio webhook settings
+5. Test by sending completion notification and clicking buttons
+
+**Note:** Remember to switch back to production URL after testing!
+
+---
+
+### Step 6: Test the Integration
 
 **Time Required:** 10 minutes
 
@@ -259,15 +321,36 @@ The handyman will contact you shortly to discuss the job details and confirm the
 Need help? Contact us at support@easydone.com
 ```
 
-#### 5.4 Test Job Completion Flow
+#### 6.4 Test Job Completion Flow with Buttons
 
 1. As handyman, mark the job as complete
 2. Check the customer's WhatsApp for completion notification
 
-**Expected Message:**
+**Expected Message with Buttons:**
 ```
-Hello [Customer Name], your handyman [Handyman Name] has marked the job "Service Type" as complete. Please review and confirm completion in the EazyDone app.
+Hello [Customer Name],
+
+Your handyman [Handyman Name] has marked your "[Service Type]" job as complete.
+
+Job ID: abc123xyz
+
+Please review the work and confirm completion, or report any issues.
+
+[✅ Confirm Complete] [⚠️ Report Issue]
 ```
+
+3. Tap one of the buttons to test webhook:
+   - **Confirm Complete**: Should receive confirmation that payment is released
+   - **Report Issue**: Should receive message that support will contact you
+
+4. Check Firestore:
+   - Job status should update to `completed` or `disputed`
+   - Check `customerConfirmedAt` or `disputedAt` timestamp
+
+5. Check Firebase Functions logs:
+   - Go to Firebase Console → Functions → Logs
+   - Look for webhook execution logs
+   - Verify payment release was logged (if Confirm button was clicked)
 
 ---
 
