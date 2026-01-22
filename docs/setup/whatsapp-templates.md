@@ -1,416 +1,557 @@
-# WhatsApp Message Templates for Meta Approval
+# WhatsApp Message Templates for Twilio
 
-These templates need to be submitted and approved by Meta before use in production. For testing, continue using the `hello_world` template.
+This guide provides step-by-step instructions for creating WhatsApp message templates in Twilio Console and submitting them for WhatsApp approval.
 
-## How to Submit Templates to Meta
+## Overview
 
-1. Go to [Meta Business Manager](https://business.facebook.com/)
-2. Navigate to your WhatsApp Business Account
-3. Go to **WhatsApp Manager** → **Message Templates**
-4. Click **Create Template**
-5. Fill in the details below for each template
-6. Wait for Meta approval (usually 24-48 hours)
+WhatsApp requires all proactive messages (messages sent outside the 24-hour customer service window) to use pre-approved templates. These templates must be created in the Twilio Console using the **Content Editor** and submitted to WhatsApp for approval.
 
 ---
 
-## Template 1: Job Payment Confirmation
+## Prerequisites
+
+Before creating templates, ensure you have:
+
+1. ✅ Twilio account created at https://www.twilio.com
+2. ✅ WhatsApp Sandbox enabled OR approved WhatsApp Sender
+3. ✅ Twilio Account SID and Auth Token
+4. ✅ Twilio WhatsApp phone number
+
+---
+
+## How to Create Templates in Twilio Console
+
+### Step 1: Access Content Editor
+
+1. Login to [Twilio Console](https://console.twilio.com/)
+2. Navigate to **Messaging** → **Content Editor** (or **Messaging** → **Content Templates**)
+3. Click **Create new Content Template**
+
+### Step 2: Configure Template Settings
+
+1. **Select Channel:** Choose **WhatsApp**
+2. **Content Type:** Select **Text**
+3. **Template Name:** Enter a unique name (lowercase, underscores allowed)
+   - Use descriptive names like `job_payment_confirmation`
+4. **Language:** Select **English**
+5. **Content SID:** Will be auto-generated (format: `HXxxxxx`)
+
+### Step 3: Build Template Content
+
+Twilio Content Editor has three sections:
+
+#### **Body Text**
+- Main message content
+- Use `{{1}}`, `{{2}}`, `{{3}}` for variables (numbered placeholders)
+- Maximum 1024 characters
+- Support for:
+  - `*bold text*`
+  - `_italic text_`
+  - `~strikethrough~`
+  - Emojis ✅ 🎉 ⚠️
+
+#### **Header** (Optional)
+- Short title for the message
+- Maximum 60 characters
+- Can include one variable: `{{1}}`
+
+#### **Footer** (Optional)
+- Bottom text, typically brand name or disclaimer
+- Maximum 60 characters
+- No variables allowed
+
+#### **Buttons** (Optional)
+- Call-to-Action buttons (URL or Phone)
+- Quick Reply buttons (up to 3)
+- Not required for basic notifications
+
+### Step 4: Submit for Approval
+
+1. Click **Submit for WhatsApp Approval**
+2. Select template **Category**:
+   - **TRANSACTIONAL** - For order updates, confirmations (fastest approval) ✅ **Use this**
+   - **MARKETING** - For promotional messages (requires opt-in)
+   - **UTILITY** - For account updates, alerts
+3. Wait for WhatsApp approval (typically 24-48 hours)
+
+### Step 5: Get Content SID
+
+Once approved:
+1. Go back to **Messaging** → **Content Editor**
+2. Find your approved template
+3. Copy the **Content SID** (starts with `HX`)
+   - Example: `HXa1b2c3d4e5f6g7h8i9j0`
+4. Add to `.env.local` file
+
+---
+
+## Required Templates
+
+### Template 1: Job Payment Confirmation
+
+**Use Case:** Notify customer after payment is captured and job is posted
 
 **Template Name:** `job_payment_confirmation`
 
-**Category:** `TRANSACTIONAL`
+**Category:** TRANSACTIONAL
 
-**Language:** English (US)
+**Language:** English
 
-**Template Content:**
+**Content:**
 
+**Body:**
 ```
-Hi {{1}},
+Hi {{1}}, your job request for "{{2}}" has been posted successfully!
 
-Your job request has been confirmed! 🎉
+Service Fee: {{3}}
+Job ID: {{4}}
+Timing: {{5}}
 
-*Service:* {{2}}
-*Job ID:* {{3}}
-*Amount Paid:* ${{4}}
-*Scheduled:* {{5}}
+A qualified handyman will accept your job shortly. You'll receive a notification when someone accepts.
 
-We're matching you with available handymen in your area. You'll receive a notification when someone accepts your job.
+Thank you for using EazyDone!
+```
 
-Thank you for choosing EazyDone!
-
-Need help? Reply to this message anytime.
+**Footer:** (Optional)
+```
+EazyDone - Your Trusted Handyman Service
 ```
 
 **Variables:**
-- `{{1}}` = Customer name (e.g., "John Tan")
-- `{{2}}` = Service type (e.g., "Plumbing Repair")
-- `{{3}}` = Job ID (e.g., "JOB-12345")
-- `{{4}}` = Estimated budget (e.g., "150")
-- `{{5}}` = Scheduled timing (e.g., "Tomorrow, 2:00 PM" or "As soon as possible")
+- `{{1}}` - Customer name (e.g., "John Tan")
+- `{{2}}` - Service type (e.g., "Plumbing Repair")
+- `{{3}}` - Service fee (e.g., "$150.00")
+- `{{4}}` - Job ID (e.g., "abc123xyz")
+- `{{5}}` - Timing (e.g., "2025-01-25 at 2:00 PM" or "ASAP")
 
-**Header:** None
-
-**Footer:** `EazyDone - Your Trusted Handyman Service`
-
-**Buttons:** None
-
-**Sample Variables for Testing:**
+**Sample Test Values:**
 ```
 {{1}} = Lex Liong
 {{2}} = Plumbing Repair
-{{3}} = JOB-ABC123
-{{4}} = 150
-{{5}} = Tomorrow, 2:00 PM
+{{3}} = $150.00
+{{4}} = JOB-ABC123
+{{5}} = ASAP
 ```
+
+**Environment Variable:**
+```env
+REACT_APP_TWILIO_TEMPLATE_JOB_PAYMENT=HXxxxxx
+```
+
+**Code Reference:** `src/services/whatsappService.js:285` → `sendJobCreationNotification()`
 
 ---
 
-## Template 2: Handyman Job Acceptance
+### Template 2: Handyman Accepted Job
+
+**Use Case:** Notify customer when a handyman accepts their job
 
 **Template Name:** `handyman_accepted_job`
 
-**Category:** `TRANSACTIONAL`
+**Category:** TRANSACTIONAL
 
-**Language:** English (US)
+**Language:** English
 
-**Template Content:**
+**Content:**
 
+**Body:**
 ```
-Great news, {{1}}! 🎉
+Great news, {{1}}!
 
-Handyman *{{2}}* has accepted your job request.
+{{2}} has accepted your "{{3}}" job.
 
-*Service:* {{3}}
-*Job ID:* {{4}}
-*Scheduled:* {{5}}
+Job ID: {{4}}
 
-{{2}} will contact you shortly to confirm the details and arrival time.
+The handyman will contact you shortly to discuss the job details and confirm the appointment time.
 
-*Important:*
-• Please ensure someone is available at the scheduled time
-• Have the work area accessible and clear
-• Payment will be collected after job completion
-
-Questions? Reply to this message!
+Need help? Contact us at support@easydone.com
 ```
 
-**Variables:**
-- `{{1}}` = Customer name (e.g., "John Tan")
-- `{{2}}` = Handyman name (e.g., "Ahmad Lee")
-- `{{3}}` = Service type (e.g., "Plumbing Repair")
-- `{{4}}` = Job ID (e.g., "JOB-12345")
-- `{{5}}` = Scheduled timing (e.g., "Tomorrow, 2:00 PM")
-
-**Header:** None
-
-**Footer:** `EazyDone - Your Trusted Handyman Service`
-
-**Buttons:**
+**Footer:** (Optional)
 ```
-[Call Handyman] - Phone number action (if available in future)
-```
-*Note: Call button requires handyman phone number integration*
-
-**Sample Variables for Testing:**
-```
-{{1}} = Lex Liong
-{{2}} = Ahmad Lee
-{{3}} = Plumbing Repair
-{{4}} = JOB-ABC123
-{{5}} = Tomorrow, 2:00 PM
-```
-
----
-
-## Template 3: Job Completion Confirmation
-
-**Template Name:** `job_completion_request`
-
-**Category:** `TRANSACTIONAL`
-
-**Language:** English (US)
-
-**Template Content:**
-
-```
-Hi {{1}},
-
-Your handyman *{{2}}* has marked the job as complete! ✅
-
-*Service:* {{3}}
-*Job ID:* {{4}}
-
-Please confirm that the work has been completed to your satisfaction.
-
-*Before confirming:*
-• Check that all work is completed as discussed
-• Test any repairs or installations
-• Ensure the work area has been cleaned up
-
-Tap below to confirm completion or report an issue.
+EazyDone - Your Trusted Handyman Service
 ```
 
 **Variables:**
-- `{{1}}` = Customer name (e.g., "John Tan")
-- `{{2}}` = Handyman name (e.g., "Ahmad Lee")
-- `{{3}}` = Service type (e.g., "Plumbing Repair")
-- `{{4}}` = Job ID (e.g., "JOB-12345")
+- `{{1}}` - Customer name (e.g., "John Tan")
+- `{{2}}` - Handyman name (e.g., "Michael Lee")
+- `{{3}}` - Service type (e.g., "Plumbing Repair")
+- `{{4}}` - Job ID (e.g., "abc123xyz")
 
-**Header:** None
-
-**Footer:** `EazyDone - Your Trusted Handyman Service`
-
-**Buttons:**
-```
-[Quick Reply] Confirm Completion
-[Quick Reply] Report Issue
-```
-
-**Button Configuration:**
-- **Button 1:** Quick Reply - Text: "✅ Confirm Completion"
-- **Button 2:** Quick Reply - Text: "⚠️ Report Issue"
-
-*Note: When customer taps a button, you'll receive their response via webhook. You'll need to handle these responses in your backend.*
-
-**Sample Variables for Testing:**
+**Sample Test Values:**
 ```
 {{1}} = Lex Liong
-{{2}} = Ahmad Lee
+{{2}} = Michael Lee
 {{3}} = Plumbing Repair
 {{4}} = JOB-ABC123
 ```
 
----
-
-## Additional Notes for Meta Submission
-
-### General Guidelines:
-1. **Category Selection:**
-   - Use `TRANSACTIONAL` for all templates (not `MARKETING`)
-   - Transactional messages have higher delivery rates and no opt-out requirements
-
-2. **Variable Format:**
-   - Use `{{1}}`, `{{2}}`, `{{3}}` format (not `{{name}}` or `{{customer_name}}`)
-   - Meta requires numbered placeholders
-   - Keep variables in order (1, 2, 3, 4, 5...)
-
-3. **Character Limits:**
-   - Header: 60 characters
-   - Body: 1024 characters
-   - Footer: 60 characters
-
-4. **Buttons:**
-   - Maximum 3 buttons per template
-   - Button types: Quick Reply, Call to Action (URL or Phone)
-   - Quick Reply buttons return text responses
-
-5. **Approval Time:**
-   - Usually 24-48 hours
-   - Meta may request changes if template doesn't meet guidelines
-   - Templates with buttons may take longer to review
-
-### Testing Before Approval:
-- Continue using `hello_world` template during development
-- Test all variables and edge cases with sandbox numbers
-- Ensure phone numbers are verified in Meta dashboard
-
-### After Approval:
-- Update `whatsappService.js` to use approved template names
-- Add template variables to function calls
-- Test with real customer data
-- Monitor delivery rates in Meta dashboard
-
----
-
-## Implementation Code
-
-After templates are approved, update your `whatsappService.js`:
-
-```javascript
-// Template 1: Job Payment Confirmation
-export const sendJobCreationNotification = async (jobData) => {
-  const timingText = jobData.preferredTiming === 'Schedule'
-    ? `${new Date(jobData.preferredDate).toLocaleDateString()} at ${jobData.preferredTime}`
-    : 'As soon as possible';
-
-  return await sendTemplateMessage(
-    jobData.customerPhone,
-    'job_payment_confirmation',
-    'en_US',
-    [
-      jobData.customerName,
-      jobData.serviceType,
-      jobData.id,
-      jobData.estimatedBudget.toString(),
-      timingText
-    ]
-  );
-};
-
-// Template 2: Handyman Job Acceptance
-export const sendJobAcceptanceNotification = async (job, handyman) => {
-  const timingText = job.preferredTiming === 'Schedule'
-    ? `${new Date(job.preferredDate).toLocaleDateString()} at ${job.preferredTime}`
-    : 'As soon as possible';
-
-  return await sendTemplateMessage(
-    job.customerPhone,
-    'handyman_accepted_job',
-    'en_US',
-    [
-      job.customerName,
-      handyman.name,
-      job.serviceType,
-      job.id,
-      timingText
-    ]
-  );
-};
-
-// Template 3: Job Completion Request
-export const sendJobCompletionNotification = async (job, handyman) => {
-  return await sendTemplateMessage(
-    job.customerPhone,
-    'job_completion_request',
-    'en_US',
-    [
-      job.customerName,
-      handyman.name,
-      job.serviceType,
-      job.id
-    ]
-  );
-};
+**Environment Variable:**
+```env
+REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXxxxxx
 ```
 
-### Update `sendTemplateMessage()` to support variables:
+**Code Reference:** `src/services/whatsappService.js:255` → `sendJobAcceptanceNotification()`
 
-```javascript
-export const sendTemplateMessage = async (
-  to,
-  templateName = 'hello_world',
-  languageCode = 'en_US',
-  variables = [] // Add variables parameter
-) => {
-  if (!isWhatsAppConfigured()) {
-    console.warn('⚠️ WhatsApp not configured. Message not sent.');
-    return { success: false, error: 'WhatsApp not configured', fallback: true };
-  }
+---
 
-  try {
-    const formattedPhone = formatPhoneNumber(to);
+### Template 3: Job Completion (Optional)
 
-    // Build template components
-    const templateComponents = [];
+**Use Case:** Notify customer when handyman marks job complete
 
-    // Add body component with variables if provided
-    if (variables.length > 0) {
-      templateComponents.push({
-        type: "body",
-        parameters: variables.map(value => ({
-          type: "text",
-          text: value.toString()
-        }))
-      });
-    }
+**Note:** Currently using plain text message (assumes within 24-hour window). Only create this template if you want to ensure delivery outside the 24-hour window.
 
-    console.log('📱 Sending WhatsApp template message...');
-    console.log(`To: ${formattedPhone}`);
-    console.log(`Template: ${templateName}`);
-    console.log(`Variables:`, variables);
+**Template Name:** `job_completion_confirmed`
 
-    const response = await fetch(
-      `https://graph.facebook.com/${WHATSAPP_CONFIG.apiVersion}/${WHATSAPP_CONFIG.phoneNumberId}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${WHATSAPP_CONFIG.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: formattedPhone,
-          type: 'template',
-          template: {
-            name: templateName,
-            language: { code: languageCode },
-            components: templateComponents.length > 0 ? templateComponents : undefined
-          }
-        })
-      }
-    );
+**Category:** TRANSACTIONAL
 
-    const data = await response.json();
+**Language:** English
 
-    if (!response.ok) {
-      console.error('❌ WhatsApp API Error:', data);
-      throw new Error(data.error?.message || 'Failed to send WhatsApp template');
-    }
+**Content:**
 
-    console.log('✅ WhatsApp template sent successfully');
-    console.log('Message ID:', data.messages?.[0]?.id);
+**Body:**
+```
+Hello {{1}},
 
-    return {
-      success: true,
-      messageId: data.messages?.[0]?.id,
-      data
-    };
+Your handyman {{2}} has marked your "{{3}}" job as complete.
 
-  } catch (error) {
-    console.error('❌ Error sending WhatsApp template:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-};
+Job ID: {{4}}
+
+Please review the work and confirm completion in the EazyDone app. If you're satisfied with the service, you can also leave a review!
+
+Thank you for using EazyDone!
+```
+
+**Footer:** (Optional)
+```
+EazyDone - Your Trusted Handyman Service
+```
+
+**Variables:**
+- `{{1}}` - Customer name
+- `{{2}}` - Handyman name
+- `{{3}}` - Service type
+- `{{4}}` - Job ID
+
+**Sample Test Values:**
+```
+{{1}} = Lex Liong
+{{2}} = Michael Lee
+{{3}} = Plumbing Repair
+{{4}} = JOB-ABC123
+```
+
+**Environment Variable:**
+```env
+REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETED=HXxxxxx
+```
+
+**Code Reference:** `src/services/whatsappService.js:241` → `sendJobCompletionNotification()`
+
+---
+
+## Twilio Content Editor UI Guide
+
+### Creating a Template - Step by Step
+
+#### 1. Template Information
+
+```
+┌─────────────────────────────────────────┐
+│ Create Content Template                 │
+├─────────────────────────────────────────┤
+│ Name: job_payment_confirmation          │
+│ Language: English                        │
+│ Channel: ☑ WhatsApp                     │
+│ Content Type: Text                       │
+└─────────────────────────────────────────┘
+```
+
+#### 2. Content Sections
+
+```
+┌─────────────────────────────────────────┐
+│ Header (Optional)                        │
+├─────────────────────────────────────────┤
+│ [Leave empty]                            │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│ Body *                                   │
+├─────────────────────────────────────────┤
+│ Hi {{1}}, your job request for "{{2}}"  │
+│ has been posted successfully!            │
+│                                          │
+│ Service Fee: {{3}}                       │
+│ Job ID: {{4}}                            │
+│ Timing: {{5}}                            │
+│                                          │
+│ A qualified handyman will accept your    │
+│ job shortly. You'll receive a            │
+│ notification when someone accepts.       │
+│                                          │
+│ Thank you for using EazyDone!            │
+│                                          │
+│ [+ Add Variable]  Variables: 5 added    │
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│ Footer (Optional)                        │
+├─────────────────────────────────────────┤
+│ EazyDone - Your Trusted Handyman Service│
+└─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────┐
+│ Buttons (Optional)                       │
+├─────────────────────────────────────────┤
+│ [+ Add Button]                           │
+└─────────────────────────────────────────┘
+```
+
+#### 3. WhatsApp Submission
+
+```
+┌─────────────────────────────────────────┐
+│ Submit for WhatsApp Approval             │
+├─────────────────────────────────────────┤
+│ Category: ⚫ TRANSACTIONAL               │
+│           ○ MARKETING                    │
+│           ○ UTILITY                      │
+│                                          │
+│ [ Submit for Approval ]                  │
+└─────────────────────────────────────────┘
+```
+
+#### 4. Approval Status
+
+After submission, you'll see:
+
+```
+┌─────────────────────────────────────────┐
+│ Template Status                          │
+├─────────────────────────────────────────┤
+│ Status: ⏳ Pending Approval              │
+│ Submitted: 2025-01-22 14:30 SGT          │
+│ Content SID: HXa1b2c3d4e5f6g7h8i9j0     │
+│                                          │
+│ ℹ️ WhatsApp approval typically takes    │
+│    24-48 hours                           │
+└─────────────────────────────────────────┘
+```
+
+Once approved:
+
+```
+┌─────────────────────────────────────────┐
+│ Template Status                          │
+├─────────────────────────────────────────┤
+│ Status: ✅ APPROVED                     │
+│ Approved: 2025-01-23 09:15 SGT           │
+│ Content SID: HXa1b2c3d4e5f6g7h8i9j0     │
+│                                          │
+│ 📋 [Copy Content SID]                   │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## Webhook Setup for Interactive Buttons
+## Testing Templates
 
-When customers tap Quick Reply buttons in Template 3, you'll need a webhook to handle responses:
+### Using Twilio WhatsApp Sandbox
 
-1. **Set up webhook in Meta Dashboard:**
-   - Go to WhatsApp → Configuration
-   - Add Callback URL: `https://your-domain.com/api/whatsapp/webhook`
-   - Add Verify Token (random secret string)
-   - Subscribe to `messages` webhook field
+Before production, test templates using the Twilio WhatsApp Sandbox:
 
-2. **Create webhook handler:**
-   - Verify webhook requests from Meta
-   - Parse incoming messages
-   - Handle "Confirm Completion" and "Report Issue" responses
-   - Update job status in Firebase accordingly
+#### 1. Join the Sandbox
 
-3. **Response Flow:**
-   - Customer taps "✅ Confirm Completion" → Job status → `completed`
-   - Customer taps "⚠️ Report Issue" → Job status → `disputed`, notify operations
+1. Go to Twilio Console → **Messaging** → **Try it out** → **Send a WhatsApp message**
+2. You'll see a sandbox code like: `join <random-words>`
+3. Send that code to the Twilio sandbox number (e.g., `+1 415 523 8886`)
+4. You'll receive a confirmation message
+
+#### 2. Configure Sandbox in .env.local
+
+```env
+# Use sandbox number for testing
+REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+```
+
+#### 3. Test Template Sending
+
+```javascript
+// In browser console or test file
+import { sendTemplateMessage } from './services/whatsappService';
+
+const testTemplate = async () => {
+  const result = await sendTemplateMessage(
+    '+6591234567', // Your phone number
+    'HXxxxxx',     // Your Content SID
+    {
+      '1': 'John Tan',
+      '2': 'Plumbing Repair',
+      '3': '$150.00',
+      '4': 'JOB-ABC123',
+      '5': 'ASAP'
+    }
+  );
+
+  console.log('Result:', result);
+};
+
+testTemplate();
+```
+
+#### 4. Check Logs
+
+Monitor the browser console and Twilio Console logs for:
+- ✅ Message sent successfully
+- ⚠️ Template not approved
+- ❌ Invalid variables
+- ❌ Authentication errors
+
+---
+
+## Environment Configuration
+
+After templates are approved, update your `.env.local`:
+
+```env
+# Twilio WhatsApp Configuration
+REACT_APP_TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_AUTH_TOKEN=your_auth_token_here
+REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+
+# Twilio Content Template SIDs (get from Console after approval)
+REACT_APP_TWILIO_TEMPLATE_JOB_PAYMENT=HXa1b2c3d4e5f6g7h8i9j0
+REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXb2c3d4e5f6g7h8i9j0k1
+REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETED=HXc3d4e5f6g7h8i9j0k1l2
+```
+
+**Important:** Keep these credentials secure! Add `.env.local` to `.gitignore`.
+
+---
+
+## Template Approval Guidelines
+
+### What WhatsApp Approves ✅
+
+- Clear, concise transactional messages
+- Helpful information for customers
+- Professional tone and formatting
+- Appropriate use of variables
+- Compliance with WhatsApp Commerce Policy
+
+### What WhatsApp Rejects ❌
+
+- Marketing/promotional content in TRANSACTIONAL category
+- Misleading or deceptive messages
+- Messages containing:
+  - Shortened URLs (bit.ly, tinyurl, etc.)
+  - Profanity or inappropriate content
+  - Requests for sensitive information (passwords, SSN, etc.)
+  - Spam-like content
+- Too many variables (keep it reasonable)
+
+### Tips for Fast Approval
+
+1. ✅ Use TRANSACTIONAL category for order/service updates
+2. ✅ Keep messages concise and to the point
+3. ✅ Use clear, professional language
+4. ✅ Test variable placement before submission
+5. ✅ Include helpful customer information (Job ID, timing, etc.)
+6. ✅ Add footer with company name for branding
+
+---
+
+## Common Issues & Troubleshooting
+
+### Issue 1: Template Rejected by WhatsApp
+
+**Symptoms:** Template status shows "REJECTED" in Twilio Console
+
+**Solutions:**
+- Review rejection reason in Twilio Console
+- Check template category matches content type
+- Remove any promotional language if using TRANSACTIONAL
+- Ensure variables are properly formatted (`{{1}}`, `{{2}}`, etc.)
+- Resubmit with modifications
+
+### Issue 2: Template Not Sending
+
+**Symptoms:** `sendTemplateMessage()` returns error
+
+**Solutions:**
+```javascript
+// Check configuration
+console.log('Config:', {
+  accountSid: process.env.REACT_APP_TWILIO_ACCOUNT_SID,
+  hasAuthToken: !!process.env.REACT_APP_TWILIO_AUTH_TOKEN,
+  whatsappFrom: process.env.REACT_APP_TWILIO_WHATSAPP_FROM,
+  templateSid: process.env.REACT_APP_TWILIO_TEMPLATE_JOB_PAYMENT
+});
+```
+
+Common fixes:
+- Verify environment variables are loaded
+- Check Content SID is correct (starts with `HX`)
+- Ensure template is approved in Twilio Console
+- Verify phone number format (E.164: `+6591234567`)
+- Check variable count matches template
+
+### Issue 3: Variables Not Displaying
+
+**Symptoms:** Variables show as `{{1}}` in received message
+
+**Solutions:**
+- Ensure `contentVariables` object uses string keys: `'1'`, `'2'`, `'3'`
+- Check all variables are provided (no missing values)
+- Verify variable order matches template
+
+```javascript
+// ❌ Wrong
+contentVariables: {
+  1: 'John',  // Number key
+  2: 'Plumbing'
+}
+
+// ✅ Correct
+contentVariables: {
+  '1': 'John',  // String key
+  '2': 'Plumbing'
+}
+```
 
 ---
 
 ## Cost Considerations
 
-**Meta WhatsApp Business Pricing (as of 2024):**
-- **Template Messages (Notification):** ~$0.05 - $0.10 per message (varies by country)
-- **Customer Service Window (24h):** Free responses to customer-initiated messages
-- **Singapore Rates:** ~$0.088 per template message
+### Twilio WhatsApp Pricing (as of 2025)
+
+**Message Types:**
+- **Template Messages (Business-Initiated):** $0.005 - $0.01 per message (varies by country)
+- **Session Messages (Customer-Initiated 24hr window):** Free
+- **Singapore Rates:** ~$0.008 per template message
 
 **Monthly Cost Estimate:**
-- 100 jobs/month = ~$8.80 (3 notifications per job)
-- 500 jobs/month = ~$44.00
-- 1000 jobs/month = ~$88.00
+- 100 jobs/month × 2 templates = 200 messages = ~$1.60
+- 500 jobs/month × 2 templates = 1000 messages = ~$8.00
+- 1000 jobs/month × 2 templates = 2000 messages = ~$16.00
 
-**Cost Optimization Tips:**
-- Combine multiple updates into single message when possible
-- Use customer service window for follow-ups (free)
-- Monitor template delivery rates in Meta dashboard
+**Cost Optimization:**
+- Template 3 (job completion) uses text message within 24hr window = FREE
+- Only Templates 1 & 2 are chargeable
+- Monitor usage in Twilio Console → **Monitor** → **Messaging Insights**
 
 ---
 
 ## Support Resources
 
-- [Meta WhatsApp Business API Docs](https://developers.facebook.com/docs/whatsapp/cloud-api)
-- [Message Templates Guide](https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates)
-- [Template Guidelines](https://www.facebook.com/business/help/2055875911147364)
-- [Interactive Messages](https://developers.facebook.com/docs/whatsapp/guides/interactive-messages)
+- [Twilio WhatsApp API Docs](https://www.twilio.com/docs/whatsapp)
+- [Twilio Content API](https://www.twilio.com/docs/content)
+- [WhatsApp Business Policy](https://www.whatsapp.com/legal/business-policy)
+- [Twilio Console](https://console.twilio.com/)
+- [Twilio Support](https://support.twilio.com/)
+
+---
+
+**Last Updated:** 2025-01-22
+**Status:** 🔄 Ready for template creation in Twilio Console

@@ -14,6 +14,8 @@ import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
 import { SERVICE_PRICING, getServicePrice } from '../../config/servicePricing';
+// WhatsApp notification service
+import { sendJobCreationNotification } from '../../services/whatsappService';
 
 // Custom styles for the date picker
 const datePickerStyles = `
@@ -308,6 +310,34 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
         paymentResult: paymentResultData,
         paymentCompletedAt: new Date().toISOString()
       });
+
+      // Send WhatsApp notification to customer after successful payment
+      try {
+        console.log('Sending job creation WhatsApp notification...');
+        const jobNotificationData = {
+          id: createdJobId,
+          customerName: jobData.customerName,
+          customerPhone: jobData.customerPhone,
+          serviceType: jobData.serviceType,
+          estimatedBudget: jobData.estimatedBudget,
+          preferredTiming: jobData.preferredTiming,
+          preferredDate: jobData.preferredDate,
+          preferredTime: jobData.preferredTime
+        };
+
+        const whatsappResult = await sendJobCreationNotification(jobNotificationData);
+
+        if (whatsappResult.success) {
+          console.log('✅ WhatsApp job creation notification sent to customer');
+        } else if (whatsappResult.fallback) {
+          console.log('⚠️ WhatsApp not configured or template not set - notification logged to console');
+        } else {
+          console.error('❌ Failed to send WhatsApp notification:', whatsappResult.error);
+        }
+      } catch (whatsappError) {
+        console.error('Error sending WhatsApp notification:', whatsappError);
+        // Don't block the flow if WhatsApp fails
+      }
 
       // Call parent callback if provided
       if (onJobCreated) {

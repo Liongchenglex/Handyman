@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { sendTemplateMessage } from '../../services/whatsappService';
+import { sendJobAcceptanceNotification } from '../../services/whatsappService';
 
 /**
  * ExpressInterestButton Component
@@ -58,11 +58,15 @@ const ExpressInterestButton = ({
       if (job.customerPhone) {
         try {
           console.log('Sending job acceptance WhatsApp notification...');
-          const whatsappResult = await sendTemplateMessage(
-            job.customerPhone,
-            'hello_world',
-            'en_US'
-          );
+
+          // Prepare handyman info for notification
+          const handymanInfo = {
+            name: user.displayName || user.email,
+            phone: user.phoneNumber || '',
+            email: user.email
+          };
+
+          const whatsappResult = await sendJobAcceptanceNotification(job, handymanInfo);
 
           if (whatsappResult.success) {
             console.log('✅ WhatsApp notification sent to customer');
