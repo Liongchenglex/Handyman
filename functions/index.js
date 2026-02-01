@@ -5,6 +5,9 @@
  * including Connect accounts, payments, transfers, and webhooks.
  */
 
+// Load environment variables from .env file (for local development)
+require('dotenv').config();
+
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const stripe = require('stripe')(functions.config().stripe.secret_key);
@@ -1264,14 +1267,19 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 /**
  * Helper function to send a message via Green-API
  * Used by webhook to send confirmation messages
+ *
+ * Reads from environment variables (functions/.env):
+ * - GREENAPI_API_URL
+ * - GREENAPI_ID_INSTANCE
+ * - GREENAPI_API_TOKEN
  */
 async function sendGreenApiMessage(chatId, message) {
-  const apiUrl = functions.config().greenapi?.apiurl || 'https://api.green-api.com';
-  const idInstance = functions.config().greenapi?.idinstance;
-  const apiToken = functions.config().greenapi?.apitoken;
+  const apiUrl = process.env.GREENAPI_API_URL || 'https://api.green-api.com';
+  const idInstance = process.env.GREENAPI_ID_INSTANCE;
+  const apiToken = process.env.GREENAPI_API_TOKEN;
 
   if (!idInstance || !apiToken) {
-    console.warn('⚠️ Green-API not configured in Firebase functions config');
+    console.warn('⚠️ Green-API not configured. Add GREENAPI_ID_INSTANCE and GREENAPI_API_TOKEN to functions/.env');
     return { success: false, error: 'Green-API not configured' };
   }
 
