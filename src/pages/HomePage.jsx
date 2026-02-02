@@ -280,6 +280,15 @@ const HomePage = () => {
 
       {/* Footer */}
       <footer className="py-8 text-center text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex justify-center gap-4 mb-3">
+          <Link to="/terms-of-service" className="hover:text-primary transition-colors">
+            Terms of Service
+          </Link>
+          <span>|</span>
+          <Link to="/privacy-policy" className="hover:text-primary transition-colors">
+            Privacy Policy
+          </Link>
+        </div>
         <p>&copy; 2024 EasyDoneHandyman. All rights reserved.</p>
       </footer>
     </div>
