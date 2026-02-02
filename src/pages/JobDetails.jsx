@@ -174,38 +174,6 @@ const JobDetails = () => {
                 )}
               </div>
 
-              <div className="info-section">
-                <h4>Customer Information</h4>
-                <div className="info-item">
-                  <span className="icon">👤</span>
-                  <div>
-                    <strong>Name:</strong>
-                    <p>{job.customerName}</p>
-                  </div>
-                </div>
-                
-                {isJobOwner && (
-                  <>
-                    <div className="info-item">
-                      <span className="icon">📱</span>
-                      <div>
-                        <strong>Phone:</strong>
-                        <p>{job.customerPhone}</p>
-                      </div>
-                    </div>
-                    
-                    {job.customerEmail && (
-                      <div className="info-item">
-                        <span className="icon">📧</span>
-                        <div>
-                          <strong>Email:</strong>
-                          <p>{job.customerEmail}</p>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
             </div>
 
             {job.handymanId && (
@@ -301,18 +269,6 @@ const JobDetails = () => {
               <li>Complete the job and mark it as finished</li>
               <li>Receive payment once customer confirms completion</li>
             </ol>
-          </div>
-
-          <div className="customer-contact">
-            <h4>Customer Contact Details</h4>
-            <div className="contact-info">
-              <p><strong>Name:</strong> {job.customerName}</p>
-              <p><strong>Phone:</strong> {job.customerPhone}</p>
-              {job.customerEmail && (
-                <p><strong>Email:</strong> {job.customerEmail}</p>
-              )}
-              <p><strong>Location:</strong> {job.location}</p>
-            </div>
           </div>
 
           <div className="modal-actions">

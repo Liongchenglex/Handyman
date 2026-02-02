@@ -157,13 +157,13 @@ const ProfileView = ({ user, userProfile }) => {
         <div className="mt-8 grid grid-cols-3 gap-4">
           <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
             <div className="text-2xl font-bold text-primary">
-              {handymanProfile.totalJobs || 0}
+              {myJobs.filter(j => j.status === 'completed').length}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Jobs Completed</div>
           </div>
           <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
             <div className="text-2xl font-bold text-primary">
-              {myJobs.filter(j => j.status === 'in_progress').length}
+              {myJobs.filter(j => j.status === 'in_progress' || j.status === 'accepted').length}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Active Jobs</div>
           </div>

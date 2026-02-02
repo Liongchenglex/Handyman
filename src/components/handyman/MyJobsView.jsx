@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getJobsByHandyman } from '../../services/firebase';
 import JobActionButtons from './JobActionButtons';
-import { getStatusColor, getStatusText, formatPhoneForWhatsApp, formatDate } from '../../utils/jobHelpers';
+import { getStatusColor, getStatusText, formatDate } from '../../utils/jobHelpers';
 
 /**
  * MyJobsView Component
@@ -171,41 +171,6 @@ const MyJobsView = ({ user, onViewChange }) => {
                 <div>
                   <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-2">Site Visit</h4>
                   <p className="text-sm text-gray-600 dark:text-gray-400">{job.siteVisit}</p>
-                </div>
-              </div>
-
-              {/* Customer Contact */}
-              <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 mb-4">
-                <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3">
-                  Customer Contact
-                </h4>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">
-                      {job.customerName}
-                    </p>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {job.customerPhone}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <a
-                      href={`tel:${job.customerPhone}`}
-                      className="flex items-center gap-2 bg-primary/10 text-primary px-3 py-2 rounded-lg hover:bg-primary/20 transition-colors text-sm font-medium"
-                    >
-                      <span className="material-symbols-outlined text-sm">call</span>
-                      Call
-                    </a>
-                    <a
-                      href={`https://wa.me/${formatPhoneForWhatsApp(job.customerPhone)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 bg-green-100 text-green-700 px-3 py-2 rounded-lg hover:bg-green-200 transition-colors text-sm font-medium"
-                    >
-                      <span className="material-symbols-outlined text-sm">chat</span>
-                      WhatsApp
-                    </a>
-                  </div>
                 </div>
               </div>
 
