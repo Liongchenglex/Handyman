@@ -946,21 +946,30 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
  * POST /releaseEscrowSimple
  * Body: { jobId }
  */
-exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
-  cors(req, res, async () => {
-    // Allow OPTIONS for CORS preflight
-    if (req.method === 'OPTIONS') {
-      return res.status(204).send('');
-    }
+exports.releaseEscrowSimple = functions.https.onRequest(async (req, res) => {
+  // Set CORS headers manually to ensure they're always present
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Access-Control-Allow-Credentials', 'true');
+  }
 
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.set('Access-Control-Max-Age', '3600');
+    return res.status(204).send('');
+  }
 
-    try {
-      // Verify authentication
-      const decodedToken = await verifyAuthToken(req);
-      console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    // Verify authentication
+    const decodedToken = await verifyAuthToken(req);
+    console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
 
       // Verify admin authorization - only admins can release escrow
       verifyAdminAccess(decodedToken);
@@ -1102,7 +1111,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         message: error.message
       });
     }
-  });
 });
 
 /**
