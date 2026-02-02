@@ -274,10 +274,10 @@ const StripeOnboardingPrompt = ({ handyman }) => {
             <div className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
               <p>Need help? Contact us at{' '}
                 <a
-                  href="mailto:support@handysg.com"
+                  href="mailto:easydonehandyman@gmail.com"
                   className="text-primary hover:underline font-medium"
                 >
-                  support@handysg.com
+                  easydonehandyman@gmail.com
                 </a>
               </p>
             </div>

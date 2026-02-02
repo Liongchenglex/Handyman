@@ -135,25 +135,13 @@ const HelpContact = () => {
       icon: "phone",
       title: "Customer Support Hotline",
       details: "+65 8888 1234",
-      subtext: "Available 24/7 for urgent issues"
-    },
-    {
-      icon: "chat",
-      title: "WhatsApp Support",
-      details: "+65 8888 1234",
-      subtext: "Quick responses during business hours"
+      subtext: "Available 24/7 via phone call or WhatsApp"
     },
     {
       icon: "email",
       title: "Email Support",
-      details: "support@handysg.com",
+      details: "easydonehandyman@gmail.com",
       subtext: "Detailed inquiries and documentation"
-    },
-    {
-      icon: "location_on",
-      title: "Business Address",
-      details: "123 Orchard Road, #12-34\nSingapore 238826",
-      subtext: "Monday - Friday, 9 AM - 6 PM"
     }
   ];
 
@@ -317,8 +305,7 @@ const HelpContact = () => {
                   Expected Response Times
                 </h4>
                 <ul className="space-y-1 text-sm text-blue-800 dark:text-blue-200">
-                  <li>• <strong>Emergency calls:</strong> Immediate response during business hours</li>
-                  <li>• <strong>WhatsApp messages:</strong> Within 30 minutes during business hours</li>
+                  <li>• <strong>Phone/WhatsApp:</strong> Immediate response during business hours</li>
                   <li>• <strong>Email inquiries:</strong> Within 2-4 hours on weekdays</li>
                   <li>• <strong>Complex issues:</strong> Full resolution within 24-48 hours</li>
                 </ul>

@@ -240,7 +240,7 @@ const JobDetails = () => {
               <h4>Need Help?</h4>
               <div className="help-info">
                 <p>📱 WhatsApp: +65 XXXX XXXX</p>
-                <p>📧 support@handymansg.com</p>
+                <p>📧 easydonehandyman@gmail.com</p>
               </div>
             </div>
           </div>

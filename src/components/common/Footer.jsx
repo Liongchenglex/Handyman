@@ -35,8 +35,8 @@ const Footer = () => {
           <div>
             <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-4 uppercase tracking-wide">Support</h4>
             <ul className="space-y-2">
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Help Center</a></li>
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Contact Us</a></li>
+              <li><Link to="/help" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Help Center</Link></li>
+              <li><Link to="/contact" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Contact Us</Link></li>
               <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Terms of Service</a></li>
               <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Privacy Policy</a></li>
             </ul>
@@ -52,7 +52,7 @@ const Footer = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-lg">mail</span>
-                <span className="text-gray-600 dark:text-gray-400 text-sm">support@handysg.com</span>
+                <span className="text-gray-600 dark:text-gray-400 text-sm">easydonehandyman@gmail.com</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-lg">location_on</span>

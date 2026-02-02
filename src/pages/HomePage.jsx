@@ -44,36 +44,37 @@ const HomePage = () => {
 
     return () => observer.disconnect();
   }, [visibleCards, visibleSections]);
+  // TODO: Re-enable featured handymen section after launch when we have real handymen
   // Static featured handymen data
-  const featuredHandymen = [
-    {
-      id: 1,
-      name: "David Tan",
-      speciality: "Plumbing & Electrical",
-      rating: 4.9,
-      completedJobs: 234,
-      avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
-      badge: "Top Rated"
-    },
-    {
-      id: 2,
-      name: "Sarah Lim",
-      speciality: "Carpentry & Furniture",
-      rating: 4.8,
-      completedJobs: 187,
-      avatar: "https://images.unsplash.com/photo-1494790108755-2616b6d4c07b?w=150&h=150&fit=crop&crop=face",
-      badge: "Most Popular"
-    },
-    {
-      id: 3,
-      name: "Ahmad Rahman",
-      speciality: "Aircon & Appliances",
-      rating: 4.9,
-      completedJobs: 156,
-      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face",
-      badge: "Fast Response"
-    }
-  ];
+  // const featuredHandymen = [
+  //   {
+  //     id: 1,
+  //     name: "David Tan",
+  //     speciality: "Plumbing & Electrical",
+  //     rating: 4.9,
+  //     completedJobs: 234,
+  //     avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face",
+  //     badge: "Top Rated"
+  //   },
+  //   {
+  //     id: 2,
+  //     name: "Sarah Lim",
+  //     speciality: "Carpentry & Furniture",
+  //     rating: 4.8,
+  //     completedJobs: 187,
+  //     avatar: "https://images.unsplash.com/photo-1494790108755-2616b6d4c07b?w=150&h=150&fit=crop&crop=face",
+  //     badge: "Most Popular"
+  //   },
+  //   {
+  //     id: 3,
+  //     name: "Ahmad Rahman",
+  //     speciality: "Aircon & Appliances",
+  //     rating: 4.9,
+  //     completedJobs: 156,
+  //     avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=face",
+  //     badge: "Fast Response"
+  //   }
+  // ];
 
   return (
     <div className="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
@@ -131,8 +132,8 @@ const HomePage = () => {
         </div>
       </div>
 
-      {/* Featured Handymen Section */}
-      <div className="py-16 px-4">
+      {/* TODO: Re-enable Featured Handymen Section after launch when we have real handymen */}
+      {/* <div className="py-16 px-4">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
@@ -149,14 +150,12 @@ const HomePage = () => {
                 key={handyman.id}
                 className="bg-white dark:bg-gray-800 rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 p-6"
               >
-                {/* Badge */}
                 <div className="flex justify-between items-start mb-4">
                   <span className="inline-block bg-primary/20 dark:bg-primary/30 text-primary text-xs font-bold px-3 py-1 rounded-full">
                     {handyman.badge}
                   </span>
                 </div>
 
-                {/* Avatar and Basic Info */}
                 <div className="text-center mb-4">
                   <img
                     src={handyman.avatar}
@@ -171,7 +170,6 @@ const HomePage = () => {
                   </p>
                 </div>
 
-                {/* Stats */}
                 <div className="flex justify-between items-center pt-4 border-t border-gray-200 dark:border-gray-700">
                   <div className="flex items-center gap-1">
                     <span className="material-symbols-outlined text-yellow-500 text-sm">star</span>
@@ -184,7 +182,6 @@ const HomePage = () => {
                   </div>
                 </div>
 
-                {/* Contact Button */}
                 <button className="w-full mt-4 bg-primary/10 dark:bg-primary/20 text-primary font-medium py-2 px-4 rounded-lg hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors duration-200">
                   View Profile
                 </button>
@@ -192,7 +189,6 @@ const HomePage = () => {
             ))}
           </div>
 
-          {/* View All Button */}
           <div className="text-center mt-12">
             <Link
               to="/handymen"
@@ -203,7 +199,7 @@ const HomePage = () => {
             </Link>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* Help & Contact Section */}
       <div className="py-16 px-4 bg-gray-50 dark:bg-gray-800">
@@ -255,8 +251,8 @@ const HomePage = () => {
                   <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">mail</span>
                   <div>
                     <span className="text-gray-700 dark:text-gray-300 block font-medium">Email</span>
-                    <a href="mailto:support@handysg.com" className="text-green-600 dark:text-green-400 hover:underline">
-                      support@handysg.com
+                    <a href="mailto:easydonehandyman@gmail.com" className="text-green-600 dark:text-green-400 hover:underline">
+                      easydonehandyman@gmail.com
                     </a>
                   </div>
                 </div>
