@@ -88,6 +88,33 @@ const verifyAuthToken = async (req) => {
 };
 
 // ===================================
+// ADMIN AUTHORIZATION
+// ===================================
+
+/**
+ * Admin email whitelist
+ * Users with these emails can perform admin actions like releasing escrow
+ * Consider moving to Firestore or environment config for easier management
+ */
+const ADMIN_EMAILS = [
+  'easydonehandyman@gmail.com',
+  // Add more admin emails as needed
+];
+
+/**
+ * Verify user has admin privileges
+ * @param {Object} decodedToken - Decoded Firebase auth token
+ * @throws {Error} If user is not an admin
+ */
+const verifyAdminAccess = (decodedToken) => {
+  if (!decodedToken.email || !ADMIN_EMAILS.includes(decodedToken.email)) {
+    console.warn(`🚫 Unauthorized admin access attempt by: ${decodedToken.email || decodedToken.uid}`);
+    throw new Error('Forbidden: Admin access required');
+  }
+  console.log(`✅ Admin access verified for: ${decodedToken.email}`);
+};
+
+// ===================================
 // HELPER FUNCTIONS
 // ===================================
 
@@ -930,6 +957,9 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       const decodedToken = await verifyAuthToken(req);
       console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
 
+      // Verify admin authorization - only admins can release escrow
+      verifyAdminAccess(decodedToken);
+
       const { jobId } = req.body;
 
       if (!jobId) {
@@ -1056,6 +1086,10 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
 
       if (error.message.includes('Unauthorized')) {
         return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
       }
 
       return res.status(500).json({
