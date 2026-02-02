@@ -948,6 +948,11 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
  */
 exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
+    // Allow OPTIONS for CORS preflight
+    if (req.method === 'OPTIONS') {
+      return res.status(204).send('');
+    }
+
     if (req.method !== 'POST') {
       return res.status(405).json({ error: 'Method not allowed' });
     }
