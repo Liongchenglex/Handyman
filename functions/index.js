@@ -946,30 +946,16 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
  * POST /releaseEscrowSimple
  * Body: { jobId }
  */
-exports.releaseEscrowSimple = functions.https.onRequest(async (req, res) => {
-  // Set CORS headers manually to ensure they're always present
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.set('Access-Control-Allow-Origin', origin);
-    res.set('Access-Control-Allow-Credentials', 'true');
-  }
+exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
 
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.set('Access-Control-Max-Age', '3600');
-    return res.status(204).send('');
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  try {
-    // Verify authentication
-    const decodedToken = await verifyAuthToken(req);
-    console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
+    try {
+      // Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+      console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
 
       // Verify admin authorization - only admins can release escrow
       verifyAdminAccess(decodedToken);
@@ -1085,12 +1071,14 @@ exports.releaseEscrowSimple = functions.https.onRequest(async (req, res) => {
       return res.status(200).json({
         success: true,
         jobId: jobId,
+        serviceFee: serviceFee,
         transfer: {
           id: transfer.id,
           amount: serviceFee,
           currency: 'sgd',
           destination: handymanAccountId,
         },
+        transferId: transfer.id,
         platformFeeRetained: platformFee,
         message: `Successfully transferred $${serviceFee.toFixed(2)} to handyman. Platform fee of $${platformFee.toFixed(2)} retained.`
       });
@@ -1111,6 +1099,7 @@ exports.releaseEscrowSimple = functions.https.onRequest(async (req, res) => {
         message: error.message
       });
     }
+  });
 });
 
 /**
