@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { signInHandyman } from '../../services/firebase';
 
@@ -22,7 +23,8 @@ const HandymanAuth = ({
   const [formData, setFormData] = useState({
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    tosAccepted: false
   });
   const [errors, setErrors] = useState({});
 
@@ -52,6 +54,10 @@ const HandymanAuth = ({
       errors.confirmPassword = 'Please confirm your password';
     } else if (data.password !== data.confirmPassword) {
       errors.confirmPassword = 'Passwords do not match';
+    }
+
+    if (!data.tosAccepted) {
+      errors.tosAccepted = 'You must agree to the Terms of Service and Privacy Policy';
     }
 
     return errors;
@@ -98,7 +104,11 @@ const HandymanAuth = ({
           if (onSignupSuccess) {
             onSignupSuccess({
               email: formData.email,
-              password: formData.password
+              password: formData.password,
+              tosAcceptedAt: new Date().toISOString(),
+              tosVersion: '2026-02-02',
+              privacyPolicyAcceptedAt: new Date().toISOString(),
+              privacyPolicyVersion: '2026-02-02'
             });
           }
         }
@@ -123,7 +133,8 @@ const HandymanAuth = ({
     setFormData({
       email: formData.email, // Keep email when switching
       password: '',
-      confirmPassword: ''
+      confirmPassword: '',
+      tosAccepted: false
     });
   };
 
@@ -237,6 +248,44 @@ const HandymanAuth = ({
                     disabled={isSubmitting}
                   />
                   {errors.confirmPassword && <span className="text-red-500 text-sm mt-1">{errors.confirmPassword}</span>}
+                </div>
+              )}
+
+              {/* Terms of Service & Privacy Policy Checkbox (Signup only) */}
+              {authMode === 'signup' && (
+                <div className="pt-2">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.tosAccepted}
+                      onChange={(e) => handleInputChange('tosAccepted', e.target.checked)}
+                      disabled={isSubmitting}
+                      className={`mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-primary focus:ring-primary focus:ring-offset-0 dark:bg-gray-900 cursor-pointer ${
+                        errors.tosAccepted ? 'border-red-500' : ''
+                      }`}
+                    />
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      I agree to the{' '}
+                      <Link
+                        to="/terms-of-service"
+                        target="_blank"
+                        className="text-primary hover:underline font-medium"
+                      >
+                        Terms of Service
+                      </Link>
+                      {' '}and{' '}
+                      <Link
+                        to="/privacy-policy"
+                        target="_blank"
+                        className="text-primary hover:underline font-medium"
+                      >
+                        Privacy Policy
+                      </Link>
+                    </span>
+                  </label>
+                  {errors.tosAccepted && (
+                    <span className="text-red-500 text-sm mt-1 block ml-8">{errors.tosAccepted}</span>
+                  )}
                 </div>
               )}
 

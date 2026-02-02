@@ -35,7 +35,10 @@ import { createHandyman, getHandyman } from './collections';
  */
 export const registerHandyman = async (registrationData) => {
   try {
-    const { email, password, name, phone, serviceTypes, experience, bio } = registrationData;
+    const {
+      email, password, name, phone, serviceTypes, experience, bio,
+      tosAcceptedAt, tosVersion, privacyPolicyAcceptedAt, privacyPolicyVersion
+    } = registrationData;
 
     // Validate required fields
     if (!email || !password || !name || !phone) {
@@ -69,7 +72,12 @@ export const registerHandyman = async (registrationData) => {
       verified: false,
       isAvailable: true,
       rating: 0,
-      totalJobs: 0
+      totalJobs: 0,
+      // Terms of Service and Privacy Policy acceptance
+      tosAcceptedAt: tosAcceptedAt || null,
+      tosVersion: tosVersion || null,
+      privacyPolicyAcceptedAt: privacyPolicyAcceptedAt || null,
+      privacyPolicyVersion: privacyPolicyVersion || null
     });
 
     // Note: Email acknowledgment will be sent after full registration is complete

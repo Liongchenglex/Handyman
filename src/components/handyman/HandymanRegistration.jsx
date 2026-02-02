@@ -22,6 +22,14 @@ const HandymanRegistration = ({
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ToS acceptance data from signup
+  const tosAcceptance = {
+    tosAcceptedAt: initialData.tosAcceptedAt || null,
+    tosVersion: initialData.tosVersion || null,
+    privacyPolicyAcceptedAt: initialData.privacyPolicyAcceptedAt || null,
+    privacyPolicyVersion: initialData.privacyPolicyVersion || null
+  };
+
   // Form data state for each step
   const [personalData, setPersonalData] = useState({
     fullName: '',
@@ -258,7 +266,9 @@ const HandymanRegistration = ({
         phone: personalData.phone,
         serviceTypes: professionalData.serviceTypes,
         experience: professionalData.experienceLevel,
-        bio: professionalData.description
+        bio: professionalData.description,
+        // ToS and Privacy Policy acceptance
+        ...tosAcceptance
       });
 
       // Step 2: Upload work experience documents if any (PDFs, DOCs, images)
