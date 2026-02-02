@@ -79,7 +79,6 @@ const verifyAuthToken = async (req) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    console.log(`✅ Authenticated user: ${decodedToken.uid}`);
     return decodedToken;
   } catch (error) {
     console.error('❌ Token verification failed:', error.message);
@@ -111,7 +110,6 @@ const verifyAdminAccess = (decodedToken) => {
     console.warn(`🚫 Unauthorized admin access attempt by: ${decodedToken.email || decodedToken.uid}`);
     throw new Error('Forbidden: Admin access required');
   }
-  console.log(`✅ Admin access verified for: ${decodedToken.email}`);
 };
 
 // ===================================
@@ -211,8 +209,6 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         return res.status(403).json({ error: 'Forbidden: Cannot create account for another user' });
       }
 
-      console.log(`Creating Stripe Connect account for: ${name} (${email})`);
-
       // Split name into first and last
       const nameParts = name.trim().split(' ');
       const firstName = nameParts[0];
@@ -254,8 +250,6 @@ exports.createConnectedAccount = functions.https.onRequest((req, res) => {
         stripeConnectedAt: admin.firestore.FieldValue.serverTimestamp(),
         stripeLastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
-
-      console.log(`✅ Created Stripe account: ${account.id}`);
 
       return res.status(200).json({
         success: true,
@@ -314,9 +308,6 @@ exports.createAccountLink = functions.https.onRequest((req, res) => {
       // Use provided URLs or fallback to defaults
       const refresh_url = refreshUrl || 'http://localhost:3000/handyman-dashboard?stripe_refresh=true';
       const return_url = returnUrl || 'http://localhost:3000/handyman-dashboard?stripe_onboarding=complete';
-
-      console.log(`Creating account link for account: ${accountId}`);
-      console.log(`Return URL: ${return_url}`);
 
       const accountLink = await stripe.accountLinks.create({
         account: accountId,
@@ -508,20 +499,11 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
         return res.status(403).json({ error: 'Forbidden: Cannot create payment for another user' });
       }
 
-      console.log(`Creating payment intent for job: ${jobId}`);
-      if (handymanId) {
-        console.log(`Handyman already assigned: ${handymanId}`);
-      } else {
-        console.log(`No handyman assigned yet - will be assigned after payment authorization`);
-      }
-
       // Calculate total (service fee + configurable platform fee %)
       const platformFeePercentage = getPlatformFeePercentage();
       const platformFee = calculatePlatformFee(serviceFee);
       const totalAmount = serviceFee + platformFee;
       const amountInCents = dollarsToCents(totalAmount);
-
-      console.log(`Service Fee: $${serviceFee}, Platform Fee: $${platformFee} (${platformFeePercentage * 100}%), Total: $${totalAmount}`);
 
       // Use Firestore transaction to prevent race conditions
       // This ensures atomic check-and-set of payment intent ID
@@ -536,7 +518,6 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
           if (jobDoc.exists && jobDoc.data().paymentIntentId) {
             // Job already has a payment intent - retrieve and return it
             const existingPaymentIntentId = jobDoc.data().paymentIntentId;
-            console.log(`⚠️ Job already has payment intent: ${existingPaymentIntentId}`);
 
             // Note: We can't return from here directly, so we'll set a flag
             paymentIntent = { id: existingPaymentIntentId, isExisting: true };
@@ -605,9 +586,6 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
                 paymentCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 paymentIntentCreating: admin.firestore.FieldValue.delete(), // Remove temporary flag
               });
-              console.log(`✅ Updated job document ${jobId} with payment intent`);
-            } else {
-              console.log(`⚠️ Job document ${jobId} does not exist yet (using temporary ID for testing)`);
             }
           } catch (firestoreError) {
             console.warn(`⚠️ Could not update job document: ${firestoreError.message}`);
@@ -618,8 +596,6 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
         console.error('❌ Transaction error:', transactionError);
         throw new Error(`Failed to check/create payment intent: ${transactionError.message}`);
       }
-
-      console.log(`✅ Payment intent created: ${paymentIntent.id}`);
 
       return res.status(200).json({
         success: true,
@@ -673,8 +649,6 @@ exports.confirmPayment = functions.https.onRequest((req, res) => {
       // SECURITY FIX (Phase 1.2): Validate and sanitize input
       const validatedData = validate(paymentIntentIdSchema)(req.body);
       const { paymentIntentId } = validatedData;
-
-      console.log(`Confirming payment intent: ${paymentIntentId}`);
 
       // Retrieve payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
@@ -834,12 +808,8 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
 
       // TODO (Phase 1): Add role-based authorization - only handyman or admin should release escrow
 
-      console.log(`Releasing escrow and splitting payment for job: ${jobId}`);
-
       // Calculate splits
       const splits = calculateSplits(serviceFee, platformFee);
-
-      console.log(`Split breakdown: Handyman: $${splits.handyman} (100% service fee), Cofounder: $${splits.cofounder} (50% platform fee), Operator: $${splits.operator} (50% platform fee)`);
 
       // Create transfers to all three parties
       const [cofounderTransfer, operatorTransfer, handymanTransfer] = await Promise.all([
@@ -897,8 +867,6 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
         },
       });
 
-      console.log(`✅ Payment split and released successfully`);
-
       return res.status(200).json({
         success: true,
         transfers: {
@@ -955,7 +923,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
     try {
       // Verify authentication
       const decodedToken = await verifyAuthToken(req);
-      console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
 
       // Verify admin authorization - only admins can release escrow
       verifyAdminAccess(decodedToken);
@@ -965,8 +932,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       if (!jobId) {
         return res.status(400).json({ error: 'Missing jobId' });
       }
-
-      console.log(`💰 Releasing escrow for job: ${jobId}`);
 
       // Get job data from Firestore
       const jobDoc = await admin.firestore().collection('jobs').doc(jobId).get();
@@ -1016,20 +981,12 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       const serviceFee = totalAmount / (1 + platformFeePercentage); // Reverse calculate service fee
       const platformFee = totalAmount - serviceFee;
 
-      console.log(`📊 Payment breakdown:`);
-      console.log(`   Total: $${totalAmount}`);
-      console.log(`   Service Fee (to handyman): $${serviceFee.toFixed(2)}`);
-      console.log(`   Platform Fee (retained): $${platformFee.toFixed(2)}`);
-
       // Get payment intent with expanded charge data
       let paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-      console.log(`   Payment Intent Status: ${paymentIntent.status}`);
 
       // Capture payment if it's still in requires_capture state
       if (paymentIntent.status === 'requires_capture') {
-        console.log('📥 Capturing payment...');
         paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
-        console.log('✅ Payment captured');
       } else if (paymentIntent.status !== 'succeeded') {
         return res.status(400).json({
           error: `Cannot release payment with status: ${paymentIntent.status}`,
@@ -1045,7 +1002,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
           message: 'Payment must have a successful charge before transfer.'
         });
       }
-      console.log(`   Charge ID: ${chargeId}`);
 
       // Get charge details to see actual amount after Stripe fees
       const charge = await stripe.charges.retrieve(chargeId);
@@ -1056,20 +1012,13 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       const stripeFee = balanceTransaction.fee / 100; // Convert to dollars
       const netAmount = netAmountCents / 100; // Convert to dollars
 
-      console.log(`   Stripe Fee: $${stripeFee.toFixed(2)}`);
-      console.log(`   Net Amount (after Stripe fee): $${netAmount.toFixed(2)}`);
-
       // Recalculate based on net amount
       // Platform keeps: platformFeePercentage of net amount
       // Handyman gets: remaining net amount
       const platformFeeFromNet = netAmount * platformFeePercentage / (1 + platformFeePercentage);
       const handymanPayout = netAmount - platformFeeFromNet;
 
-      console.log(`   Platform Fee (from net): $${platformFeeFromNet.toFixed(2)}`);
-      console.log(`   Handyman Payout: $${handymanPayout.toFixed(2)}`);
-
       // Transfer to handyman using source_transaction to use funds from this specific charge
-      console.log(`💸 Transferring $${handymanPayout.toFixed(2)} to handyman...`);
       const transfer = await stripe.transfers.create({
         amount: Math.round(handymanPayout * 100), // Convert to cents
         currency: 'sgd',
@@ -1088,8 +1037,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         },
       });
 
-      console.log(`✅ Transfer created: ${transfer.id}`);
-
       // Update job document with detailed payment breakdown
       await admin.firestore().collection('jobs').doc(jobId).update({
         status: 'completed',
@@ -1106,8 +1053,6 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
           platformFee: platformFeeFromNet,
         },
       });
-
-      console.log(`✅ Escrow released successfully for job: ${jobId}`);
 
       return res.status(200).json({
         success: true,
@@ -1170,8 +1115,6 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         return res.status(400).json({ error: 'Missing paymentIntentId' });
       }
 
-      console.log(`Refunding payment: ${paymentIntentId}`);
-
       // Get payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
@@ -1213,8 +1156,6 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         paymentRefundedAt: admin.firestore.FieldValue.serverTimestamp(),
         refundId: refund.id,
       });
-
-      console.log(`✅ Refund created: ${refund.id}`);
 
       return res.status(200).json({
         success: true,
@@ -1262,8 +1203,6 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  console.log(`Received webhook event: ${event.type}`);
-
   try {
     switch (event.type) {
       case 'payment_intent.succeeded':
@@ -1272,7 +1211,6 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
           paymentStatus: 'succeeded',
           paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
         });
-        console.log(`Payment succeeded for job: ${paymentIntent.metadata.jobId}`);
         break;
 
       case 'account.updated':
@@ -1289,17 +1227,16 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
             stripeChargesEnabled: account.charges_enabled,
             stripeLastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
           });
-          console.log(`✅ Account updated for handyman: ${firebaseUid}, Status: ${account.details_submitted ? 'complete' : 'pending'}`);
         }
         break;
 
       case 'transfer.created':
-        const transfer = event.data.object;
-        console.log(`Transfer created: ${transfer.id} for job ${transfer.metadata.jobId}`);
+        // Transfer created - no additional action needed
         break;
 
       default:
-        console.log(`Unhandled event type: ${event.type}`);
+        // Unhandled event type
+        break;
     }
 
     res.json({ received: true });
@@ -1327,9 +1264,6 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
  */
 exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
   try {
-    console.log('📱 WhatsApp webhook received (Green-API)');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
-
     // Only handle POST requests
     if (req.method !== 'POST') {
       return res.status(405).send('Method Not Allowed');
@@ -1345,7 +1279,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     // Only process incoming messages
     if (webhookData.typeWebhook !== 'incomingMessageReceived') {
-      console.log(`ℹ️ Ignoring webhook type: ${webhookData.typeWebhook}`);
       return res.status(200).json({ received: true, processed: false });
     }
 
@@ -1360,12 +1293,9 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     // Extract customer phone from chatId (format: 6591234567@c.us)
     const chatId = senderData.chatId || senderData.sender;
     const customerPhone = chatId.replace('@c.us', '');
-    console.log(`Customer: ${customerPhone}`);
-    console.log(`Message Type: ${messageData.typeMessage}`);
 
     // Handle poll vote updates
     if (messageData.typeMessage === 'pollUpdateMessage') {
-      console.log('📊 Processing poll vote...');
 
       const pollData = messageData.pollMessageData;
       if (!pollData || !pollData.votes) {
@@ -1381,8 +1311,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           break;
         }
       }
-
-      console.log(`Selected option: ${selectedOption}`);
 
       if (!selectedOption) {
         console.warn('⚠️ No option selected in poll');
@@ -1409,7 +1337,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
         if (!snapshot.empty) {
           lockedJobSnapshot = snapshot;
-          console.log(`Found locked job with phone format: ${phoneFormat}`);
           break;
         }
       }
@@ -1420,7 +1347,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         const lockedJobId = lockedJob.id;
         const lockedJobData = lockedJob.data();
 
-        console.log('🔒 Poll vote already locked for job:', lockedJobId);
         await sendGreenApiMessage(
           chatId,
           `ℹ️ Your response has already been recorded.\n\nYour previous selection: ${lockedJobData.status === 'pending_admin_approval' ? '✅ Confirmed' : '⚠️ Issue Reported'}\n\nIf you need to change your response, please contact our support team.\n\nJob ID: ${lockedJobId}`
@@ -1444,7 +1370,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
         if (!snapshot.empty) {
           jobsSnapshot = snapshot;
-          console.log(`Found pending job with phone format: ${phoneFormat}`);
           break;
         }
       }
@@ -1462,13 +1387,9 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       const jobId = jobDoc.id;
       const jobData = jobDoc.data();
 
-      console.log(`Found job to process: ${jobId}`);
-
       // Handle poll response
       if (selectedOption.includes('Confirm') || selectedOption.includes('Yes') || selectedOption.includes('✅')) {
         // Customer confirmed job completion
-        console.log('✅ Customer confirmed job completion via poll');
-
         // Update job status to pending_admin_approval (admin must release funds)
         await admin.firestore().collection('jobs').doc(jobId).update({
           status: 'pending_admin_approval',
@@ -1476,14 +1397,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           confirmedVia: 'whatsapp_poll',
           pollVoteLocked: true  // Lock the vote to prevent changes
         });
-
-        // Log payment release info
-        console.log('💰 Payment pending admin approval');
-        console.log(`Job ID: ${jobId}`);
-        if (jobData.paymentIntentId) {
-          console.log(`Payment Intent ID: ${jobData.paymentIntentId}`);
-        }
-        console.log(`Amount: $${jobData.estimatedBudget}`);
 
         // Send admin notification email
         await sendAdminNotificationEmail(jobData, jobId);
@@ -1494,12 +1407,10 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           `✅ Thank you for confirming!\n\nYour confirmation has been received. The payment will be processed shortly.\n\nJob ID: ${jobId}\n\nWe hope to serve you again! 🔧`
         );
 
-        console.log('✅ Job confirmed, pending admin approval for fund release');
         return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval' });
 
       } else if (selectedOption.includes('Report') || selectedOption.includes('Issue') || selectedOption.includes('No') || selectedOption.includes('⚠️')) {
         // Customer reported an issue
-        console.log('⚠️ Customer reported an issue via poll');
 
         // Update job status to disputed and lock the vote
         await admin.firestore().collection('jobs').doc(jobId).update({
@@ -1511,7 +1422,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         });
 
         // TODO: Send notification to support team
-        console.log('📧 Support team should be notified about dispute');
 
         // Send confirmation message
         await sendGreenApiMessage(
@@ -1519,7 +1429,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           `⚠️ We've received your report.\n\nOur support team will contact you shortly to resolve the issue.\n\nJob ID: ${jobId}`
         );
 
-        console.log('⚠️ Job marked as disputed');
         return res.status(200).json({ received: true, processed: true, action: 'disputed' });
 
       } else {
@@ -1529,13 +1438,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     } else if (messageData.typeMessage === 'textMessage') {
       // Handle text message (could be used for support replies)
-      console.log('💬 Text message received:', messageData.textMessageData?.textMessage);
       // For now, just acknowledge receipt
       return res.status(200).json({ received: true, processed: false, type: 'text' });
 
     } else {
       // Other message types (images, files, etc.)
-      console.log(`ℹ️ Ignoring message type: ${messageData.typeMessage}`);
       return res.status(200).json({ received: true, processed: false });
     }
 
@@ -1575,7 +1482,6 @@ async function sendGreenApiMessage(chatId, message) {
     );
 
     const data = await response.json();
-    console.log('📱 Green-API response:', data);
     return { success: true, data };
   } catch (error) {
     console.error('❌ Error sending Green-API message:', error);
@@ -1605,7 +1511,6 @@ async function sendAdminNotificationEmail(jobData, jobId) {
 
   if (!adminEmail || !smtpHost || !smtpUser || !smtpPass) {
     console.warn('⚠️ Email not configured. Add ADMIN_EMAIL, SMTP_HOST, SMTP_USER, SMTP_PASS to functions/.env');
-    console.log('📧 Would have sent email to admin about job:', jobId);
     return { success: false, error: 'Email not configured' };
   }
 
@@ -1660,7 +1565,6 @@ async function sendAdminNotificationEmail(jobData, jobId) {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log('📧 Admin notification email sent:', info.messageId);
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('❌ Error sending admin email:', error);
@@ -1687,8 +1591,6 @@ exports.cleanupAbandonedJobs = functions.pubsub
   .timeZone('Asia/Singapore')
   .onRun(async () => {
     try {
-      console.log('🧹 Starting cleanup of abandoned jobs...');
-
       // Calculate cutoff time (30 minutes ago)
       const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
       const cutoffTime = admin.firestore.Timestamp.fromDate(thirtyMinutesAgo);
@@ -1701,11 +1603,8 @@ exports.cleanupAbandonedJobs = functions.pubsub
         .get();
 
       if (abandonedJobsSnapshot.empty) {
-        console.log('✅ No abandoned jobs found');
         return null;
       }
-
-      console.log(`Found ${abandonedJobsSnapshot.size} abandoned jobs to delete`);
 
       // Delete abandoned jobs in batch
       const batch = admin.firestore().batch();
@@ -1714,13 +1613,9 @@ exports.cleanupAbandonedJobs = functions.pubsub
       abandonedJobsSnapshot.forEach((doc) => {
         batch.delete(doc.ref);
         deletedJobIds.push(doc.id);
-        console.log(`Deleting abandoned job: ${doc.id}`);
       });
 
       await batch.commit();
-
-      console.log(`✅ Successfully deleted ${deletedJobIds.length} abandoned jobs`);
-      console.log('Deleted job IDs:', deletedJobIds);
 
       return {
         success: true,
