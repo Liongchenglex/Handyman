@@ -1021,14 +1021,14 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       console.log(`   Service Fee (to handyman): $${serviceFee.toFixed(2)}`);
       console.log(`   Platform Fee (retained): $${platformFee.toFixed(2)}`);
 
-      // Get payment intent status
-      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      // Get payment intent with expanded charge data
+      let paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
       console.log(`   Payment Intent Status: ${paymentIntent.status}`);
 
       // Capture payment if it's still in requires_capture state
       if (paymentIntent.status === 'requires_capture') {
         console.log('📥 Capturing payment...');
-        await stripe.paymentIntents.capture(paymentIntentId);
+        paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
         console.log('✅ Payment captured');
       } else if (paymentIntent.status !== 'succeeded') {
         return res.status(400).json({
@@ -1037,33 +1037,74 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         });
       }
 
-      // Transfer service fee to handyman
-      console.log(`💸 Transferring $${serviceFee.toFixed(2)} to handyman...`);
+      // Get the charge ID from the payment intent (needed for source_transaction)
+      const chargeId = paymentIntent.latest_charge;
+      if (!chargeId) {
+        return res.status(400).json({
+          error: 'No charge found for this payment',
+          message: 'Payment must have a successful charge before transfer.'
+        });
+      }
+      console.log(`   Charge ID: ${chargeId}`);
+
+      // Get charge details to see actual amount after Stripe fees
+      const charge = await stripe.charges.retrieve(chargeId);
+      const balanceTransaction = await stripe.balanceTransactions.retrieve(charge.balance_transaction);
+
+      // Net amount after Stripe fees (in cents)
+      const netAmountCents = balanceTransaction.net;
+      const stripeFee = balanceTransaction.fee / 100; // Convert to dollars
+      const netAmount = netAmountCents / 100; // Convert to dollars
+
+      console.log(`   Stripe Fee: $${stripeFee.toFixed(2)}`);
+      console.log(`   Net Amount (after Stripe fee): $${netAmount.toFixed(2)}`);
+
+      // Recalculate based on net amount
+      // Platform keeps: platformFeePercentage of net amount
+      // Handyman gets: remaining net amount
+      const platformFeeFromNet = netAmount * platformFeePercentage / (1 + platformFeePercentage);
+      const handymanPayout = netAmount - platformFeeFromNet;
+
+      console.log(`   Platform Fee (from net): $${platformFeeFromNet.toFixed(2)}`);
+      console.log(`   Handyman Payout: $${handymanPayout.toFixed(2)}`);
+
+      // Transfer to handyman using source_transaction to use funds from this specific charge
+      console.log(`💸 Transferring $${handymanPayout.toFixed(2)} to handyman...`);
       const transfer = await stripe.transfers.create({
-        amount: dollarsToCents(serviceFee),
+        amount: Math.round(handymanPayout * 100), // Convert to cents
         currency: 'sgd',
         destination: handymanAccountId,
+        source_transaction: chargeId, // Links transfer to specific charge - allows immediate transfer
         description: `Payment for job #${jobId} - ${jobData.serviceType}`,
         metadata: {
           jobId: jobId,
           serviceType: jobData.serviceType,
           customerName: jobData.customerName,
-          serviceFee: serviceFee.toFixed(2),
-          platformFee: platformFee.toFixed(2),
+          grossAmount: totalAmount.toFixed(2),
+          stripeFee: stripeFee.toFixed(2),
+          netAmount: netAmount.toFixed(2),
+          handymanPayout: handymanPayout.toFixed(2),
+          platformFee: platformFeeFromNet.toFixed(2),
         },
       });
 
       console.log(`✅ Transfer created: ${transfer.id}`);
 
-      // Update job document
+      // Update job document with detailed payment breakdown
       await admin.firestore().collection('jobs').doc(jobId).update({
         status: 'completed',
         paymentStatus: 'released',
         paymentReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
         paymentReleasedBy: decodedToken.email,
         transferId: transfer.id,
-        transferAmount: serviceFee,
-        platformFeeRetained: platformFee,
+        chargeId: chargeId,
+        paymentBreakdown: {
+          grossAmount: totalAmount,
+          stripeFee: stripeFee,
+          netAmount: netAmount,
+          handymanPayout: handymanPayout,
+          platformFee: platformFeeFromNet,
+        },
       });
 
       console.log(`✅ Escrow released successfully for job: ${jobId}`);
@@ -1071,16 +1112,22 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       return res.status(200).json({
         success: true,
         jobId: jobId,
-        serviceFee: serviceFee,
+        serviceFee: handymanPayout,
         transfer: {
           id: transfer.id,
-          amount: serviceFee,
+          amount: handymanPayout,
           currency: 'sgd',
           destination: handymanAccountId,
         },
         transferId: transfer.id,
-        platformFeeRetained: platformFee,
-        message: `Successfully transferred $${serviceFee.toFixed(2)} to handyman. Platform fee of $${platformFee.toFixed(2)} retained.`
+        paymentBreakdown: {
+          grossAmount: totalAmount,
+          stripeFee: stripeFee,
+          netAmount: netAmount,
+          handymanPayout: handymanPayout,
+          platformFee: platformFeeFromNet,
+        },
+        message: `Successfully transferred $${handymanPayout.toFixed(2)} to handyman. Platform fee of $${platformFeeFromNet.toFixed(2)} retained. Stripe fee was $${stripeFee.toFixed(2)}.`
       });
 
     } catch (error) {
