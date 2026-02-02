@@ -228,7 +228,6 @@ const JobCard = () => {
               <JobActionButtons
                 job={job}
                 variant="full"
-                completionFlow="pending_confirmation"
                 showViewDetails={false}
               />
             ) : (

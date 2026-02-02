@@ -15,7 +15,7 @@ const JobActionButtons = ({
   onStatusChange,
   variant = 'compact',  // 'compact' for lists, 'full' for detail pages
   showViewDetails = true,
-  completionFlow = 'direct' // 'direct' or 'pending_confirmation'
+  completionFlow = 'pending_confirmation' // 'pending_confirmation' (sends WhatsApp) or 'direct' (no notification)
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
