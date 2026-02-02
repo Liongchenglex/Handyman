@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { releaseEscrow } from '../services/stripe/stripeApi';
@@ -17,8 +17,18 @@ const AdminFundRelease = () => {
   const navigate = useNavigate();
   const { user, logout, loading: authLoading } = useAuth();
 
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Tab state
+  const [activeTab, setActiveTab] = useState('pending');
+
+  // Pending jobs state
+  const [pendingJobs, setPendingJobs] = useState([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+
+  // Completed jobs state
+  const [completedJobs, setCompletedJobs] = useState([]);
+  const [loadingCompleted, setLoadingCompleted] = useState(false);
+  const [completedJobsFetched, setCompletedJobsFetched] = useState(false);
+
   const [error, setError] = useState(null);
   const [processingJobId, setProcessingJobId] = useState(null);
 
@@ -48,21 +58,19 @@ const AdminFundRelease = () => {
 
       if (!user) {
         setError('Please log in to access this page');
-        setLoading(false);
+        setLoadingPending(false);
         return;
       }
 
       if (!isAdmin) {
         setError('You do not have permission to access this page');
-        setLoading(false);
+        setLoadingPending(false);
         return;
       }
 
       try {
-        setLoading(true);
+        setLoadingPending(true);
         const jobsRef = collection(db, 'jobs');
-        // Note: Remove orderBy temporarily if index isn't ready
-        // Full query with index: where('status', '==', 'pending_admin_approval'), orderBy('customerConfirmedAt', 'desc')
         const q = query(
           jobsRef,
           where('status', '==', 'pending_admin_approval')
@@ -74,18 +82,62 @@ const AdminFundRelease = () => {
           ...doc.data()
         }));
 
-        setJobs(jobsData);
+        setPendingJobs(jobsData);
         setError(null);
       } catch (err) {
         console.error('Error fetching pending jobs:', err);
         setError('Failed to load pending jobs. Please try again.');
       } finally {
-        setLoading(false);
+        setLoadingPending(false);
       }
     };
 
     fetchPendingJobs();
   }, [user, authLoading, isAdmin]);
+
+  // Fetch completed jobs when tab is clicked
+  const fetchCompletedJobs = async () => {
+    if (completedJobsFetched) return;
+
+    try {
+      setLoadingCompleted(true);
+      const jobsRef = collection(db, 'jobs');
+      const q = query(
+        jobsRef,
+        where('status', '==', 'completed'),
+        where('paymentStatus', '==', 'released'),
+        limit(50)
+      );
+
+      const snapshot = await getDocs(q);
+      const jobsData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // Sort by paymentReleasedAt descending (most recent first)
+      jobsData.sort((a, b) => {
+        const dateA = a.paymentReleasedAt?.toDate?.() || new Date(a.paymentReleasedAt) || new Date(0);
+        const dateB = b.paymentReleasedAt?.toDate?.() || new Date(b.paymentReleasedAt) || new Date(0);
+        return dateB - dateA;
+      });
+
+      setCompletedJobs(jobsData);
+      setCompletedJobsFetched(true);
+    } catch (err) {
+      console.error('Error fetching completed jobs:', err);
+    } finally {
+      setLoadingCompleted(false);
+    }
+  };
+
+  // Handle tab change
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab === 'completed' && !completedJobsFetched) {
+      fetchCompletedJobs();
+    }
+  };
 
   // Handle fund release approval
   const handleApprove = async (job) => {
@@ -96,16 +148,23 @@ const AdminFundRelease = () => {
     setProcessingJobId(job.id);
 
     try {
-      // Call the releaseEscrow function which:
-      // 1. Captures the payment (if not already captured)
-      // 2. Transfers service fee to handyman's connected Stripe account
-      // 3. Updates job status to 'completed' with payment details
       const result = await releaseEscrow(job.id);
 
-      // Remove from list on success
-      setJobs(jobs.filter(j => j.id !== job.id));
+      // Remove from pending list and add to completed
+      setPendingJobs(pendingJobs.filter(j => j.id !== job.id));
 
-      alert(`Funds released successfully!\n\nService Fee: $${result.serviceFee}\nTransfer ID: ${result.transferId}`);
+      // Add to completed jobs list with updated data
+      const completedJob = {
+        ...job,
+        status: 'completed',
+        paymentStatus: 'released',
+        paymentReleasedAt: new Date(),
+        paymentBreakdown: result.paymentBreakdown,
+        transferId: result.transferId,
+      };
+      setCompletedJobs([completedJob, ...completedJobs]);
+
+      alert(`Funds released successfully!\n\nHandyman Payout: $${result.serviceFee?.toFixed(2)}\nTransfer ID: ${result.transferId}`);
     } catch (err) {
       console.error('Error releasing escrow:', err);
       const errorMessage = err.response?.data?.error || err.message || 'Unknown error';
@@ -116,9 +175,11 @@ const AdminFundRelease = () => {
   };
 
   // Format date helper
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleString('en-SG', {
+  const formatDate = (dateValue) => {
+    if (!dateValue) return 'N/A';
+    // Handle Firestore Timestamp
+    const date = dateValue?.toDate?.() || new Date(dateValue);
+    return date.toLocaleString('en-SG', {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
@@ -128,7 +189,7 @@ const AdminFundRelease = () => {
   };
 
   // Loading state
-  if (authLoading || loading) {
+  if (authLoading || loadingPending) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <LoadingSpinner />
@@ -199,123 +260,260 @@ const AdminFundRelease = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Fund Release Approval
+                Fund Release Management
               </h1>
               <p className="text-gray-600 dark:text-gray-400">
                 Review and approve customer-confirmed job completions
               </p>
             </div>
-            <div className="flex items-center gap-2 bg-amber-100 dark:bg-amber-900/30 px-4 py-2 rounded-lg">
-              <span className="material-symbols-outlined text-amber-600 dark:text-amber-400">
-                pending
-              </span>
-              <span className="font-semibold text-amber-700 dark:text-amber-300">
-                {jobs.length} Pending
-              </span>
-            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="mt-6 flex gap-2">
+            <button
+              onClick={() => handleTabChange('pending')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
+                activeTab === 'pending'
+                  ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              <span className="material-symbols-outlined text-lg">pending</span>
+              Pending
+              {pendingJobs.length > 0 && (
+                <span className="ml-1 px-2 py-0.5 bg-amber-500 text-white text-xs rounded-full">
+                  {pendingJobs.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => handleTabChange('completed')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
+                activeTab === 'completed'
+                  ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              <span className="material-symbols-outlined text-lg">check_circle</span>
+              Completed
+              {completedJobs.length > 0 && (
+                <span className="ml-1 px-2 py-0.5 bg-green-500 text-white text-xs rounded-full">
+                  {completedJobs.length}
+                </span>
+              )}
+            </button>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-8">
-        {jobs.length === 0 ? (
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-12 text-center">
-            <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-              <span className="material-symbols-outlined text-4xl text-green-600 dark:text-green-400">
-                check_circle
-              </span>
-            </div>
-            <h3 className="text-xl font-bold mb-2">All Clear!</h3>
-            <p className="text-gray-600 dark:text-gray-400">
-              No jobs pending fund release approval.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {jobs.map((job) => (
-              <div
-                key={job.id}
-                className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                  {/* Job Info */}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                        {job.serviceType}
-                      </h3>
-                      <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full text-xs font-medium">
-                        Pending Approval
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400">Job ID:</span>
-                        <p className="font-medium text-gray-900 dark:text-white">{job.id}</p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400">Customer:</span>
-                        <p className="font-medium text-gray-900 dark:text-white">{job.customerName}</p>
-                        <p className="text-gray-500 dark:text-gray-400 text-xs">{job.customerPhone}</p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400">Handyman:</span>
-                        <p className="font-medium text-gray-900 dark:text-white">{job.handymanName || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500 dark:text-gray-400">Amount:</span>
-                        <p className="font-bold text-lg text-green-600 dark:text-green-400">
-                          ${job.estimatedBudget}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
-                      <span>Completed: {formatDate(job.completedAt)}</span>
-                      <span>Customer Confirmed: {formatDate(job.customerConfirmedAt)}</span>
-                      <span>Via: {job.confirmedVia || 'N/A'}</span>
-                    </div>
-                  </div>
-
-                  {/* Action Button */}
-                  <div>
-                    <button
-                      onClick={() => handleApprove(job)}
-                      disabled={processingJobId === job.id}
-                      className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                    >
-                      {processingJobId === job.id ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <span className="material-symbols-outlined text-sm">payments</span>
-                          Release Funds
-                        </>
-                      )}
-                    </button>
-                  </div>
+        {/* Pending Tab Content */}
+        {activeTab === 'pending' && (
+          <>
+            {pendingJobs.length === 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-12 text-center">
+                <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-4xl text-green-600 dark:text-green-400">
+                    check_circle
+                  </span>
                 </div>
+                <h3 className="text-xl font-bold mb-2">All Clear!</h3>
+                <p className="text-gray-600 dark:text-gray-400">
+                  No jobs pending fund release approval.
+                </p>
               </div>
-            ))}
-          </div>
+            ) : (
+              <div className="space-y-4">
+                {pendingJobs.map((job) => (
+                  <div
+                    key={job.id}
+                    className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                      {/* Job Info */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                            {job.serviceType}
+                          </h3>
+                          <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full text-xs font-medium">
+                            Pending Approval
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Job ID:</span>
+                            <p className="font-medium text-gray-900 dark:text-white truncate">{job.id}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Customer:</span>
+                            <p className="font-medium text-gray-900 dark:text-white">{job.customerName}</p>
+                            <p className="text-gray-500 dark:text-gray-400 text-xs">{job.customerPhone}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Handyman:</span>
+                            <p className="font-medium text-gray-900 dark:text-white">{job.handymanName || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Amount:</span>
+                            <p className="font-bold text-lg text-green-600 dark:text-green-400">
+                              ${job.estimatedBudget}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                          <span>Completed: {formatDate(job.completedAt)}</span>
+                          <span>Customer Confirmed: {formatDate(job.customerConfirmedAt)}</span>
+                          <span>Via: {job.confirmedVia || 'N/A'}</span>
+                        </div>
+                      </div>
+
+                      {/* Action Button */}
+                      <div>
+                        <button
+                          onClick={() => handleApprove(job)}
+                          disabled={processingJobId === job.id}
+                          className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {processingJobId === job.id ? (
+                            <>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                              Processing...
+                            </>
+                          ) : (
+                            <>
+                              <span className="material-symbols-outlined text-sm">payments</span>
+                              Release Funds
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Legend */}
+            <div className="mt-8 bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 text-sm">
+              <h4 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">How this works:</h4>
+              <ol className="list-decimal list-inside space-y-1 text-blue-800 dark:text-blue-200">
+                <li>Handyman marks job as complete</li>
+                <li>Customer receives WhatsApp poll to confirm</li>
+                <li>Customer confirms via poll (vote is locked)</li>
+                <li>Job appears here for admin review</li>
+                <li>Admin approves → funds released to handyman</li>
+              </ol>
+            </div>
+          </>
         )}
 
-        {/* Legend */}
-        <div className="mt-8 bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 text-sm">
-          <h4 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">How this works:</h4>
-          <ol className="list-decimal list-inside space-y-1 text-blue-800 dark:text-blue-200">
-            <li>Handyman marks job as complete</li>
-            <li>Customer receives WhatsApp poll to confirm</li>
-            <li>Customer confirms via poll (vote is locked)</li>
-            <li>Job appears here for admin review</li>
-            <li>Admin approves → funds released to handyman</li>
-          </ol>
-        </div>
+        {/* Completed Tab Content */}
+        {activeTab === 'completed' && (
+          <>
+            {loadingCompleted ? (
+              <div className="flex justify-center py-12">
+                <LoadingSpinner />
+              </div>
+            ) : completedJobs.length === 0 ? (
+              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-12 text-center">
+                <div className="w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <span className="material-symbols-outlined text-4xl text-gray-400">
+                    history
+                  </span>
+                </div>
+                <h3 className="text-xl font-bold mb-2">No Completed Jobs</h3>
+                <p className="text-gray-600 dark:text-gray-400">
+                  Completed jobs with released funds will appear here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {completedJobs.map((job) => (
+                  <div
+                    key={job.id}
+                    className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
+                  >
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                      {/* Job Info */}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                            {job.serviceType}
+                          </h3>
+                          <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-xs font-medium">
+                            Completed
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Job ID:</span>
+                            <p className="font-medium text-gray-900 dark:text-white truncate">{job.id}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Customer:</span>
+                            <p className="font-medium text-gray-900 dark:text-white">{job.customerName}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Handyman:</span>
+                            <p className="font-medium text-gray-900 dark:text-white">{job.handymanName || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 dark:text-gray-400">Gross Amount:</span>
+                            <p className="font-bold text-lg text-gray-900 dark:text-white">
+                              ${job.estimatedBudget}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Payment Breakdown */}
+                        {job.paymentBreakdown && (
+                          <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+                            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">Payment Breakdown</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Gross:</span>
+                                <p className="font-medium">${job.paymentBreakdown.grossAmount?.toFixed(2)}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Stripe Fee:</span>
+                                <p className="font-medium text-red-600">-${job.paymentBreakdown.stripeFee?.toFixed(2)}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Net:</span>
+                                <p className="font-medium">${job.paymentBreakdown.netAmount?.toFixed(2)}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Handyman:</span>
+                                <p className="font-medium text-green-600">${job.paymentBreakdown.handymanPayout?.toFixed(2)}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Platform:</span>
+                                <p className="font-medium text-blue-600">${job.paymentBreakdown.platformFee?.toFixed(2)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                          <span>Released: {formatDate(job.paymentReleasedAt)}</span>
+                          <span>Released By: {job.paymentReleasedBy || 'N/A'}</span>
+                          {job.transferId && (
+                            <span className="font-mono">Transfer: {job.transferId}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
