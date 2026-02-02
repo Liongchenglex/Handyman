@@ -590,23 +590,21 @@ const total = getTotalAmount(serviceFee);         // 132
 ## Job Status Lifecycle
 
 ```
-pending
-  ↓
-  [Handyman accepts job]
-  ↓
-assigned
-  ↓
-  [Handyman starts work]
-  ↓
+pending (job created, payment authorized)
+  ↓ [Handyman accepts job]
+accepted
+  ↓ [Handyman starts work]
 in_progress
-  ↓
-  [Handyman marks complete]
-  ↓
-completed
-  ↓
-  [Customer confirms OR 3 days pass]
-  ↓
-payment_released
+  ↓ [Handyman marks complete]
+pending_confirmation (awaiting customer WhatsApp poll)
+  ↓ [Customer confirms via poll - YES]
+pending_admin_approval (awaiting admin fund release)
+  ↓ [Admin approves]
+completed (funds released)
+
+Alternative paths:
+- Customer votes NO → disputed
+- Job cancelled → cancelled
 ```
 
 ### Status Definitions
@@ -614,13 +612,13 @@ payment_released
 | Status | Description | Next Step | Who Can Update |
 |--------|-------------|-----------|----------------|
 | `pending` | Job created, awaiting handyman | Handyman accepts | System |
-| `assigned` | Handyman accepted, not started | Handyman starts work | Handyman |
-| `in_progress` | Work in progress | Handyman completes | Handyman |
-| `completed` | Handyman finished | Customer confirms | Handyman |
-| `confirmed` | Customer confirmed completion | Payment release | Customer |
-| `payment_released` | Payment split to all parties | - | System |
+| `accepted` | Handyman assigned, not started | Handyman starts work | Handyman |
+| `in_progress` | Work in progress | Handyman marks complete | Handyman |
+| `pending_confirmation` | Awaiting customer WhatsApp poll | Customer votes | Webhook |
+| `pending_admin_approval` | Customer confirmed, awaiting admin | Admin releases funds | Admin |
+| `completed` | Job done, funds released | - | Admin |
+| `disputed` | Issue reported by customer | Admin review | Webhook |
 | `cancelled` | Job cancelled | - | Customer/Admin |
-| `disputed` | Issue reported | Admin review | Customer/Handyman |
 
 ---
 
@@ -786,5 +784,5 @@ const handlePhotoUpload = async (file) => {
 
 ---
 
-**Last Updated:** 2025-12-11
-**Status:** ✅ Fully Implemented and Production-Ready
+**Last Updated:** 2026-02-02
+**Status:** ✅ Fully Implemented - Includes WhatsApp notifications and admin approval flow

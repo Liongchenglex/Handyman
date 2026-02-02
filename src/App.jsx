@@ -13,6 +13,7 @@ import HandymanAuthPage from './pages/HandymanAuth';
 import HandymanRegistrationPage from './pages/HandymanRegistration';
 import HandymanDashboard from './pages/HandymanDashboard';
 import ApproveHandyman from './pages/ApproveHandyman';
+import AdminFundRelease from './pages/AdminFundRelease';
 import JobCard from './components/handyman/JobCard';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
@@ -25,11 +26,15 @@ function AppContent() {
   const isHomePage = location.pathname === '/';
   const isHandymanFlow = location.pathname.startsWith('/handyman');
   const isJobDetailsPage = location.pathname.startsWith('/job-details');
+  const isAdminPage = location.pathname.startsWith('/admin');
+
+  // Pages that use their own layout (no header/footer)
+  const hasCustomLayout = isHomePage || isHandymanFlow || isJobDetailsPage || isAdminPage;
 
   return (
     <div className="App">
-      {!isHomePage && !isHandymanFlow && !isJobDetailsPage && <Header />}
-      <main className={isHomePage || isHandymanFlow || isJobDetailsPage ? '' : 'main-content'}>
+      {!hasCustomLayout && <Header />}
+      <main className={hasCustomLayout ? '' : 'main-content'}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/request-job" element={<CustomerJobRequest />} />
@@ -39,12 +44,13 @@ function AppContent() {
           <Route path="/handyman-registration" element={<HandymanRegistrationPage />} />
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
           <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
+          <Route path="/admin/fund-release" element={<AdminFundRelease />} />
           <Route path="/job-details/:jobId" element={<JobCard />} />
           {/* <Route path="/jobs" element={<JobBoard />} /> */}
           {/* <Route path="/jobs/:id" element={<JobDetails />} /> */}
         </Routes>
       </main>
-      {!isHomePage && !isHandymanFlow && !isJobDetailsPage && <Footer />}
+      {!hasCustomLayout && <Footer />}
     </div>
   );
 }

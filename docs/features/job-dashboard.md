@@ -9,19 +9,22 @@ Handyman dashboard showing available jobs, current jobs, profile, and earnings. 
 ✅ **Implemented**
 - Status-based dashboard views (pending/approved/rejected/suspended)
 - Job board for available jobs
-- Job card component
+- Job card component with full details
 - Profile view
 - My Jobs view
-- Express interest in jobs
+- Express interest in jobs (auto-assigns handyman)
 - Stripe onboarding prompt
+- Start job functionality
+- Mark job complete with WhatsApp notification
+- Job action buttons (Start Work, Mark Complete)
+- WhatsApp poll-based customer confirmation
+- Admin fund release approval page
 
 ❌ **Not Implemented**
-- Job acceptance flow
-- Start job functionality
-- Mark job complete
 - Earnings tracking
 - Ratings and reviews display
 - Job filtering and search
+- Automatic Stripe fund transfer
 
 ---
 
@@ -292,25 +295,99 @@ Update Firestore:
 Notify customer: "Handyman has arrived"
 ```
 
-### Mark Complete
+### Mark Complete (Implemented)
 
 ```
 Handyman clicks "Mark Complete"
   ↓
+JobActionButtons.jsx (completionFlow="pending_confirmation")
+  ↓
 Update Firestore:
   → jobs/{jobId}:
-      status: "completed"
+      status: "pending_confirmation"
       completedAt: Timestamp
+      completedBy: { uid, name, email }
   ↓
-Request customer confirmation
-  → Email + WhatsApp with buttons:
-      [Confirm Completion] [Report Issue]
+Send WhatsApp notification via Green-API:
+  → sendJobCompletionNotification(job, handymanInfo)
+  → Customer receives text message + poll
   ↓
-IF customer confirms OR 3 days pass:
-  → Capture payment
-  → Release escrow
-  → Split payment 3-way
+Poll options:
+  - ✅ Yes, Confirm Complete
+  - ⚠️ No, Report Issue
+  ↓
+Customer votes on WhatsApp poll
+  → Green-API webhook receives vote
+  → Vote is locked (pollVoteLocked: true)
+  ↓
+IF "Yes, Confirm":
+  → status: "pending_admin_approval"
+  → customerConfirmedAt: Timestamp
+  → confirmedVia: "whatsapp_poll"
+  ↓
+IF "No, Report Issue":
+  → status: "disputed"
+  → disputedAt: Timestamp
+  ↓
+Admin visits /admin/fund-release
+  → Reviews pending jobs
+  → Clicks "Release Funds"
+  → status: "completed"
+  → adminApprovedAt: Timestamp
+  ↓
+(Future) Trigger Stripe fund transfer
 ```
+
+---
+
+## Job Status Lifecycle
+
+```
+pending (job created, payment authorized)
+  ↓ [Handyman accepts]
+accepted
+  ↓ [Handyman clicks "Start Work"]
+in_progress
+  ↓ [Handyman clicks "Mark Complete"]
+pending_confirmation (awaiting customer WhatsApp poll)
+  ↓ [Customer confirms via poll]
+pending_admin_approval (awaiting admin fund release)
+  ↓ [Admin approves]
+completed (job done, funds released)
+
+Alternative paths:
+- Customer votes NO → disputed
+- Job cancelled → cancelled
+```
+
+### Status Definitions
+
+| Status | Description | Next Action | Who Updates |
+|--------|-------------|-------------|-------------|
+| `pending` | Job created, awaiting handyman | Handyman accepts | System |
+| `accepted` | Handyman assigned, not started | Start Work button | Handyman |
+| `in_progress` | Work in progress | Mark Complete button | Handyman |
+| `pending_confirmation` | Awaiting customer poll response | Customer votes | Webhook |
+| `pending_admin_approval` | Customer confirmed, awaiting admin | Release Funds button | Admin |
+| `completed` | Job done, funds released | - | Admin |
+| `disputed` | Issue reported | Admin review | Webhook/Admin |
+| `cancelled` | Job cancelled | - | Customer/Admin |
+
+---
+
+## Admin Fund Release Page
+
+**Route:** `/admin/fund-release`
+
+**Access:** Restricted to emails in ADMIN_EMAILS array
+
+**Features:**
+- Lists jobs with `status: pending_admin_approval`
+- Shows job details (service, customer, amount)
+- "Release Funds" button to approve
+- Updates status to `completed`
+
+**File:** `/src/pages/AdminFundRelease.jsx`
 
 ---
 
@@ -323,5 +400,5 @@ IF customer confirms OR 3 days pass:
 
 ---
 
-**Last Updated:** 2025-12-11
-**Status:** ✅ Core dashboard implemented - Job actions pending
+**Last Updated:** 2026-02-02
+**Status:** ✅ Fully implemented - Includes job actions and WhatsApp confirmation flow

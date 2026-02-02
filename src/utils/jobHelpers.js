@@ -56,8 +56,12 @@ export const getStatusColor = (status) => {
       return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
     case 'pending_confirmation':
       return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400';
+    case 'pending_admin_approval':
+      return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
     case 'completed':
       return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+    case 'disputed':
+      return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
     case 'cancelled':
       return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
     default:
@@ -78,8 +82,12 @@ export const getStatusText = (status) => {
       return 'In Progress';
     case 'pending_confirmation':
       return 'Awaiting Confirmation';
+    case 'pending_admin_approval':
+      return 'Pending Fund Release';
     case 'completed':
       return 'Completed';
+    case 'disputed':
+      return 'Disputed';
     case 'cancelled':
       return 'Cancelled';
     default:

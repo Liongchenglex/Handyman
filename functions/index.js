@@ -1148,7 +1148,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         return res.status(200).json({ received: true, processed: false });
       }
 
-      // Find the most recent pending_confirmation job for this customer
       // Try multiple phone formats since customer might have stored different format
       const phoneFormats = [
         customerPhone,
@@ -1156,9 +1155,46 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone
       ];
 
+      // STEP 1: First check if there's already a locked job (vote already processed)
+      // This catches users trying to change their vote after it was recorded
+      let lockedJobSnapshot = null;
+      for (const phoneFormat of phoneFormats) {
+        const snapshot = await admin.firestore().collection('jobs')
+          .where('customerPhone', '==', phoneFormat)
+          .where('pollVoteLocked', '==', true)
+          .orderBy('customerConfirmedAt', 'desc')
+          .limit(1)
+          .get();
+
+        if (!snapshot.empty) {
+          lockedJobSnapshot = snapshot;
+          console.log(`Found locked job with phone format: ${phoneFormat}`);
+          break;
+        }
+      }
+
+      // If we found a locked job, tell user their vote is already recorded
+      if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
+        const lockedJob = lockedJobSnapshot.docs[0];
+        const lockedJobId = lockedJob.id;
+        const lockedJobData = lockedJob.data();
+
+        console.log('🔒 Poll vote already locked for job:', lockedJobId);
+        await sendGreenApiMessage(
+          chatId,
+          `ℹ️ Your response has already been recorded.\n\nYour previous selection: ${lockedJobData.status === 'pending_admin_approval' ? '✅ Confirmed' : '⚠️ Issue Reported'}\n\nIf you need to change your response, please contact our support team.\n\nJob ID: ${lockedJobId}`
+        );
+        return res.status(200).json({
+          received: true,
+          processed: false,
+          reason: 'Vote already locked'
+        });
+      }
+
+      // STEP 2: Look for jobs pending confirmation (first-time votes)
       let jobsSnapshot = null;
       for (const phoneFormat of phoneFormats) {
-        const snapshot = await db.collection('jobs')
+        const snapshot = await admin.firestore().collection('jobs')
           .where('customerPhone', '==', phoneFormat)
           .where('status', '==', 'pending_confirmation')
           .orderBy('completedAt', 'desc')
@@ -1167,14 +1203,13 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
         if (!snapshot.empty) {
           jobsSnapshot = snapshot;
-          console.log(`Found job with phone format: ${phoneFormat}`);
+          console.log(`Found pending job with phone format: ${phoneFormat}`);
           break;
         }
       }
 
       if (!jobsSnapshot || jobsSnapshot.empty) {
         console.warn('⚠️ No pending job found for customer:', customerPhone);
-        // Could send a message back via Green-API here if needed
         return res.status(200).json({
           received: true,
           processed: false,
@@ -1186,47 +1221,52 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       const jobId = jobDoc.id;
       const jobData = jobDoc.data();
 
-      console.log(`Found job: ${jobId}`);
+      console.log(`Found job to process: ${jobId}`);
 
       // Handle poll response
       if (selectedOption.includes('Confirm') || selectedOption.includes('Yes') || selectedOption.includes('✅')) {
         // Customer confirmed job completion
         console.log('✅ Customer confirmed job completion via poll');
 
-        // Update job status to completed
-        await db.collection('jobs').doc(jobId).update({
-          status: 'completed',
+        // Update job status to pending_admin_approval (admin must release funds)
+        await admin.firestore().collection('jobs').doc(jobId).update({
+          status: 'pending_admin_approval',
           customerConfirmedAt: new Date().toISOString(),
-          confirmedVia: 'whatsapp_poll'
+          confirmedVia: 'whatsapp_poll',
+          pollVoteLocked: true  // Lock the vote to prevent changes
         });
 
         // Log payment release info
-        console.log('💰 Payment release required');
+        console.log('💰 Payment pending admin approval');
         console.log(`Job ID: ${jobId}`);
         if (jobData.paymentIntentId) {
           console.log(`Payment Intent ID: ${jobData.paymentIntentId}`);
         }
         console.log(`Amount: $${jobData.estimatedBudget}`);
 
+        // Send admin notification email
+        await sendAdminNotificationEmail(jobData, jobId);
+
         // Send confirmation message via Green-API
         await sendGreenApiMessage(
           chatId,
-          `✅ Thank you for confirming!\n\nYour payment of $${jobData.estimatedBudget} has been released to the handyman.\n\nWe hope to serve you again! 🔧`
+          `✅ Thank you for confirming!\n\nYour confirmation has been received. The payment will be processed shortly.\n\nJob ID: ${jobId}\n\nWe hope to serve you again! 🔧`
         );
 
-        console.log('✅ Job confirmed and payment logged for release');
-        return res.status(200).json({ received: true, processed: true, action: 'confirmed' });
+        console.log('✅ Job confirmed, pending admin approval for fund release');
+        return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval' });
 
       } else if (selectedOption.includes('Report') || selectedOption.includes('Issue') || selectedOption.includes('No') || selectedOption.includes('⚠️')) {
         // Customer reported an issue
         console.log('⚠️ Customer reported an issue via poll');
 
-        // Update job status to disputed
-        await db.collection('jobs').doc(jobId).update({
+        // Update job status to disputed and lock the vote
+        await admin.firestore().collection('jobs').doc(jobId).update({
           status: 'disputed',
           disputedAt: new Date().toISOString(),
           disputedVia: 'whatsapp_poll',
-          disputeReason: 'Customer reported issue via WhatsApp poll'
+          disputeReason: 'Customer reported issue via WhatsApp poll',
+          pollVoteLocked: true  // Lock the vote to prevent changes
         });
 
         // TODO: Send notification to support team
@@ -1298,6 +1338,91 @@ async function sendGreenApiMessage(chatId, message) {
     return { success: true, data };
   } catch (error) {
     console.error('❌ Error sending Green-API message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Helper function to send admin notification email
+ * Used when a job status changes to pending_admin_approval
+ *
+ * Reads from environment variables (functions/.env):
+ * - ADMIN_EMAIL - Email address to receive notifications
+ * - SMTP_HOST - SMTP server host (e.g., smtp.gmail.com)
+ * - SMTP_PORT - SMTP port (e.g., 587)
+ * - SMTP_USER - SMTP username/email
+ * - SMTP_PASS - SMTP password or app password
+ */
+async function sendAdminNotificationEmail(jobData, jobId) {
+  const nodemailer = require('nodemailer');
+
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = process.env.SMTP_PORT || 587;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+
+  if (!adminEmail || !smtpHost || !smtpUser || !smtpPass) {
+    console.warn('⚠️ Email not configured. Add ADMIN_EMAIL, SMTP_HOST, SMTP_USER, SMTP_PASS to functions/.env');
+    console.log('📧 Would have sent email to admin about job:', jobId);
+    return { success: false, error: 'Email not configured' };
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass
+      }
+    });
+
+    const adminUrl = 'https://eazydone-d06cf.web.app/admin/fund-release';
+
+    const mailOptions = {
+      from: `"EazyDone System" <${smtpUser}>`,
+      to: adminEmail,
+      subject: `💰 Fund Release Required: ${jobData.serviceType} - $${jobData.estimatedBudget}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: #FFD60A; padding: 20px; text-align: center;">
+            <h1 style="margin: 0; color: #000;">Fund Release Required</h1>
+          </div>
+          <div style="background: #f9f9f9; padding: 30px;">
+            <p>A customer has confirmed job completion. Please review and approve the fund release.</p>
+
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #333;">Job Details</h3>
+              <p><strong>Job ID:</strong> ${jobId}</p>
+              <p><strong>Service:</strong> ${jobData.serviceType}</p>
+              <p><strong>Customer:</strong> ${jobData.customerName}</p>
+              <p><strong>Phone:</strong> ${jobData.customerPhone}</p>
+              <p><strong>Amount:</strong> <span style="color: green; font-size: 1.2em; font-weight: bold;">$${jobData.estimatedBudget}</span></p>
+              <p><strong>Confirmed Via:</strong> WhatsApp Poll</p>
+              <p><strong>Confirmed At:</strong> ${new Date().toLocaleString('en-SG')}</p>
+            </div>
+
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${adminUrl}" style="display: inline-block; padding: 15px 30px; background: #22c55e; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                Review & Approve Fund Release
+              </a>
+            </div>
+
+            <p style="color: #666; font-size: 12px;">
+              This is an automated notification from EazyDone.
+            </p>
+          </div>
+        </div>
+      `
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log('📧 Admin notification email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('❌ Error sending admin email:', error);
     return { success: false, error: error.message };
   }
 }

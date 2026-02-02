@@ -1,211 +1,333 @@
-# WhatsApp Notifications (Twilio)
+# WhatsApp Notifications (Green-API)
 
 ## Overview
 
-Twilio WhatsApp API integration for sending notifications to customers and handymen about job updates.
+Green-API WhatsApp integration for sending notifications to customers about job updates, including poll-based confirmation for job completion.
 
 ## Current Implementation Status
 
 ✅ **Implemented**
-- Twilio WhatsApp API integration
-- Template message support
+- Green-API WhatsApp integration
+- Text message sending
+- Poll-based job confirmation
 - Phone number formatting (Singapore)
-- Configuration check
-- Fallback logging when not configured
-
-❌ **Not Implemented**
-- Content templates (to be created in Twilio Console)
 - Job creation notifications
 - Job acceptance notifications
-- Job completion notifications
-- Webhook handling for customer replies (status callbacks)
-- Interactive buttons and media messages
+- Job completion notifications with poll
+- Webhook for poll vote handling
+- Poll vote locking (prevents vote changes)
+- Admin approval workflow for fund release
+
+❌ **Not Implemented**
+- Email notification to admin (SMTP config needed)
+- Automatic fund transfer on admin approval
 
 ---
 
 ## Key Files
 
-**`/src/services/whatsappService.js`** - Main WhatsApp service
-- `sendTemplateMessage(to, contentSid, contentVariables)` - Send template message
-- `sendMessage(to, body)` - Send simple text message
-- `formatPhoneNumber(phone)` - Format for Twilio API (E.164 format)
-- `isWhatsAppConfigured()` - Check if Twilio is configured
+**`/src/services/whatsappService.js`** - Frontend WhatsApp service
+- `sendTextMessage(to, message)` - Send text message
+- `sendPoll(to, pollName, options)` - Send poll
+- `formatPhoneNumber(phone)` - Format for Green-API (`{digits}@c.us`)
+- `isWhatsAppConfigured()` - Check if Green-API is configured
+- `sendJobCreationNotification(jobData)` - Send job created notification
+- `sendJobAcceptanceNotification(job, handymanInfo)` - Send job accepted notification
+- `sendJobCompletionNotification(job, handymanInfo)` - Send completion poll
 
-**Environment Variables:**
+**`/functions/index.js`** - Webhook handler
+- `whatsappWebhook` - Handles incoming poll votes
+- `sendGreenApiMessage(chatId, message)` - Helper to send messages from webhook
+- `sendAdminNotificationEmail(jobData, jobId)` - Send email to admin (optional)
+
+**Environment Variables (Frontend - `.env.local`):**
 ```env
-REACT_APP_TWILIO_ACCOUNT_SID=ACxxxxx
-REACT_APP_TWILIO_AUTH_TOKEN=xxxxx
-REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+REACT_APP_GREENAPI_API_URL=https://api.green-api.com
+REACT_APP_GREENAPI_ID_INSTANCE=your_instance_id
+REACT_APP_GREENAPI_API_TOKEN=your_api_token
+```
+
+**Environment Variables (Functions - `functions/.env`):**
+```env
+GREENAPI_API_URL=https://api.green-api.com
+GREENAPI_ID_INSTANCE=your_instance_id
+GREENAPI_API_TOKEN=your_api_token
 ```
 
 ---
 
-## Usage
+## Message Flow
 
-### Send Template Message
-
-```javascript
-import { sendTemplateMessage } from './services/whatsappService';
-
-// Send template with Content API (variables are injected into template)
-const contentVariables = {
-  '1': 'John Doe',           // Customer name
-  '2': 'Plumbing Repair',    // Job title
-  '3': '$150.00'             // Amount
-};
-
-await sendTemplateMessage(
-  '+6591234567',
-  'HXxxxxx',  // Content SID from Twilio Console
-  contentVariables
-);
+### 1. Job Created (After Payment)
+```
+Customer completes payment
+  ↓
+JobRequestForm.jsx calls sendJobCreationNotification()
+  ↓
+Customer receives WhatsApp message:
+  "Hi [Name]! 👋
+   Your job request has been posted successfully! ✅
+   📋 Service: [Service Type]
+   💰 Amount: $[Amount]
+   🔖 Job ID: [ID]
+   A qualified handyman will accept your job shortly..."
 ```
 
-### Send Simple Text Message
-
-```javascript
-import { sendMessage } from './services/whatsappService';
-
-// Send plain text message (for follow-ups after 24-hour window)
-await sendMessage('+6591234567', 'Your job has been updated!');
+### 2. Job Accepted (Handyman Accepts)
+```
+Handyman clicks "Express Interest" / Accept
+  ↓
+ExpressInterestButton.jsx calls sendJobAcceptanceNotification()
+  ↓
+Customer receives WhatsApp message:
+  "Great news, [Name]! 🎉
+   [Handyman Name] has accepted your job request!
+   📋 Service: [Service Type]
+   🔖 Job ID: [ID]
+   The handyman will contact you shortly..."
 ```
 
-### Phone Number Formatting
+### 3. Job Completed (Handyman Marks Complete)
+```
+Handyman clicks "Mark Complete"
+  ↓
+JobActionButtons.jsx calls sendJobCompletionNotification()
+  ↓
+Job status → pending_confirmation
+  ↓
+Customer receives:
+  1. Text message about completion
+  2. Poll: "Is the job completed satisfactorily?"
+     - ✅ Yes, Confirm Complete
+     - ⚠️ No, Report Issue
+```
+
+### 4. Customer Confirms via Poll
+```
+Customer votes on WhatsApp poll
+  ↓
+Green-API sends webhook to Cloud Function
+  ↓
+whatsappWebhook processes vote:
+  - First vote is locked (pollVoteLocked: true)
+  - Subsequent votes ignored with message
+  ↓
+IF "Yes, Confirm":
+  → Job status → pending_admin_approval
+  → Customer receives confirmation message
+  → (Optional) Admin receives email notification
+  ↓
+IF "No, Report Issue":
+  → Job status → disputed
+  → Customer receives acknowledgment
+  → Support team notified
+```
+
+### 5. Admin Approves Fund Release
+```
+Admin visits /admin/fund-release
+  ↓
+Reviews jobs with status: pending_admin_approval
+  ↓
+Clicks "Release Funds"
+  ↓
+Job status → completed
+  ↓
+(Future) Trigger Stripe fund transfer
+```
+
+---
+
+## Job Status Lifecycle
+
+```
+pending (job created, awaiting handyman)
+  ↓ [Handyman accepts]
+accepted
+  ↓ [Handyman starts work]
+in_progress
+  ↓ [Handyman marks complete]
+pending_confirmation (awaiting customer poll response)
+  ↓ [Customer confirms YES]
+pending_admin_approval (awaiting admin fund release)
+  ↓ [Admin approves]
+completed (funds released)
+
+Alternative paths:
+- Customer votes NO → disputed
+- Admin can reject → disputed
+```
+
+---
+
+## Phone Number Formatting
+
+Green-API uses a specific format: `{country_code}{number}@c.us`
 
 ```javascript
 import { formatPhoneNumber } from './services/whatsappService';
 
-// Formats to E.164 format with whatsapp: prefix
-formatPhoneNumber('91234567');        // → "whatsapp:+6591234567"
-formatPhoneNumber('+6591234567');     // → "whatsapp:+6591234567"
-formatPhoneNumber('6591234567');      // → "whatsapp:+6591234567"
+// All these inputs produce: "6591234567@c.us"
+formatPhoneNumber('91234567');        // → "6591234567@c.us"
+formatPhoneNumber('+6591234567');     // → "6591234567@c.us"
+formatPhoneNumber('6591234567');      // → "6591234567@c.us"
+formatPhoneNumber('+65 9123 4567');   // → "6591234567@c.us"
 ```
 
 ---
 
-## Content Templates
+## Webhook Configuration
 
-Twilio uses Content API for approved message templates. See `/WHATSAPP_TEMPLATES.md` for:
-1. **job_payment_confirmation** - Job created notification
-2. **handyman_accepted_job** - Handyman accepted notification
-3. **job_completion_request** - Job marked complete notification
+### Green-API Console Setup
 
-**To create templates:**
-1. Go to Twilio Console → Messaging → Content Templates
-2. Create new template with variables (e.g., {{1}}, {{2}}, {{3}})
-3. Submit for WhatsApp approval
-4. Wait 24-48 hours for approval
-5. Use the Content SID (HXxxxxx) in your code
+1. Go to https://console.green-api.com
+2. Select your instance
+3. Go to Settings → Webhooks
+4. Set Webhook URL:
+   ```
+   https://us-central1-eazydone-d06cf.cloudfunctions.net/whatsappWebhook
+   ```
+5. Enable:
+   - ✅ Receive notifications about incoming messages
+   - ✅ Receive notifications about polls
 
-**Template Guidelines:**
-- First message to user must use approved template
-- After user replies, 24-hour session window opens
-- During session window, can send freeform messages
-- Variables are 1-indexed: {{1}}, {{2}}, {{3}}
+### Webhook Data Format
 
----
-
-## API Configuration
-
-**Twilio WhatsApp API:**
-- Base URL: `https://api.twilio.com/2010-04-01`
-- Auth: Basic Auth (Account SID + Auth Token)
-- From Number: Twilio Sandbox or approved number
-- Format: E.164 with `whatsapp:` prefix
-
-**Template Message Request:**
-```javascript
-// Using Twilio Node SDK
-const message = await client.messages.create({
-  contentSid: 'HXxxxxx',
-  from: 'whatsapp:+14155238886',
-  to: 'whatsapp:+6591234567',
-  contentVariables: JSON.stringify({
-    '1': 'John Doe',
-    '2': 'Plumbing Repair'
-  })
-});
-```
-
-**Simple Message Request:**
-```javascript
-// Using Twilio Node SDK
-const message = await client.messages.create({
-  body: 'Your job has been updated!',
-  from: 'whatsapp:+14155238886',
-  to: 'whatsapp:+6591234567'
-});
-```
-
----
-
-## Webhook Configuration (Optional)
-
-Twilio can send status callbacks for message delivery and incoming messages.
-
-**Webhook URL:** `https://yourdomain.com/api/whatsapp/webhook`
-
-**Incoming Message Webhook:**
-```javascript
-// POST /api/whatsapp/webhook
+**Poll Vote Webhook:**
+```json
 {
-  MessageSid: 'SMxxxxx',
-  From: 'whatsapp:+6591234567',
-  To: 'whatsapp:+14155238886',
-  Body: 'User reply message',
-  NumMedia: '0'
+  "typeWebhook": "incomingMessageReceived",
+  "senderData": {
+    "chatId": "6591234567@c.us",
+    "sender": "6591234567@c.us"
+  },
+  "messageData": {
+    "typeMessage": "pollUpdateMessage",
+    "pollMessageData": {
+      "votes": [
+        {
+          "optionName": "✅ Yes, Confirm Complete",
+          "optionVoters": ["6591234567@c.us"]
+        },
+        {
+          "optionName": "⚠️ No, Report Issue",
+          "optionVoters": []
+        }
+      ]
+    }
+  }
 }
 ```
 
-**Status Callback Events:**
-- `queued` - Message queued
-- `sent` - Sent to carrier
-- `delivered` - Delivered to recipient
-- `read` - Read by recipient
-- `failed` - Failed to deliver
+---
+
+## Poll Vote Locking
+
+To prevent customers from changing their vote after initial submission:
+
+1. When first vote is processed, `pollVoteLocked: true` is set on the job
+2. Subsequent votes are detected by checking for existing locked jobs
+3. Customer receives message: "Your response has already been recorded"
+
+**Implementation in webhook:**
+```javascript
+// Check for already locked votes first
+const lockedJobSnapshot = await admin.firestore().collection('jobs')
+  .where('customerPhone', '==', phoneFormat)
+  .where('pollVoteLocked', '==', true)
+  .orderBy('customerConfirmedAt', 'desc')
+  .limit(1)
+  .get();
+
+if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
+  // Vote already recorded - send message and return
+  await sendGreenApiMessage(chatId, "Your response has already been recorded...");
+  return;
+}
+```
+
+---
+
+## Admin Fund Release Page
+
+**Route:** `/admin/fund-release`
+
+**Access:** Restricted to admin emails configured in `AdminFundRelease.jsx`:
+```javascript
+const ADMIN_EMAILS = [
+  'easydonehandyman@gmail.com',
+  // Add more admin emails as needed
+];
+```
+
+**Features:**
+- Lists all jobs with `status: pending_admin_approval`
+- Shows job details, customer info, amount
+- "Release Funds" button to approve
+- Updates status to `completed`
 
 ---
 
 ## Setup Instructions
 
-### 1. Twilio Account Setup
-1. Create Twilio account at https://www.twilio.com
-2. Navigate to Console → Messaging → Try WhatsApp
-3. Get your sandbox number or request production access
+### 1. Create Green-API Account
+1. Go to https://console.green-api.com
+2. Register and create an instance
+3. Scan QR code with WhatsApp to link
 
 ### 2. Get Credentials
-1. Account SID: Found on Twilio Console Dashboard
-2. Auth Token: Found on Twilio Console Dashboard (click "Show")
-3. WhatsApp From Number: Sandbox number or approved number
+From Green-API Console:
+- Instance ID (idInstance)
+- API Token (apiTokenInstance)
+- API URL (usually https://api.green-api.com)
 
-### 3. Environment Variables
-Add to `.env`:
+### 3. Configure Environment Variables
+
+**Frontend (`.env.local`):**
 ```env
-REACT_APP_TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxx
-REACT_APP_TWILIO_AUTH_TOKEN=your_auth_token
-REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+REACT_APP_GREENAPI_API_URL=https://api.green-api.com
+REACT_APP_GREENAPI_ID_INSTANCE=your_instance_id
+REACT_APP_GREENAPI_API_TOKEN=your_api_token
 ```
 
-### 4. Install Twilio SDK
+**Functions (`functions/.env`):**
+```env
+GREENAPI_API_URL=https://api.green-api.com
+GREENAPI_ID_INSTANCE=your_instance_id
+GREENAPI_API_TOKEN=your_api_token
+```
+
+### 4. Configure Webhook
+Set webhook URL in Green-API Console to your deployed function URL.
+
+### 5. Deploy Functions
 ```bash
-npm install twilio
+cd functions
+npm install
+firebase deploy --only functions:whatsappWebhook
 ```
 
-### 5. Production WhatsApp Approval
-- Apply for WhatsApp Business Profile
-- Submit your business for verification
-- Request WhatsApp Sender approval
-- Create and submit Content Templates
+---
+
+## Free Tier Limitations
+
+Green-API Developer (Free) plan has a **3 correspondents per month** limit. This means you can only send/receive messages to 3 unique phone numbers per month.
+
+**Solutions:**
+- Upgrade to paid plan for production
+- Create new instance to reset correspondents
+- Test with same numbers consistently
 
 ---
 
 ## Related Documentation
 
-- [WhatsApp Templates](../WHATSAPP_TEMPLATES.md)
-- [Twilio WhatsApp API](https://www.twilio.com/docs/whatsapp)
-- [Twilio Content API](https://www.twilio.com/docs/content)
+- [Green-API Setup Guide](../../WHATSAPP_GREENAPI_SETUP.md)
+- [Job Dashboard](./job-dashboard.md)
+- [Job Creation Flow](./job-creation-flow.md)
+- [Green-API Docs](https://green-api.com/en/docs/)
 
 ---
 
-**Last Updated:** 2025-01-22
-**Status:** 🔄 Migration to Twilio API in progress
+**Last Updated:** 2026-02-02
+**Status:** ✅ Implemented - Poll confirmation and admin approval working
