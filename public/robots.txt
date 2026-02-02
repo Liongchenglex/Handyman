@@ -1,3 +1,21 @@
+# EasyDoneHandyman - robots.txt
 # https://www.robotstxt.org/robotstxt.html
+
+# Allow all crawlers
 User-agent: *
-Disallow:
+Allow: /
+
+# Disallow admin and private pages
+Disallow: /admin/
+Disallow: /handyman-dashboard/
+Disallow: /api/
+
+# Disallow temporary/utility pages
+Disallow: /404
+Disallow: /error
+
+# Sitemap location
+Sitemap: https://eazydone-d06cf.web.app/sitemap.xml
+
+# Crawl-delay (optional - be polite to servers)
+Crawl-delay: 1
