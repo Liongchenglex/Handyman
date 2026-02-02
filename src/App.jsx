@@ -14,6 +14,8 @@ import HandymanRegistrationPage from './pages/HandymanRegistration';
 import HandymanDashboard from './pages/HandymanDashboard';
 import ApproveHandyman from './pages/ApproveHandyman';
 import AdminFundRelease from './pages/AdminFundRelease';
+import TermsOfService from './pages/TermsOfService';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 import JobCard from './components/handyman/JobCard';
 // import JobBoard from './pages/JobBoard';
 // import JobDetails from './pages/JobDetails';
@@ -27,9 +29,10 @@ function AppContent() {
   const isHandymanFlow = location.pathname.startsWith('/handyman');
   const isJobDetailsPage = location.pathname.startsWith('/job-details');
   const isAdminPage = location.pathname.startsWith('/admin');
+  const isLegalPage = location.pathname === '/terms-of-service' || location.pathname === '/privacy-policy';
 
   // Pages that use their own layout (no header/footer)
-  const hasCustomLayout = isHomePage || isHandymanFlow || isJobDetailsPage || isAdminPage;
+  const hasCustomLayout = isHomePage || isHandymanFlow || isJobDetailsPage || isAdminPage || isLegalPage;
 
   return (
     <div className="App">
@@ -45,6 +48,8 @@ function AppContent() {
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
           <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
           <Route path="/admin/fund-release" element={<AdminFundRelease />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/job-details/:jobId" element={<JobCard />} />
           {/* <Route path="/jobs" element={<JobBoard />} /> */}
           {/* <Route path="/jobs/:id" element={<JobDetails />} /> */}
