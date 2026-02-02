@@ -155,7 +155,7 @@ const HelpContact = () => {
           </h1>
           <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
             Find answers to common questions or get in touch with our support team.
-            We're here to help make your HandySG experience smooth and successful.
+            We're here to help make your EasyDoneHandyman experience smooth and successful.
           </p>
         </div>
 

@@ -94,7 +94,7 @@ const StripeOnboardingPrompt = ({ handyman }) => {
               handyman
             </span>
             <h1 className="text-xl font-bold text-gray-900 dark:text-white">
-              HandySG
+              EasyDoneHandyman
             </h1>
           </div>
           <button

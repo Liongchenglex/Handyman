@@ -96,7 +96,7 @@ const HomePage = () => {
               <h1 className={`text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mt-4 transition-all duration-1000 ease-out delay-200 ${
                 isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
               }`}>
-                HandySG
+                EasyDoneHandyman
               </h1>
 
               {/* Animated Subtitle */}
@@ -280,7 +280,7 @@ const HomePage = () => {
 
       {/* Footer */}
       <footer className="py-8 text-center text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700">
-        <p>&copy; 2024 HandySG. All rights reserved.</p>
+        <p>&copy; 2024 EasyDoneHandyman. All rights reserved.</p>
       </footer>
     </div>
   );

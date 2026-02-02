@@ -12,7 +12,7 @@ const Footer = () => {
               <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
               </svg>
-              <span className="text-xl font-bold text-gray-900 dark:text-white">HandySG</span>
+              <span className="text-xl font-bold text-gray-900 dark:text-white">EasyDoneHandyman</span>
             </div>
             <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">
               Connecting customers with trusted handymen across Singapore. Quality service, guaranteed satisfaction.
@@ -66,7 +66,7 @@ const Footer = () => {
         <div className="border-t border-gray-200 dark:border-gray-700 mt-6 pt-6">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
             <p className="text-gray-500 dark:text-gray-400 text-sm text-center sm:text-left">
-              &copy; 2024 HandySG. All rights reserved.
+              &copy; 2024 EasyDoneHandyman. All rights reserved.
             </p>
             <div className="flex items-center gap-3">
               <a href="#" className="text-gray-400 hover:text-primary transition-colors">

@@ -17,7 +17,7 @@ const HandymanRegistrationPage = () => {
 
   const handleRegistrationComplete = async (registrationData) => {
     // Firebase Auth already handles the session persistence
-    alert('Registration completed successfully! Welcome to HandySG. Please check your email to verify your account.');
+    alert('Registration completed successfully! Welcome to EasyDoneHandyman. Please check your email to verify your account.');
 
     // Small delay to ensure Firestore write has propagated
     // Then reload to trigger fresh AuthContext initialization
