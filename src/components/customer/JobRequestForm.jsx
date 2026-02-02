@@ -13,7 +13,7 @@ import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
 // Jobs API
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
-import { SERVICE_PRICING, getServicePrice } from '../../config/servicePricing';
+import { SERVICE_PRICING, getServicePrice, getPlatformFee } from '../../config/servicePricing';
 // WhatsApp notification service
 import { sendJobCreationNotification } from '../../services/whatsappService';
 
@@ -740,13 +740,13 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   <span className="font-medium">${getServicePrice(selectedCategory)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-500 dark:text-gray-500">Platform Fee:</span>
-                  <span className="text-gray-500 dark:text-gray-500">$5</span>
+                  <span className="text-gray-500 dark:text-gray-500">Platform Fee (10%):</span>
+                  <span className="text-gray-500 dark:text-gray-500">${getPlatformFee(getServicePrice(selectedCategory)).toFixed(2)}</span>
                 </div>
                 <div className="border-t border-primary/20 dark:border-primary/30 pt-2 mt-2">
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-lg">Total:</span>
-                    <span className="font-bold text-lg text-primary">${getServicePrice(selectedCategory) + 5}</span>
+                    <span className="font-bold text-lg text-primary">${(getServicePrice(selectedCategory) + getPlatformFee(getServicePrice(selectedCategory))).toFixed(2)}</span>
                   </div>
                 </div>
               </div>

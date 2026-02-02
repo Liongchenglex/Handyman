@@ -205,3 +205,27 @@ export const createLoginLink = async (accountId) => {
     throw error;
   }
 };
+
+// ===========================================
+// ESCROW / FUND RELEASE FUNCTIONS
+// ===========================================
+
+/**
+ * Release escrow for a job (admin only)
+ *
+ * Captures payment and transfers service fee to handyman's connected account.
+ * Platform fee is retained in the platform Stripe account.
+ *
+ * @param {string} jobId - Job ID to release funds for
+ * @returns {Promise<Object>} Transfer details
+ */
+export const releaseEscrow = async (jobId) => {
+  try {
+    const response = await axios.post(`${BASE_URL}/releaseEscrowSimple`, { jobId });
+    return response.data;
+  } catch (error) {
+    console.error('Error releasing escrow:', error);
+    console.error('Error response:', error.response?.data);
+    throw error;
+  }
+};

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
+import { releaseEscrow } from '../services/stripe/stripeApi';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
@@ -88,33 +89,27 @@ const AdminFundRelease = () => {
 
   // Handle fund release approval
   const handleApprove = async (job) => {
-    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}`)) {
+    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}\n\nThis will transfer the service fee to the handyman's Stripe account.`)) {
       return;
     }
 
     setProcessingJobId(job.id);
 
     try {
-      const jobRef = doc(db, 'jobs', job.id);
-      await updateDoc(jobRef, {
-        status: 'completed',
-        adminApprovedAt: new Date().toISOString(),
-        adminApprovedBy: user.email,
-        fundReleaseApproved: true
-      });
+      // Call the releaseEscrow function which:
+      // 1. Captures the payment (if not already captured)
+      // 2. Transfers service fee to handyman's connected Stripe account
+      // 3. Updates job status to 'completed' with payment details
+      const result = await releaseEscrow(job.id);
 
-      // Remove from list
+      // Remove from list on success
       setJobs(jobs.filter(j => j.id !== job.id));
 
-      // TODO: Trigger actual fund transfer via Stripe
-      console.log('💰 Fund release approved for job:', job.id);
-      console.log('Payment Intent:', job.paymentIntentId);
-      console.log('Amount:', job.estimatedBudget);
-
-      alert(`✅ Funds released for job "${job.serviceType}"`);
+      alert(`Funds released successfully!\n\nService Fee: $${result.serviceFee}\nTransfer ID: ${result.transferId}`);
     } catch (err) {
-      console.error('Error approving fund release:', err);
-      alert('Failed to approve fund release. Please try again.');
+      console.error('Error releasing escrow:', err);
+      const errorMessage = err.response?.data?.error || err.message || 'Unknown error';
+      alert(`Failed to release funds: ${errorMessage}\n\nPlease check the job details and try again.`);
     } finally {
       setProcessingJobId(null);
     }

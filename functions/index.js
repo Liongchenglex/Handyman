@@ -909,6 +909,164 @@ exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
 });
 
 /**
+ * Release Escrow (Simplified)
+ *
+ * Releases payment to handyman after admin approval.
+ * - Captures payment if not already captured
+ * - Transfers service fee to handyman's connected Stripe account
+ * - Platform fee stays in platform account (manual split later)
+ *
+ * POST /releaseEscrowSimple
+ * Body: { jobId }
+ */
+exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    try {
+      // Verify authentication
+      const decodedToken = await verifyAuthToken(req);
+      console.log(`🔐 Release escrow requested by: ${decodedToken.email}`);
+
+      const { jobId } = req.body;
+
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+
+      console.log(`💰 Releasing escrow for job: ${jobId}`);
+
+      // Get job data from Firestore
+      const jobDoc = await admin.firestore().collection('jobs').doc(jobId).get();
+      if (!jobDoc.exists) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+
+      const jobData = jobDoc.data();
+      const { paymentIntentId, estimatedBudget, handymanId } = jobData;
+
+      if (!paymentIntentId) {
+        return res.status(400).json({ error: 'No payment intent found for this job' });
+      }
+
+      if (!handymanId) {
+        return res.status(400).json({ error: 'No handyman assigned to this job' });
+      }
+
+      // Get handyman's Stripe connected account
+      const handymanDoc = await admin.firestore().collection('handymen').doc(handymanId).get();
+      if (!handymanDoc.exists) {
+        return res.status(404).json({ error: 'Handyman not found' });
+      }
+
+      const handymanData = handymanDoc.data();
+      const handymanAccountId = handymanData.stripeConnectedAccountId;
+
+      if (!handymanAccountId) {
+        return res.status(400).json({
+          error: 'Handyman has not completed Stripe onboarding',
+          message: 'The handyman needs to complete Stripe Connect setup before receiving payments.'
+        });
+      }
+
+      // Check if Stripe account is ready for transfers
+      const stripeAccount = await stripe.accounts.retrieve(handymanAccountId);
+      if (!stripeAccount.charges_enabled || !stripeAccount.payouts_enabled) {
+        return res.status(400).json({
+          error: 'Handyman Stripe account not ready',
+          message: 'The handyman Stripe account is not fully set up for receiving payments.'
+        });
+      }
+
+      // Calculate amounts
+      const platformFeePercentage = getPlatformFeePercentage();
+      const totalAmount = parseFloat(estimatedBudget);
+      const serviceFee = totalAmount / (1 + platformFeePercentage); // Reverse calculate service fee
+      const platformFee = totalAmount - serviceFee;
+
+      console.log(`📊 Payment breakdown:`);
+      console.log(`   Total: $${totalAmount}`);
+      console.log(`   Service Fee (to handyman): $${serviceFee.toFixed(2)}`);
+      console.log(`   Platform Fee (retained): $${platformFee.toFixed(2)}`);
+
+      // Get payment intent status
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      console.log(`   Payment Intent Status: ${paymentIntent.status}`);
+
+      // Capture payment if it's still in requires_capture state
+      if (paymentIntent.status === 'requires_capture') {
+        console.log('📥 Capturing payment...');
+        await stripe.paymentIntents.capture(paymentIntentId);
+        console.log('✅ Payment captured');
+      } else if (paymentIntent.status !== 'succeeded') {
+        return res.status(400).json({
+          error: `Cannot release payment with status: ${paymentIntent.status}`,
+          message: 'Payment must be authorized or captured before release.'
+        });
+      }
+
+      // Transfer service fee to handyman
+      console.log(`💸 Transferring $${serviceFee.toFixed(2)} to handyman...`);
+      const transfer = await stripe.transfers.create({
+        amount: dollarsToCents(serviceFee),
+        currency: 'sgd',
+        destination: handymanAccountId,
+        description: `Payment for job #${jobId} - ${jobData.serviceType}`,
+        metadata: {
+          jobId: jobId,
+          serviceType: jobData.serviceType,
+          customerName: jobData.customerName,
+          serviceFee: serviceFee.toFixed(2),
+          platformFee: platformFee.toFixed(2),
+        },
+      });
+
+      console.log(`✅ Transfer created: ${transfer.id}`);
+
+      // Update job document
+      await admin.firestore().collection('jobs').doc(jobId).update({
+        status: 'completed',
+        paymentStatus: 'released',
+        paymentReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+        paymentReleasedBy: decodedToken.email,
+        transferId: transfer.id,
+        transferAmount: serviceFee,
+        platformFeeRetained: platformFee,
+      });
+
+      console.log(`✅ Escrow released successfully for job: ${jobId}`);
+
+      return res.status(200).json({
+        success: true,
+        jobId: jobId,
+        transfer: {
+          id: transfer.id,
+          amount: serviceFee,
+          currency: 'sgd',
+          destination: handymanAccountId,
+        },
+        platformFeeRetained: platformFee,
+        message: `Successfully transferred $${serviceFee.toFixed(2)} to handyman. Platform fee of $${platformFee.toFixed(2)} retained.`
+      });
+
+    } catch (error) {
+      console.error('❌ Error releasing escrow:', error);
+
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+
+      return res.status(500).json({
+        error: 'Failed to release escrow',
+        message: error.message
+      });
+    }
+  });
+});
+
+/**
  * Refund payment
  * POST /refundPayment
  * Body: { paymentIntentId, reason }
