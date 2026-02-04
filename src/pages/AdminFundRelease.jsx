@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { releaseEscrow } from '../services/stripe/stripeApi';
@@ -82,7 +82,24 @@ const AdminFundRelease = () => {
           ...doc.data()
         }));
 
-        setPendingJobs(jobsData);
+        // Fetch handyman names for jobs that have handymanId but no handymanName
+        const jobsWithHandymanNames = await Promise.all(
+          jobsData.map(async (job) => {
+            if (job.handymanId && !job.handymanName) {
+              try {
+                const handymanDoc = await getDoc(doc(db, 'handymen', job.handymanId));
+                if (handymanDoc.exists()) {
+                  return { ...job, handymanName: handymanDoc.data().name };
+                }
+              } catch (err) {
+                console.error('Error fetching handyman:', err);
+              }
+            }
+            return job;
+          })
+        );
+
+        setPendingJobs(jobsWithHandymanNames);
         setError(null);
       } catch (err) {
         console.error('Error fetching pending jobs:', err);
@@ -110,10 +127,27 @@ const AdminFundRelease = () => {
       );
 
       const snapshot = await getDocs(q);
-      const jobsData = snapshot.docs.map(doc => ({
+      let jobsData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+
+      // Fetch handyman names for jobs that have handymanId but no handymanName
+      jobsData = await Promise.all(
+        jobsData.map(async (job) => {
+          if (job.handymanId && !job.handymanName) {
+            try {
+              const handymanDoc = await getDoc(doc(db, 'handymen', job.handymanId));
+              if (handymanDoc.exists()) {
+                return { ...job, handymanName: handymanDoc.data().name };
+              }
+            } catch (err) {
+              console.error('Error fetching handyman:', err);
+            }
+          }
+          return job;
+        })
+      );
 
       // Sort by paymentReleasedAt descending (most recent first)
       jobsData.sort((a, b) => {
@@ -222,92 +256,63 @@ const AdminFundRelease = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Navigation Header */}
-      <header className="sticky top-0 z-50 bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between h-14">
-            {/* Logo */}
-            <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-              <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
-              </svg>
-              <span className="text-xl font-bold text-gray-900 dark:text-white">EasyDoneHandyman</span>
-              <span className="ml-2 px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-xs font-medium rounded">
-                Admin
-              </span>
-            </Link>
-
-            {/* User Info & Logout */}
+      {/* Header */}
+      <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-4">
+            <div className="flex items-center gap-3">
+              <Link
+                to="/admin"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <span className="material-symbols-outlined text-gray-600 dark:text-gray-400">arrow_back</span>
+              </Link>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900 dark:text-white">Fund Releases</h1>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Review and approve fund releases</p>
+              </div>
+            </div>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600 dark:text-gray-400">
+              <span className="text-sm text-gray-600 dark:text-gray-400 hidden sm:inline">
                 {user?.email}
               </span>
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                className="flex items-center gap-2 px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
               >
-                <span className="material-symbols-outlined text-lg">logout</span>
-                Sign Out
+                <span className="material-symbols-outlined text-xl">logout</span>
+                <span className="hidden sm:inline">Logout</span>
               </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Page Header */}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-                Fund Release Management
-              </h1>
-              <p className="text-gray-600 dark:text-gray-400">
-                Review and approve customer-confirmed job completions
-              </p>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="mt-6 flex gap-2">
-            <button
-              onClick={() => handleTabChange('pending')}
-              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
-                activeTab === 'pending'
-                  ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              <span className="material-symbols-outlined text-lg">pending</span>
-              Pending
-              {pendingJobs.length > 0 && (
-                <span className="ml-1 px-2 py-0.5 bg-amber-500 text-white text-xs rounded-full">
-                  {pendingJobs.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => handleTabChange('completed')}
-              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors ${
-                activeTab === 'completed'
-                  ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              <span className="material-symbols-outlined text-lg">check_circle</span>
-              Completed
-              {completedJobs.length > 0 && (
-                <span className="ml-1 px-2 py-0.5 bg-green-500 text-white text-xs rounded-full">
-                  {completedJobs.length}
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => handleTabChange('pending')}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'pending'
+                ? 'bg-primary text-black'
+                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            Pending ({pendingJobs.length})
+          </button>
+          <button
+            onClick={() => handleTabChange('completed')}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              activeTab === 'completed'
+                ? 'bg-primary text-black'
+                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            Completed ({completedJobs.length})
+          </button>
+        </div>
         {/* Pending Tab Content */}
         {activeTab === 'pending' && (
           <>
@@ -514,7 +519,7 @@ const AdminFundRelease = () => {
             )}
           </>
         )}
-      </div>
+      </main>
     </div>
   );
 };

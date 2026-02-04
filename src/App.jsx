@@ -13,6 +13,8 @@ import HandymanAuthPage from './pages/HandymanAuth';
 import HandymanRegistrationPage from './pages/HandymanRegistration';
 import HandymanDashboard from './pages/HandymanDashboard';
 import ApproveHandyman from './pages/ApproveHandyman';
+import AdminDashboard from './pages/AdminDashboard';
+import AdminAccountApproval from './pages/AdminAccountApproval';
 import AdminFundRelease from './pages/AdminFundRelease';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
@@ -46,6 +48,8 @@ function AppContent() {
           <Route path="/handyman-auth" element={<HandymanAuthPage />} />
           <Route path="/handyman-registration" element={<HandymanRegistrationPage />} />
           <Route path="/handyman-dashboard" element={<HandymanDashboard />} />
+          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/account-approval" element={<AdminAccountApproval />} />
           <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
           <Route path="/admin/fund-release" element={<AdminFundRelease />} />
           <Route path="/terms-of-service" element={<TermsOfService />} />
