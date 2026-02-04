@@ -10,7 +10,9 @@ require('dotenv').config();
 
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-const stripe = require('stripe')(functions.config().stripe.secret_key);
+
+// Initialize Stripe with secret key from environment variable
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require('jsonwebtoken'); // SECURITY FIX (Phase 1.3): JWT for approval tokens
 
 // SECURITY FIX (Phase 1.2): Import validation utilities
@@ -1192,7 +1194,7 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
  */
 exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   const sig = req.headers['stripe-signature'];
-  const webhookSecret = functions.config().stripe.webhook_secret;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   let event;
 
