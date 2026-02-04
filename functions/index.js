@@ -15,6 +15,9 @@ const admin = require('firebase-admin');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const jwt = require('jsonwebtoken'); // SECURITY FIX (Phase 1.3): JWT for approval tokens
 
+// App URL - used for constructing redirect URLs (Stripe Connect, etc.)
+const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+
 // SECURITY FIX (Phase 1.2): Import validation utilities
 const { validate } = require('./validation/middleware');
 const {
@@ -307,9 +310,9 @@ exports.createAccountLink = functions.https.onRequest((req, res) => {
         return res.status(403).json({ error: 'Forbidden: Cannot create link for another user\'s account' });
       }
 
-      // Use provided URLs or fallback to defaults
-      const refresh_url = refreshUrl || 'http://localhost:3000/handyman-dashboard?stripe_refresh=true';
-      const return_url = returnUrl || 'http://localhost:3000/handyman-dashboard?stripe_onboarding=complete';
+      // Use provided URLs or fallback to defaults (constructed from APP_URL)
+      const refresh_url = refreshUrl || `${APP_URL}/handyman-dashboard?stripe_refresh=true`;
+      const return_url = returnUrl || `${APP_URL}/handyman-dashboard?stripe_onboarding=complete`;
 
       const accountLink = await stripe.accountLinks.create({
         account: accountId,

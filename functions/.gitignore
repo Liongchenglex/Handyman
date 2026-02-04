@@ -1,6 +1,9 @@
 # Environment variables (contains secrets)
+# Only .env.example should be committed
 .env
 .env.local
+.env.uat
+.env.production
 .env.*.local
 
 # Dependencies
