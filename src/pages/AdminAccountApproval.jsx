@@ -163,8 +163,9 @@ const AdminAccountApproval = () => {
         }));
 
         // Separate into onboarded and not onboarded
-        const onboarded = handymenData.filter(h => h.stripeAccountId && h.stripeOnboardingComplete);
-        const notOnboarded = handymenData.filter(h => !h.stripeAccountId || !h.stripeOnboardingComplete);
+        // Uses stripeOnboardingCompleted field (set when handyman completes Stripe onboarding)
+        const onboarded = handymenData.filter(h => h.stripeOnboardingCompleted === true);
+        const notOnboarded = handymenData.filter(h => !h.stripeOnboardingCompleted);
 
         // Sort by name
         onboarded.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -676,15 +677,10 @@ const AdminAccountApproval = () => {
                           </div>
                           <div className="flex items-center gap-2 text-sm">
                             <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-md text-xs">
-                              {handyman.stripeAccountId ? 'Incomplete' : 'Not Started'}
+                              Not Completed
                             </span>
                             <span className="text-gray-500 dark:text-gray-400">{handyman.phone}</span>
                           </div>
-                          {handyman.stripeAccountId && (
-                            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 font-mono truncate">
-                              ID: {handyman.stripeAccountId}
-                            </p>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -732,9 +728,11 @@ const AdminAccountApproval = () => {
                             </span>
                             <span className="text-gray-500 dark:text-gray-400">{handyman.phone}</span>
                           </div>
-                          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 font-mono truncate">
-                            ID: {handyman.stripeAccountId}
-                          </p>
+                          {handyman.stripeAccountStatus && (
+                            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                              Status: {handyman.stripeAccountStatus}
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
