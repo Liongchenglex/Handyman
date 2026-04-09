@@ -1252,6 +1252,117 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 // ===================================
+// WHATSAPP NOTIFICATION PROXY
+// ===================================
+
+/**
+ * Send WhatsApp Notification (Proxy Cloud Function)
+ *
+ * The frontend calls this function instead of Twilio directly because:
+ * 1. Twilio's REST API doesn't support CORS (browser calls are blocked)
+ * 2. Keeps Twilio credentials server-side only (more secure)
+ *
+ * Supports three notification types:
+ * - job_created: After customer completes payment
+ * - job_accepted: After handyman expresses interest
+ * - job_completion: After handyman marks job complete
+ *
+ * Each type sends the corresponding Twilio Content Template if configured,
+ * or falls back to a freeform text message (sandbox mode).
+ *
+ * Request body: { type: string, data: object }
+ * Requires Firebase Auth token.
+ */
+exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+
+      // Verify authenticated user
+      await verifyAuthToken(req);
+
+      const { type, data } = req.body;
+
+      if (!type || !data) {
+        return res.status(400).json({ error: 'Missing type or data' });
+      }
+
+      if (!data.customerPhone) {
+        return res.status(400).json({ error: 'Missing customerPhone' });
+      }
+
+      const toWhatsApp = formatPhoneToWhatsApp(data.customerPhone);
+      let result;
+
+      switch (type) {
+        case 'job_created': {
+          const timingText = data.preferredTiming === 'Schedule'
+            ? `${new Date(data.preferredDate).toLocaleDateString()} at ${data.preferredTime}`
+            : 'As soon as possible';
+
+          const templateSid = process.env.TWILIO_TEMPLATE_JOB_CREATED;
+          const fallback = `Hi ${data.customerName}! 👋\n\nYour job request has been posted successfully! ✅\n\n📋 *Service:* ${data.serviceType}\n💰 *Service Fee:* $${data.estimatedBudget}\n🔖 *Job ID:* ${data.jobId || 'Pending'}\n📅 *Timing:* ${timingText}\n\nA qualified handyman will accept your job shortly. You'll receive a notification when someone accepts.\n\nThank you for using EazyDone! 🔧`;
+
+          result = await sendTwilioTemplateMessage(
+            toWhatsApp,
+            templateSid,
+            { '1': data.customerName, '2': data.serviceType, '3': `${data.estimatedBudget}`, '4': data.jobId || 'Pending', '5': timingText },
+            fallback
+          );
+          break;
+        }
+
+        case 'job_accepted': {
+          const templateSid = process.env.TWILIO_TEMPLATE_JOB_ACCEPTED;
+          const fallback = `Great news, ${data.customerName}! 🎉\n\n*${data.handymanName}* has accepted your job request!\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nThe handyman will contact you shortly to discuss the job details and confirm the appointment time.\n\nNeed help? Contact us at support@easydone.com`;
+
+          result = await sendTwilioTemplateMessage(
+            toWhatsApp,
+            templateSid,
+            { '1': data.customerName, '2': data.handymanName, '3': data.serviceType, '4': data.jobId },
+            fallback
+          );
+          break;
+        }
+
+        case 'job_completion': {
+          const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
+          const fallback = `Hello ${data.customerName}! 👋\n\nYour handyman *${data.handymanName}* has marked the following job as complete:\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nPlease confirm if the work has been completed to your satisfaction.\n\n👉 Reply *YES* to confirm completion\n👉 Reply *NO* to report an issue`;
+
+          result = await sendTwilioTemplateMessage(
+            toWhatsApp,
+            templateSid,
+            { '1': data.customerName, '2': data.handymanName, '3': data.serviceType, '4': data.jobId },
+            fallback
+          );
+          break;
+        }
+
+        default:
+          return res.status(400).json({ error: `Unknown notification type: ${type}` });
+      }
+
+      if (result.success) {
+        console.log(`✅ WhatsApp ${type} notification sent to ${data.customerPhone}`);
+        return res.status(200).json({ success: true, sid: result.sid });
+      } else {
+        console.error(`❌ Failed to send ${type} notification:`, result.error);
+        return res.status(500).json({ success: false, error: result.error });
+      }
+
+    } catch (error) {
+      console.error('❌ Error in sendWhatsAppNotification:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to send notification' });
+    }
+  });
+});
+
+// ===================================
 // WHATSAPP WEBHOOK (Twilio)
 // ===================================
 
