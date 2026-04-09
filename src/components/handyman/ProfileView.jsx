@@ -163,7 +163,7 @@ const ProfileView = ({ user, userProfile }) => {
           </div>
           <div className="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
             <div className="text-2xl font-bold text-primary">
-              {myJobs.filter(j => j.status === 'in_progress' || j.status === 'accepted').length}
+              {myJobs.filter(j => j.status === 'in_progress').length}
             </div>
             <div className="text-sm text-gray-600 dark:text-gray-400">Active Jobs</div>
           </div>

@@ -160,8 +160,7 @@ When a Customer pays for a service, the Total Amount is distributed as follows:
 | Status | Description |
 |--------|-------------|
 | Pending | Job created, awaiting Handyman |
-| Accepted | Handyman assigned |
-| In Progress | Work has begun |
+| In Progress | Handyman assigned, work underway |
 | Pending Confirmation | Awaiting Customer confirmation |
 | Completed | Job finished, payment released |
 | Disputed | Issue reported, under review |

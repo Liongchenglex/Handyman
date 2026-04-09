@@ -50,8 +50,6 @@ export const getStatusColor = (status) => {
   switch (status) {
     case 'pending':
       return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
-    case 'accepted':
-      return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
     case 'in_progress':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
     case 'pending_confirmation':
@@ -76,8 +74,6 @@ export const getStatusText = (status) => {
   switch (status) {
     case 'pending':
       return 'Pending';
-    case 'accepted':
-      return 'Accepted';
     case 'in_progress':
       return 'In Progress';
     case 'pending_confirmation':

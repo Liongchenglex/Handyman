@@ -591,11 +591,9 @@ const total = getTotalAmount(serviceFee);         // 132
 
 ```
 pending (job created, payment authorized)
-  ↓ [Handyman accepts job]
-accepted
-  ↓ [Handyman starts work]
-in_progress
-  ↓ [Handyman marks complete]
+  ↓ [Handyman clicks "Express Interest"]
+in_progress (handyman assigned, work underway)
+  ↓ [Handyman clicks "Mark Complete" OR auto-trigger sends poll]
 pending_confirmation (awaiting customer WhatsApp poll)
   ↓ [Customer confirms via poll - YES]
 pending_admin_approval (awaiting admin fund release)
@@ -611,9 +609,8 @@ Alternative paths:
 
 | Status | Description | Next Step | Who Can Update |
 |--------|-------------|-----------|----------------|
-| `pending` | Job created, awaiting handyman | Handyman accepts | System |
-| `accepted` | Handyman assigned, not started | Handyman starts work | Handyman |
-| `in_progress` | Work in progress | Handyman marks complete | Handyman |
+| `pending` | Job created, awaiting handyman | Handyman expresses interest | System |
+| `in_progress` | Handyman assigned, work underway | Handyman marks complete or auto-trigger | Handyman / System |
 | `pending_confirmation` | Awaiting customer WhatsApp poll | Customer votes | Webhook |
 | `pending_admin_approval` | Customer confirmed, awaiting admin | Admin releases funds | Admin |
 | `completed` | Job done, funds released | - | Admin |

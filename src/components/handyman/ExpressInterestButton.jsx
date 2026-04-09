@@ -38,12 +38,10 @@ const ExpressInterestButton = ({
 
     try {
       // Update job in Firebase to link with handyman
-      // NOTE: Current behavior - status changes to 'in_progress' and job is assigned to handyman
-      // FUTURE CONSIDERATION: You may want to change this to 'accepted' status or create a separate
-      // 'applications' collection to allow multiple handymen to express interest before customer selects one
+      // Update job status directly to 'in_progress' and assign to handyman
       await updateJob(job.id, {
         handymanId: user.uid,
-        status: 'in_progress', // Job is now assigned to this handyman
+        status: 'in_progress',
         acceptedAt: new Date().toISOString(),
         acceptedBy: {
           uid: user.uid,

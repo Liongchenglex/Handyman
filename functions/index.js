@@ -1495,6 +1495,67 @@ async function sendGreenApiMessage(chatId, message) {
 }
 
 /**
+ * Helper function to send a poll via Green-API
+ * Used by the auto-trigger to send completion confirmation polls from the backend.
+ *
+ * @param {string} chatId - Recipient chatId (e.g., 6591234567@c.us)
+ * @param {string} question - Poll question (max 255 characters)
+ * @param {Array<string>} options - Poll options (2-12 options)
+ * @returns {Promise<object>} - API response
+ */
+async function sendGreenApiPoll(chatId, question, options) {
+  const apiUrl = process.env.GREENAPI_API_URL || 'https://api.green-api.com';
+  const idInstance = process.env.GREENAPI_ID_INSTANCE;
+  const apiToken = process.env.GREENAPI_API_TOKEN;
+
+  if (!idInstance || !apiToken) {
+    console.warn('⚠️ Green-API not configured. Add GREENAPI_ID_INSTANCE and GREENAPI_API_TOKEN to functions/.env');
+    return { success: false, error: 'Green-API not configured' };
+  }
+
+  try {
+    const formattedOptions = options.map(opt => ({ optionName: opt }));
+
+    const response = await fetch(
+      `${apiUrl}/waInstance${idInstance}/sendPoll/${apiToken}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: chatId,
+          message: question,
+          options: formattedOptions,
+          multipleAnswers: false
+        })
+      }
+    );
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    console.error('❌ Error sending Green-API poll:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Helper function to format a phone number to Green-API chatId format.
+ * Strips non-digit characters, adds Singapore country code (65) if needed,
+ * and appends @c.us suffix.
+ *
+ * @param {string} phone - Phone number in any format
+ * @returns {string} - Formatted chatId (e.g., 6591234567@c.us)
+ */
+function formatPhoneToChatId(phone) {
+  let cleaned = phone.replace(/\D/g, '');
+  if (cleaned.length === 8) {
+    cleaned = `65${cleaned}`;
+  }
+  cleaned = cleaned.replace(/^0+/, '');
+  return `${cleaned}@c.us`;
+}
+
+/**
  * Helper function to send admin notification email
  * Used when a job status changes to pending_admin_approval
  *
@@ -1629,6 +1690,142 @@ exports.cleanupAbandonedJobs = functions.pubsub
       };
     } catch (error) {
       console.error('❌ Error cleaning up abandoned jobs:', error);
+      throw error;
+    }
+  });
+
+/**
+ * Auto-Trigger Completion Poll
+ *
+ * Runs daily at 10:00 AM SGT to automatically send WhatsApp completion polls
+ * to customers whose job's scheduled date has passed.
+ *
+ * This ensures customers are prompted to confirm job completion even if the
+ * handyman forgets to click "Mark Complete". It also prevents premature
+ * completion notifications — the poll is only sent the day AFTER the preferred date.
+ *
+ * Logic:
+ * - Finds jobs where: status is 'in_progress', preferredDate < today,
+ *   and completionPollSentAt is not yet set.
+ * - Sends the WhatsApp info message + confirmation poll to the customer.
+ * - Sets completionPollSentAt and completionPollSentBy on the job document.
+ * - Does NOT change the job status — the handyman can still click "Mark Complete"
+ *   which will update the status without re-sending the poll.
+ *
+ * Race condition handling:
+ * - If the handyman already clicked "Mark Complete" and set completionPollSentAt,
+ *   this function skips that job.
+ * - If this function sends the poll first and the handyman clicks "Mark Complete" later,
+ *   the frontend checks completionPollSentAt and skips the WhatsApp send.
+ */
+exports.autoTriggerCompletionPoll = functions.pubsub
+  .schedule('every day 10:00')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    try {
+      // Get today's date at start of day (SGT)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayISO = today.toISOString().split('T')[0]; // e.g., "2026-04-09"
+
+      console.log(`🔄 Running auto-trigger completion poll check for date: ${todayISO}`);
+
+      // Query all in_progress jobs with a scheduled preferred date
+      // We filter for preferredTiming === 'Schedule' to skip ASAP jobs
+      const jobsSnapshot = await admin.firestore()
+        .collection('jobs')
+        .where('status', '==', 'in_progress')
+        .where('preferredTiming', '==', 'Schedule')
+        .get();
+
+      if (jobsSnapshot.empty) {
+        console.log('ℹ️ No in_progress scheduled jobs found');
+        return null;
+      }
+
+      let pollsSent = 0;
+      let skipped = 0;
+
+      for (const doc of jobsSnapshot.docs) {
+        const job = doc.data();
+        const jobId = doc.id;
+
+        // Skip if completion poll was already sent (by handyman or previous auto-trigger)
+        if (job.completionPollSentAt) {
+          skipped++;
+          continue;
+        }
+
+        // Skip if no preferred date set
+        if (!job.preferredDate) {
+          continue;
+        }
+
+        // Check if the preferred date is before today (job should have been done by now)
+        // We send the poll the day AFTER the preferred date
+        const preferredDate = new Date(job.preferredDate);
+        preferredDate.setHours(0, 0, 0, 0);
+
+        if (preferredDate >= today) {
+          // Preferred date is today or in the future — not yet due
+          continue;
+        }
+
+        // Skip if no customer phone number
+        if (!job.customerPhone) {
+          console.warn(`⚠️ Job ${jobId} has no customerPhone — skipping`);
+          continue;
+        }
+
+        // Send the WhatsApp completion info message + poll
+        const chatId = formatPhoneToChatId(job.customerPhone);
+
+        const infoMessage = `Hello ${job.customerName}! 👋
+
+Your scheduled job has passed its appointment date:
+
+📋 *Service:* ${job.serviceType}
+🔖 *Job ID:* ${jobId}
+📅 *Scheduled Date:* ${new Date(job.preferredDate).toLocaleDateString('en-SG')}
+
+Please confirm if the work has been completed to your satisfaction.`;
+
+        const infoResult = await sendGreenApiMessage(chatId, infoMessage);
+
+        if (!infoResult.success) {
+          console.error(`❌ Failed to send info message for job ${jobId}:`, infoResult.error);
+          continue;
+        }
+
+        // Send confirmation poll
+        const pollQuestion = `Is the job "${job.serviceType}" completed satisfactorily?`;
+        const pollOptions = ['✅ Yes, Confirm Complete', '⚠️ No, Report Issue'];
+        const pollResult = await sendGreenApiPoll(chatId, pollQuestion, pollOptions);
+
+        if (!pollResult.success) {
+          console.error(`❌ Failed to send poll for job ${jobId}:`, pollResult.error);
+          continue;
+        }
+
+        // Mark the poll as sent to prevent duplicates
+        await admin.firestore().collection('jobs').doc(jobId).update({
+          completionPollSentAt: new Date().toISOString(),
+          completionPollSentBy: 'auto_trigger'
+        });
+
+        pollsSent++;
+        console.log(`✅ Completion poll sent for job ${jobId} (customer: ${job.customerName})`);
+      }
+
+      console.log(`🔄 Auto-trigger complete: ${pollsSent} polls sent, ${skipped} skipped (already sent)`);
+
+      return {
+        success: true,
+        pollsSent,
+        skipped
+      };
+    } catch (error) {
+      console.error('❌ Error in auto-trigger completion poll:', error);
       throw error;
     }
   });

@@ -40,7 +40,7 @@ const JobDetails = () => {
     setIsAccepting(true);
     try {
       await acceptJob(job.id, user.uid);
-      setJob(prev => ({ ...prev, status: 'accepted', handymanId: user.uid }));
+      setJob(prev => ({ ...prev, status: 'in_progress', handymanId: user.uid }));
       setShowContactModal(true);
     } catch (error) {
       console.error('Error accepting job:', error);
@@ -100,7 +100,7 @@ const JobDetails = () => {
 
   const isJobOwner = user && (user.uid === job.customerId || user.uid === job.handymanId);
   const canAccept = job.status === 'pending' && user && user.uid !== job.customerId;
-  const canMarkCompleted = job.status === 'accepted' && user && user.uid === job.handymanId;
+  const canMarkCompleted = job.status === 'in_progress' && user && user.uid === job.handymanId;
 
   return (
     <div className="job-details-page">
@@ -212,9 +212,9 @@ const JobDetails = () => {
                 </div>
               )}
 
-              {job.status === 'accepted' && !canMarkCompleted && (
+              {job.status === 'in_progress' && !canMarkCompleted && (
                 <div className="action-message">
-                  <p>This job has been accepted and is in progress.</p>
+                  <p>This job is currently in progress.</p>
                 </div>
               )}
 

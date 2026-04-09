@@ -51,9 +51,9 @@ Handyman dashboard showing available jobs, current jobs, profile, and earnings. 
 - Express interest button
 - Customer info (when assigned)
 
-**`/src/components/handyman/MyJobsView.jsx`** - Handyman's accepted jobs
+**`/src/components/handyman/MyJobsView.jsx`** - Handyman's active jobs
 - Filters jobs by `assignedHandymanId`
-- Groups by status (assigned/in_progress/completed)
+- Groups by status (in_progress/completed)
 - Job action buttons
 
 **`/src/components/handyman/ProfileView.jsx`** - Handyman profile
@@ -344,11 +344,9 @@ Admin visits /admin/fund-release
 
 ```
 pending (job created, payment authorized)
-  ↓ [Handyman accepts]
-accepted
-  ↓ [Handyman clicks "Start Work"]
-in_progress
-  ↓ [Handyman clicks "Mark Complete"]
+  ↓ [Handyman clicks "Express Interest"]
+in_progress (handyman assigned, work underway)
+  ↓ [Handyman clicks "Mark Complete" OR auto-trigger sends poll]
 pending_confirmation (awaiting customer WhatsApp poll)
   ↓ [Customer confirms via poll]
 pending_admin_approval (awaiting admin fund release)
@@ -364,9 +362,8 @@ Alternative paths:
 
 | Status | Description | Next Action | Who Updates |
 |--------|-------------|-------------|-------------|
-| `pending` | Job created, awaiting handyman | Handyman accepts | System |
-| `accepted` | Handyman assigned, not started | Start Work button | Handyman |
-| `in_progress` | Work in progress | Mark Complete button | Handyman |
+| `pending` | Job created, awaiting handyman | Handyman expresses interest | System |
+| `in_progress` | Handyman assigned, work underway | Mark Complete button or auto-trigger | Handyman / System |
 | `pending_confirmation` | Awaiting customer poll response | Customer votes | Webhook |
 | `pending_admin_approval` | Customer confirmed, awaiting admin | Release Funds button | Admin |
 | `completed` | Job done, funds released | - | Admin |

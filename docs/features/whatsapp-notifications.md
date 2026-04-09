@@ -17,6 +17,9 @@ Green-API WhatsApp integration for sending notifications to customers about job 
 - Webhook for poll vote handling
 - Poll vote locking (prevents vote changes)
 - Admin approval workflow for fund release
+- **Date gate on "Mark Complete" button** — prevents handyman from marking a job complete before the scheduled date
+- **Auto-trigger completion poll** — scheduled Cloud Function sends WhatsApp poll the day after the preferred date if handyman hasn't triggered it
+- **Duplicate poll prevention** — `completionPollSentAt` flag ensures only one poll is ever sent per job
 
 ❌ **Not Implemented**
 - Email notification to admin (SMTP config needed)
@@ -35,9 +38,12 @@ Green-API WhatsApp integration for sending notifications to customers about job 
 - `sendJobAcceptanceNotification(job, handymanInfo)` - Send job accepted notification
 - `sendJobCompletionNotification(job, handymanInfo)` - Send completion poll
 
-**`/functions/index.js`** - Webhook handler
+**`/functions/index.js`** - Webhook handler & scheduled functions
 - `whatsappWebhook` - Handles incoming poll votes
-- `sendGreenApiMessage(chatId, message)` - Helper to send messages from webhook
+- `autoTriggerCompletionPoll` - Scheduled function (daily 10am SGT) to auto-send completion polls
+- `sendGreenApiMessage(chatId, message)` - Helper to send text messages from backend
+- `sendGreenApiPoll(chatId, question, options)` - Helper to send polls from backend
+- `formatPhoneToChatId(phone)` - Format phone number to Green-API chatId format
 - `sendAdminNotificationEmail(jobData, jobId)` - Send email to admin (optional)
 
 **Environment Variables (Frontend - `.env.local`):**
@@ -87,20 +93,92 @@ Customer receives WhatsApp message:
    The handyman will contact you shortly..."
 ```
 
-### 3. Job Completed (Handyman Marks Complete)
+### 3. Job Completion — Date Gate, Auto-Trigger & Duplicate Prevention
+
+The completion poll flow has safeguards to prevent premature completion and ensure the customer always receives exactly one poll.
+
+#### Date Gate (Mark Complete Button)
+
+The "Mark Complete" button on the handyman dashboard is **blocked before the job's scheduled date**:
+
+- **Scheduled jobs**: Button is disabled if `today < preferredDate`. The button shows "Scheduled for [date]" and a helper message explains when it will be available.
+- **ASAP/Immediate jobs**: No date restriction — the handyman can mark complete at any time.
+- **On or after the scheduled date**: Button is enabled and works normally.
+
+#### Two Paths to Sending the Completion Poll
+
+**Path A — Handyman clicks "Mark Complete" (on or after scheduled date):**
 ```
 Handyman clicks "Mark Complete"
   ↓
-JobActionButtons.jsx calls sendJobCompletionNotification()
+Check: Is completionPollSentAt already set?
   ↓
-Job status → pending_confirmation
+IF NOT SET:
+  → Send WhatsApp info message + poll to customer
+  → Set completionPollSentAt + completionPollSentBy: 'handyman'
+  → Job status → pending_confirmation
   ↓
-Customer receives:
-  1. Text message about completion
-  2. Poll: "Is the job completed satisfactorily?"
-     - ✅ Yes, Confirm Complete
-     - ⚠️ No, Report Issue
+IF ALREADY SET (auto-trigger sent it first):
+  → Skip WhatsApp send (no duplicate message)
+  → Job status → pending_confirmation
 ```
+
+**Path B — Auto-trigger scheduled Cloud Function (daily at 10:00 AM SGT):**
+```
+autoTriggerCompletionPoll runs daily at 10am SGT
+  ↓
+Queries jobs where:
+  - status == 'in_progress'
+  - preferredTiming == 'Schedule'
+  - preferredDate < today (day AFTER the appointment)
+  - completionPollSentAt is NOT set
+  ↓
+For each matching job:
+  → Send WhatsApp info message + poll to customer
+  → Set completionPollSentAt + completionPollSentBy: 'auto_trigger'
+  → Job status remains 'in_progress' (handyman can still click "Mark Complete")
+```
+
+#### Complete Flow Summary
+
+```
+Job in_progress + scheduled for April 9
+│
+├─ April 8: Handyman tries "Mark Complete" → BLOCKED (before preferred date)
+│
+├─ April 9: Handyman clicks "Mark Complete" → Allowed
+│   └─ completionPollSentAt is null → sends WhatsApp poll, sets flag
+│
+├─ April 10 10am: Auto-trigger runs
+│   └─ completionPollSentAt already set → skips
+│
+│  ── OR ──
+│
+├─ April 9: Handyman doesn't click anything
+├─ April 10 10am: Auto-trigger runs
+│   └─ completionPollSentAt is null → sends WhatsApp poll, sets flag
+│
+├─ April 10 2pm: Handyman clicks "Mark Complete"
+│   └─ completionPollSentAt already set → updates status only, no duplicate message
+```
+
+#### Scenario Coverage
+
+| Scenario | Handled by |
+|----------|-----------|
+| Handyman tries to mark complete early | Date gate blocks it |
+| Handyman marks complete on/after the date | Normal flow, WhatsApp poll sent |
+| Handyman forgets to mark complete | Auto-trigger sends poll after appointment date |
+| Job is "ASAP" (no scheduled date) | No date gate, handyman can mark complete anytime |
+| Auto-trigger fires first, then handyman clicks | `completionPollSentAt` flag prevents duplicate poll |
+| Handyman clicks first, then auto-trigger runs | `completionPollSentAt` flag causes auto-trigger to skip |
+
+#### Key Database Fields
+
+| Field | Type | Set by | Purpose |
+|-------|------|--------|---------|
+| `completionPollSentAt` | ISO timestamp / null | Handyman click or auto-trigger | Prevents duplicate WhatsApp polls |
+| `completionPollSentBy` | `'handyman'` or `'auto_trigger'` | Same as above | Audit trail for which path sent the poll |
 
 ### 4. Customer Confirms via Poll
 ```
@@ -141,14 +219,18 @@ Job status → completed
 ## Job Status Lifecycle
 
 ```
-pending (job created, awaiting handyman)
-  ↓ [Handyman accepts]
-accepted
-  ↓ [Handyman starts work]
-in_progress
-  ↓ [Handyman marks complete]
+pending (job created, payment completed, awaiting handyman)
+  ↓ [Handyman clicks "Express Interest"]
+in_progress (handyman assigned, job underway)
+  ↓ [Handyman marks complete OR auto-trigger sends poll]
+  │
+  │  Note: The WhatsApp completion poll can be sent by either:
+  │  (a) Handyman clicking "Mark Complete" (on or after scheduled date)
+  │  (b) Auto-trigger Cloud Function (day after scheduled date, 10am SGT)
+  │  Only one poll is sent — whichever fires first sets completionPollSentAt.
+  │
 pending_confirmation (awaiting customer poll response)
-  ↓ [Customer confirms YES]
+  ↓ [Customer confirms YES via WhatsApp poll]
 pending_admin_approval (awaiting admin fund release)
   ↓ [Admin approves]
 completed (funds released)
@@ -304,7 +386,7 @@ Set webhook URL in Green-API Console to your deployed function URL.
 ```bash
 cd functions
 npm install
-firebase deploy --only functions:whatsappWebhook
+firebase deploy --only functions:whatsappWebhook,functions:autoTriggerCompletionPoll
 ```
 
 ---
@@ -329,5 +411,5 @@ Green-API Developer (Free) plan has a **3 correspondents per month** limit. This
 
 ---
 
-**Last Updated:** 2026-02-02
-**Status:** ✅ Implemented - Poll confirmation and admin approval working
+**Last Updated:** 2026-04-09
+**Status:** ✅ Implemented - Poll confirmation, admin approval, date gate, auto-trigger completion poll, and duplicate prevention working
