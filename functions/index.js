@@ -1437,19 +1437,37 @@ async function sendTwilioMessage(to, message) {
   }
 
   try {
-    const twilio = require('twilio')(accountSid, authToken);
-
     // Ensure 'to' is in Twilio WhatsApp format
     const toFormatted = to.startsWith('whatsapp:') ? to : formatPhoneToWhatsApp(to);
 
-    const result = await twilio.messages.create({
-      from: whatsappFrom,
-      to: toFormatted,
-      body: message
+    // Use Twilio REST API directly (avoids heavy SDK dependency)
+    const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+    const body = new URLSearchParams({
+      From: whatsappFrom,
+      To: toFormatted,
+      Body: message
     });
 
-    console.log(`✅ Twilio message sent: ${result.sid}`);
-    return { success: true, sid: result.sid };
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: body.toString()
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || data.code) {
+      console.error('❌ Twilio Error:', data);
+      throw new Error(data.message || 'Failed to send WhatsApp message');
+    }
+
+    console.log(`✅ Twilio message sent: ${data.sid}`);
+    return { success: true, sid: data.sid };
   } catch (error) {
     console.error('❌ Error sending Twilio message:', error);
     return { success: false, error: error.message };
@@ -1484,18 +1502,37 @@ async function sendTwilioTemplateMessage(to, contentSid, contentVariables, fallb
   }
 
   try {
-    const twilio = require('twilio')(accountSid, authToken);
     const toFormatted = to.startsWith('whatsapp:') ? to : formatPhoneToWhatsApp(to);
 
-    const result = await twilio.messages.create({
-      from: whatsappFrom,
-      to: toFormatted,
-      contentSid: contentSid,
-      contentVariables: JSON.stringify(contentVariables)
+    // Use Twilio REST API directly (avoids heavy SDK dependency)
+    const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+    const body = new URLSearchParams({
+      From: whatsappFrom,
+      To: toFormatted,
+      ContentSid: contentSid,
+      ContentVariables: JSON.stringify(contentVariables)
     });
 
-    console.log(`✅ Twilio template message sent: ${result.sid}`);
-    return { success: true, sid: result.sid };
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: body.toString()
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || data.code) {
+      console.error('❌ Twilio Error:', data);
+      throw new Error(data.message || 'Failed to send WhatsApp template message');
+    }
+
+    console.log(`✅ Twilio template message sent: ${data.sid}`);
+    return { success: true, sid: data.sid };
   } catch (error) {
     console.error('❌ Error sending Twilio template message:', error);
     return { success: false, error: error.message };

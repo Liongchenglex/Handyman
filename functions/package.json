@@ -23,8 +23,7 @@
     "firebase-functions": "^4.2.0",
     "joi": "^18.0.2",
     "nodemailer": "^6.9.8",
-    "stripe": "^11.15.0",
-    "twilio": "^5.13.1"
+    "stripe": "^11.15.0"
   },
   "devDependencies": {
     "typescript": "^4.9.0"
