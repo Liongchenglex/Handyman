@@ -1370,11 +1370,12 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
  * WhatsApp Webhook Handler (Twilio)
  *
  * Handles incoming WhatsApp messages from Twilio.
- * Customers reply with "YES" or "NO" to confirm job completion.
+ * Supports both text replies (YES/NO) and quick reply button taps
+ * (e.g., "Confirm Complete" / "Report Issue").
  *
  * Customer Replies:
- * - "YES" → Updates job status to 'pending_admin_approval', sends follow-up message
- * - "NO"  → Updates job status to 'disputed', sends follow-up message
+ * - "YES", "Confirm Complete", etc. → Updates job to 'pending_admin_approval'
+ * - "NO", "Report Issue", etc. → Updates job to 'disputed'
  *
  * Twilio Webhook Documentation: https://www.twilio.com/docs/messaging/guides/webhook-request
  */
@@ -1399,13 +1400,17 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     console.log(`📱 Incoming WhatsApp from ${customerPhone}: "${Body.trim()}"`);
 
-    // Only process YES or NO replies for job confirmation
-    const isConfirm = messageText === 'YES' || messageText === 'Y';
-    const isReject = messageText === 'NO' || messageText === 'N';
+    // Process confirmation replies — supports both text replies (YES/NO)
+    // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
+    const isConfirm = messageText === 'YES' || messageText === 'Y'
+      || messageText.includes('CONFIRM') || messageText.includes('COMPLETE');
+    const isReject = messageText === 'NO' || messageText === 'N'
+      || messageText.includes('REPORT') || messageText.includes('ISSUE')
+      || messageText.includes('REJECT');
 
     if (!isConfirm && !isReject) {
-      // Not a confirmation reply — ignore or send help message
-      console.log('ℹ️ Non-confirmation message received, ignoring');
+      // Not a confirmation reply — ignore
+      console.log(`ℹ️ Non-confirmation message received: "${Body.trim()}", ignoring`);
       return res.status(200).json({ received: true, processed: false, reason: 'Not a confirmation reply' });
     }
 
