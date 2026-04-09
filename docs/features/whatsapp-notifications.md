@@ -1,64 +1,84 @@
-# WhatsApp Notifications (Green-API)
+# WhatsApp Notifications (Twilio)
 
 ## Overview
 
-Green-API WhatsApp integration for sending notifications to customers about job updates, including poll-based confirmation for job completion.
+Twilio WhatsApp integration for sending notifications to customers about job updates. Customers confirm job completion by replying YES/NO to a WhatsApp message. The system includes a date gate to prevent premature completion and an auto-trigger to follow up on overdue jobs.
 
 ## Current Implementation Status
 
 ✅ **Implemented**
-- Green-API WhatsApp integration
-- Text message sending
-- Poll-based job confirmation
-- Phone number formatting (Singapore)
+- Twilio WhatsApp integration (migrated from Green-API)
+- Text message sending via Twilio API
 - Job creation notifications
 - Job acceptance notifications
-- Job completion notifications with poll
-- Webhook for poll vote handling
-- Poll vote locking (prevents vote changes)
+- Job completion confirmation (customer replies YES/NO)
+- Webhook for processing customer text replies
+- Response locking (prevents duplicate responses)
 - Admin approval workflow for fund release
 - **Date gate on "Mark Complete" button** — prevents handyman from marking a job complete before the scheduled date
-- **Auto-trigger completion poll** — scheduled Cloud Function sends WhatsApp poll the day after the preferred date if handyman hasn't triggered it
-- **Duplicate poll prevention** — `completionPollSentAt` flag ensures only one poll is ever sent per job
+- **Auto-trigger completion message** — scheduled Cloud Function sends WhatsApp message the day after the preferred date if handyman hasn't triggered it
+- **Duplicate message prevention** — `completionPollSentAt` flag ensures only one confirmation message is ever sent per job
+- **Follow-up messages** — customer receives contextual follow-up after confirming or rejecting
 
 ❌ **Not Implemented**
-- Email notification to admin (SMTP config needed)
 - Automatic fund transfer on admin approval
 
 ---
 
 ## Key Files
 
-**`/src/services/whatsappService.js`** - Frontend WhatsApp service
-- `sendTextMessage(to, message)` - Send text message
-- `sendPoll(to, pollName, options)` - Send poll
-- `formatPhoneNumber(phone)` - Format for Green-API (`{digits}@c.us`)
-- `isWhatsAppConfigured()` - Check if Green-API is configured
+**`/src/services/whatsappService.js`** - Frontend WhatsApp service (Twilio)
+- `sendTextMessage(to, message)` - Send text message via Twilio
+- `formatPhoneNumber(phone)` - Format to Twilio WhatsApp format (`whatsapp:+{digits}`)
+- `isWhatsAppConfigured()` - Check if Twilio is configured
 - `sendJobCreationNotification(jobData)` - Send job created notification
 - `sendJobAcceptanceNotification(job, handymanInfo)` - Send job accepted notification
-- `sendJobCompletionNotification(job, handymanInfo)` - Send completion poll
+- `sendJobCompletionNotification(job, handymanInfo)` - Send completion confirmation request
 
 **`/functions/index.js`** - Webhook handler & scheduled functions
-- `whatsappWebhook` - Handles incoming poll votes
-- `autoTriggerCompletionPoll` - Scheduled function (daily 10am SGT) to auto-send completion polls
-- `sendGreenApiMessage(chatId, message)` - Helper to send text messages from backend
-- `sendGreenApiPoll(chatId, question, options)` - Helper to send polls from backend
-- `formatPhoneToChatId(phone)` - Format phone number to Green-API chatId format
-- `sendAdminNotificationEmail(jobData, jobId)` - Send email to admin (optional)
+- `whatsappWebhook` - Handles incoming YES/NO text replies from customers
+- `autoTriggerCompletionPoll` - Scheduled function (daily 10am SGT) to auto-send completion messages
+- `sendTwilioMessage(to, message)` - Helper to send freeform WhatsApp messages (session replies)
+- `sendTwilioTemplateMessage(to, contentSid, variables, fallback)` - Helper to send template messages
+- `formatPhoneToWhatsApp(phone)` - Format phone number to Twilio WhatsApp format
+- `sendAdminNotificationEmail(jobData, jobId)` - Send email to admin
 
 **Environment Variables (Frontend - `.env.local`):**
 ```env
-REACT_APP_GREENAPI_API_URL=https://api.green-api.com
-REACT_APP_GREENAPI_ID_INSTANCE=your_instance_id
-REACT_APP_GREENAPI_API_TOKEN=your_api_token
+REACT_APP_TWILIO_ACCOUNT_SID=your_account_sid
+REACT_APP_TWILIO_AUTH_TOKEN=your_auth_token
+REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+
+# Content Template SIDs (required for production, optional for sandbox)
+REACT_APP_TWILIO_TEMPLATE_JOB_CREATED=HXxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETION=HXxxxxxxxxxxxxxxxxxxxxx
 ```
 
 **Environment Variables (Functions - `functions/.env`):**
 ```env
-GREENAPI_API_URL=https://api.green-api.com
-GREENAPI_ID_INSTANCE=your_instance_id
-GREENAPI_API_TOKEN=your_api_token
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+
+# Content Template SID for auto-trigger (reuses job completion template)
+TWILIO_TEMPLATE_JOB_COMPLETION=HXxxxxxxxxxxxxxxxxxxxxx
 ```
+
+### Template vs Freeform Messages
+
+Twilio WhatsApp has a **24-hour session window**. Business-initiated messages (outside the window) require approved Content Templates. Session replies (within 24hrs of customer's last message) can use freeform text.
+
+| Message | Type | Template needed? |
+|---------|------|-----------------|
+| Job Created | Business-initiated | **YES** — `TWILIO_TEMPLATE_JOB_CREATED` |
+| Job Accepted | Business-initiated | **YES** — `TWILIO_TEMPLATE_JOB_ACCEPTED` |
+| Job Completion Confirmation | Business-initiated | **YES** — `TWILIO_TEMPLATE_JOB_COMPLETION` |
+| Auto-trigger Confirmation | Business-initiated | **YES** — reuses `TWILIO_TEMPLATE_JOB_COMPLETION` |
+| Follow-up after YES/NO | Session reply | No — freeform text |
+| "Already recorded" reply | Session reply | No — freeform text |
+
+If no template SID is configured, the code falls back to freeform messages (works in sandbox mode).
 
 ---
 
@@ -95,7 +115,7 @@ Customer receives WhatsApp message:
 
 ### 3. Job Completion — Date Gate, Auto-Trigger & Duplicate Prevention
 
-The completion poll flow has safeguards to prevent premature completion and ensure the customer always receives exactly one poll.
+The completion confirmation flow has safeguards to prevent premature completion and ensure the customer always receives exactly one message.
 
 #### Date Gate (Mark Complete Button)
 
@@ -105,7 +125,7 @@ The "Mark Complete" button on the handyman dashboard is **blocked before the job
 - **ASAP/Immediate jobs**: No date restriction — the handyman can mark complete at any time.
 - **On or after the scheduled date**: Button is enabled and works normally.
 
-#### Two Paths to Sending the Completion Poll
+#### Two Paths to Sending the Completion Message
 
 **Path A — Handyman clicks "Mark Complete" (on or after scheduled date):**
 ```
@@ -114,7 +134,7 @@ Handyman clicks "Mark Complete"
 Check: Is completionPollSentAt already set?
   ↓
 IF NOT SET:
-  → Send WhatsApp info message + poll to customer
+  → Send WhatsApp message asking customer to reply YES/NO
   → Set completionPollSentAt + completionPollSentBy: 'handyman'
   → Job status → pending_confirmation
   ↓
@@ -134,7 +154,7 @@ Queries jobs where:
   - completionPollSentAt is NOT set
   ↓
 For each matching job:
-  → Send WhatsApp info message + poll to customer
+  → Send WhatsApp message asking customer to reply YES/NO
   → Set completionPollSentAt + completionPollSentBy: 'auto_trigger'
   → Job status remains 'in_progress' (handyman can still click "Mark Complete")
 ```
@@ -147,7 +167,7 @@ Job in_progress + scheduled for April 9
 ├─ April 8: Handyman tries "Mark Complete" → BLOCKED (before preferred date)
 │
 ├─ April 9: Handyman clicks "Mark Complete" → Allowed
-│   └─ completionPollSentAt is null → sends WhatsApp poll, sets flag
+│   └─ completionPollSentAt is null → sends WhatsApp message, sets flag
 │
 ├─ April 10 10am: Auto-trigger runs
 │   └─ completionPollSentAt already set → skips
@@ -156,7 +176,7 @@ Job in_progress + scheduled for April 9
 │
 ├─ April 9: Handyman doesn't click anything
 ├─ April 10 10am: Auto-trigger runs
-│   └─ completionPollSentAt is null → sends WhatsApp poll, sets flag
+│   └─ completionPollSentAt is null → sends WhatsApp message, sets flag
 │
 ├─ April 10 2pm: Handyman clicks "Mark Complete"
 │   └─ completionPollSentAt already set → updates status only, no duplicate message
@@ -167,38 +187,37 @@ Job in_progress + scheduled for April 9
 | Scenario | Handled by |
 |----------|-----------|
 | Handyman tries to mark complete early | Date gate blocks it |
-| Handyman marks complete on/after the date | Normal flow, WhatsApp poll sent |
-| Handyman forgets to mark complete | Auto-trigger sends poll after appointment date |
+| Handyman marks complete on/after the date | Normal flow, WhatsApp message sent |
+| Handyman forgets to mark complete | Auto-trigger sends message after appointment date |
 | Job is "ASAP" (no scheduled date) | No date gate, handyman can mark complete anytime |
-| Auto-trigger fires first, then handyman clicks | `completionPollSentAt` flag prevents duplicate poll |
+| Auto-trigger fires first, then handyman clicks | `completionPollSentAt` flag prevents duplicate message |
 | Handyman clicks first, then auto-trigger runs | `completionPollSentAt` flag causes auto-trigger to skip |
 
 #### Key Database Fields
 
 | Field | Type | Set by | Purpose |
 |-------|------|--------|---------|
-| `completionPollSentAt` | ISO timestamp / null | Handyman click or auto-trigger | Prevents duplicate WhatsApp polls |
-| `completionPollSentBy` | `'handyman'` or `'auto_trigger'` | Same as above | Audit trail for which path sent the poll |
+| `completionPollSentAt` | ISO timestamp / null | Handyman click or auto-trigger | Prevents duplicate WhatsApp messages |
+| `completionPollSentBy` | `'handyman'` or `'auto_trigger'` | Same as above | Audit trail for which path sent the message |
 
-### 4. Customer Confirms via Poll
+### 4. Customer Confirms via WhatsApp Reply
 ```
-Customer votes on WhatsApp poll
+Customer replies to WhatsApp message with YES or NO
   ↓
-Green-API sends webhook to Cloud Function
+Twilio sends webhook to Cloud Function
   ↓
-whatsappWebhook processes vote:
-  - First vote is locked (pollVoteLocked: true)
-  - Subsequent votes ignored with message
+whatsappWebhook processes reply:
+  - First response is locked (pollVoteLocked: true)
+  - Subsequent replies ignored with message
   ↓
-IF "Yes, Confirm":
+IF "YES":
   → Job status → pending_admin_approval
-  → Customer receives confirmation message
-  → (Optional) Admin receives email notification
+  → Customer receives: "Our team will process the payment and email you the receipt."
+  → Admin receives email notification
   ↓
-IF "No, Report Issue":
+IF "NO":
   → Job status → disputed
-  → Customer receives acknowledgment
-  → Support team notified
+  → Customer receives: "Our team will contact you with regard to this dispute."
 ```
 
 ### 5. Admin Approves Fund Release
@@ -222,21 +241,21 @@ Job status → completed
 pending (job created, payment completed, awaiting handyman)
   ↓ [Handyman clicks "Express Interest"]
 in_progress (handyman assigned, job underway)
-  ↓ [Handyman marks complete OR auto-trigger sends poll]
+  ↓ [Handyman marks complete OR auto-trigger sends message]
   │
-  │  Note: The WhatsApp completion poll can be sent by either:
+  │  Note: The WhatsApp completion message can be sent by either:
   │  (a) Handyman clicking "Mark Complete" (on or after scheduled date)
   │  (b) Auto-trigger Cloud Function (day after scheduled date, 10am SGT)
-  │  Only one poll is sent — whichever fires first sets completionPollSentAt.
+  │  Only one message is sent — whichever fires first sets completionPollSentAt.
   │
-pending_confirmation (awaiting customer poll response)
-  ↓ [Customer confirms YES via WhatsApp poll]
+pending_confirmation (awaiting customer YES/NO reply)
+  ↓ [Customer replies YES]
 pending_admin_approval (awaiting admin fund release)
   ↓ [Admin approves]
 completed (funds released)
 
 Alternative paths:
-- Customer votes NO → disputed
+- Customer replies NO → disputed
 - Admin can reject → disputed
 ```
 
@@ -244,76 +263,62 @@ Alternative paths:
 
 ## Phone Number Formatting
 
-Green-API uses a specific format: `{country_code}{number}@c.us`
+Twilio uses E.164 format with a `whatsapp:` prefix:
 
 ```javascript
 import { formatPhoneNumber } from './services/whatsappService';
 
-// All these inputs produce: "6591234567@c.us"
-formatPhoneNumber('91234567');        // → "6591234567@c.us"
-formatPhoneNumber('+6591234567');     // → "6591234567@c.us"
-formatPhoneNumber('6591234567');      // → "6591234567@c.us"
-formatPhoneNumber('+65 9123 4567');   // → "6591234567@c.us"
+// All these inputs produce: "whatsapp:+6591234567"
+formatPhoneNumber('91234567');        // → "whatsapp:+6591234567"
+formatPhoneNumber('+6591234567');     // → "whatsapp:+6591234567"
+formatPhoneNumber('6591234567');      // → "whatsapp:+6591234567"
+formatPhoneNumber('+65 9123 4567');   // → "whatsapp:+6591234567"
 ```
 
 ---
 
 ## Webhook Configuration
 
-### Green-API Console Setup
+### Twilio Console Setup
 
-1. Go to https://console.green-api.com
-2. Select your instance
-3. Go to Settings → Webhooks
-4. Set Webhook URL:
+1. Go to https://console.twilio.com
+2. Navigate to **Messaging** → **Settings** → **WhatsApp Sandbox Settings** (or your production number settings)
+3. Set the **"When a message comes in"** webhook URL:
    ```
    https://us-central1-eazydone-d06cf.cloudfunctions.net/whatsappWebhook
    ```
-5. Enable:
-   - ✅ Receive notifications about incoming messages
-   - ✅ Receive notifications about polls
+4. Method: **POST**
 
 ### Webhook Data Format
 
-**Poll Vote Webhook:**
-```json
-{
-  "typeWebhook": "incomingMessageReceived",
-  "senderData": {
-    "chatId": "6591234567@c.us",
-    "sender": "6591234567@c.us"
-  },
-  "messageData": {
-    "typeMessage": "pollUpdateMessage",
-    "pollMessageData": {
-      "votes": [
-        {
-          "optionName": "✅ Yes, Confirm Complete",
-          "optionVoters": ["6591234567@c.us"]
-        },
-        {
-          "optionName": "⚠️ No, Report Issue",
-          "optionVoters": []
-        }
-      ]
-    }
-  }
-}
+Twilio sends form-encoded POST data:
+
 ```
+From=whatsapp%3A%2B6591234567
+To=whatsapp%3A%2B14155238886
+Body=YES
+MessageSid=SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+AccountSid=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Key fields:
+- `From` - Customer's WhatsApp number (e.g., `whatsapp:+6591234567`)
+- `Body` - Customer's reply text (e.g., `YES`, `NO`)
+- `MessageSid` - Unique message identifier
 
 ---
 
-## Poll Vote Locking
+## Response Locking
 
-To prevent customers from changing their vote after initial submission:
+To prevent customers from changing their response after initial submission:
 
-1. When first vote is processed, `pollVoteLocked: true` is set on the job
-2. Subsequent votes are detected by checking for existing locked jobs
+1. When first response is processed, `pollVoteLocked: true` is set on the job
+2. Subsequent replies are detected by checking for existing locked jobs
 3. Customer receives message: "Your response has already been recorded"
 
 **Implementation in webhook:**
 ```javascript
-// Check for already locked votes first
+// Check for already locked responses first
 const lockedJobSnapshot = await admin.firestore().collection('jobs')
   .where('customerPhone', '==', phoneFormat)
   .where('pollVoteLocked', '==', true)
@@ -322,8 +327,8 @@ const lockedJobSnapshot = await admin.firestore().collection('jobs')
   .get();
 
 if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
-  // Vote already recorded - send message and return
-  await sendGreenApiMessage(chatId, "Your response has already been recorded...");
+  // Response already recorded - send message and return
+  await sendTwilioMessage(From, "Your response has already been recorded...");
   return;
 }
 ```
@@ -352,35 +357,54 @@ const ADMIN_EMAILS = [
 
 ## Setup Instructions
 
-### 1. Create Green-API Account
-1. Go to https://console.green-api.com
-2. Register and create an instance
-3. Scan QR code with WhatsApp to link
+### 1. Create Twilio Account
+1. Go to https://www.twilio.com
+2. Create an account and verify your phone number
+3. Enable WhatsApp Sandbox (for testing) or register a WhatsApp Business number
 
 ### 2. Get Credentials
-From Green-API Console:
-- Instance ID (idInstance)
-- API Token (apiTokenInstance)
-- API URL (usually https://api.green-api.com)
+From Twilio Console:
+- Account SID
+- Auth Token
+- WhatsApp From number (sandbox: `whatsapp:+14155238886`)
 
-### 3. Configure Environment Variables
+### 3. Create Content Templates
+Go to **Twilio Console** → **Content Editor** and create 3 templates:
+
+| Template | Name | Variables |
+|----------|------|-----------|
+| Job Created | `job_created` | {{1}} customerName, {{2}} serviceType, {{3}} amount, {{4}} jobId, {{5}} timing |
+| Job Accepted | `job_accepted` | {{1}} customerName, {{2}} handymanName, {{3}} serviceType, {{4}} jobId |
+| Job Completion | `job_completion_confirm` | {{1}} customerName, {{2}} handymanName, {{3}} serviceType, {{4}} jobId |
+
+After templates are approved, note down each **Content SID** (starts with `HX`).
+
+### 4. Configure Environment Variables
 
 **Frontend (`.env.local`):**
 ```env
-REACT_APP_GREENAPI_API_URL=https://api.green-api.com
-REACT_APP_GREENAPI_ID_INSTANCE=your_instance_id
-REACT_APP_GREENAPI_API_TOKEN=your_api_token
+REACT_APP_TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_AUTH_TOKEN=your_auth_token_here
+REACT_APP_TWILIO_WHATSAPP_FROM=whatsapp:+your_twilio_number
+
+# Content Template SIDs
+REACT_APP_TWILIO_TEMPLATE_JOB_CREATED=HXxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_TEMPLATE_JOB_ACCEPTED=HXxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_TWILIO_TEMPLATE_JOB_COMPLETION=HXxxxxxxxxxxxxxxxxxxxxx
 ```
 
 **Functions (`functions/.env`):**
 ```env
-GREENAPI_API_URL=https://api.green-api.com
-GREENAPI_ID_INSTANCE=your_instance_id
-GREENAPI_API_TOKEN=your_api_token
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_WHATSAPP_FROM=whatsapp:+your_twilio_number
+
+# Content Template SID (reused for auto-trigger)
+TWILIO_TEMPLATE_JOB_COMPLETION=HXxxxxxxxxxxxxxxxxxxxxx
 ```
 
-### 4. Configure Webhook
-Set webhook URL in Green-API Console to your deployed function URL.
+### 5. Configure Webhook
+Set webhook URL in Twilio Console to your deployed function URL.
 
 ### 5. Deploy Functions
 ```bash
@@ -391,25 +415,22 @@ firebase deploy --only functions:whatsappWebhook,functions:autoTriggerCompletion
 
 ---
 
-## Free Tier Limitations
+## Twilio Pricing
 
-Green-API Developer (Free) plan has a **3 correspondents per month** limit. This means you can only send/receive messages to 3 unique phone numbers per month.
-
-**Solutions:**
-- Upgrade to paid plan for production
-- Create new instance to reset correspondents
-- Test with same numbers consistently
+Twilio WhatsApp pricing:
+- **Sandbox**: Free (limited to numbers that join the sandbox)
+- **Production**: Per-message pricing varies by country (~$0.005-0.08 per message)
+- See: https://www.twilio.com/whatsapp/pricing
 
 ---
 
 ## Related Documentation
 
-- [Green-API Setup Guide](../../WHATSAPP_GREENAPI_SETUP.md)
 - [Job Dashboard](./job-dashboard.md)
 - [Job Creation Flow](./job-creation-flow.md)
-- [Green-API Docs](https://green-api.com/en/docs/)
+- [Twilio WhatsApp Docs](https://www.twilio.com/docs/whatsapp)
 
 ---
 
 **Last Updated:** 2026-04-09
-**Status:** ✅ Implemented - Poll confirmation, admin approval, date gate, auto-trigger completion poll, and duplicate prevention working
+**Status:** ✅ Implemented - Twilio WhatsApp integration with YES/NO confirmation, date gate, auto-trigger, and follow-up messages
