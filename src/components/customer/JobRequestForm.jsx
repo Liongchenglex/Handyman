@@ -308,6 +308,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       await updateJob(createdJobId, {
         status: 'pending',
         paymentResult: paymentResultData,
+        paymentIntentId: paymentResultData.id, // Store payment intent ID at top level for escrow release
         paymentCompletedAt: new Date().toISOString()
       });
 
