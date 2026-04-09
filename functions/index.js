@@ -782,131 +782,76 @@ exports.getPaymentStatus = functions.https.onRequest((req, res) => {
 });
 
 /**
- * Release escrow and split payment
+ * Release escrow and split payment (CURRENTLY UNUSED)
+ *
+ * Commented out — the app uses releaseEscrowSimple instead.
+ * Kept for future reference when multi-party splits are needed.
+ *
  * - Handyman gets 100% of service fee
  * - Platform fee is split 50/50 between cofounder and operator
  *
  * POST /releaseEscrowAndSplit
  * Body: { paymentIntentId, jobId, serviceFee, platformFee, handymanAccountId, cofounderAccountId, operatorAccountId }
  */
-exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
-  cors(req, res, async () => {
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    try {
-      // SECURITY FIX (Phase 0.4): Verify authentication
-      const decodedToken = await verifyAuthToken(req);
-
-      // SECURITY FIX (Phase 1.2): Validate and sanitize input
-      const validatedData = validate(escrowReleaseSchema)(req.body);
-      const {
-        paymentIntentId,
-        jobId,
-        serviceFee,
-        platformFee,
-        handymanAccountId,
-        cofounderAccountId,
-        operatorAccountId
-      } = validatedData;
-
-      // TODO (Phase 1): Add role-based authorization - only handyman or admin should release escrow
-
-      // Calculate splits
-      const splits = calculateSplits(serviceFee, platformFee);
-
-      // Create transfers to all three parties
-      const [cofounderTransfer, operatorTransfer, handymanTransfer] = await Promise.all([
-        stripe.transfers.create({
-          amount: dollarsToCents(splits.cofounder),
-          currency: 'sgd',
-          destination: cofounderAccountId,
-          description: `Cofounder platform fee share for job #${jobId}`,
-          metadata: {
-            jobId: jobId,
-            recipient: 'cofounder',
-            share: '50% of platform fee',
-            platformFee: platformFee.toString(),
-          },
-        }),
-        stripe.transfers.create({
-          amount: dollarsToCents(splits.operator),
-          currency: 'sgd',
-          destination: operatorAccountId,
-          description: `Operator platform fee share for job #${jobId}`,
-          metadata: {
-            jobId: jobId,
-            recipient: 'operator',
-            share: '50% of platform fee',
-            platformFee: platformFee.toString(),
-          },
-        }),
-        stripe.transfers.create({
-          amount: dollarsToCents(splits.handyman),
-          currency: 'sgd',
-          destination: handymanAccountId,
-          description: `Handyman payment for job #${jobId}`,
-          metadata: {
-            jobId: jobId,
-            recipient: 'handyman',
-            share: '100% of service fee',
-            serviceFee: serviceFee.toString(),
-          },
-        })
-      ]);
-
-      // Update job document
-      await admin.firestore().collection('jobs').doc(jobId).update({
-        paymentStatus: 'released',
-        paymentReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
-        transferIds: {
-          cofounder: cofounderTransfer.id,
-          operator: operatorTransfer.id,
-          handyman: handymanTransfer.id,
-        },
-        splits: {
-          cofounder: splits.cofounder,
-          operator: splits.operator,
-          handyman: splits.handyman,
-        },
-      });
-
-      return res.status(200).json({
-        success: true,
-        transfers: {
-          cofounder: {
-            id: cofounderTransfer.id,
-            amount: splits.cofounder,
-          },
-          operator: {
-            id: operatorTransfer.id,
-            amount: splits.operator,
-          },
-          handyman: {
-            id: handymanTransfer.id,
-            amount: splits.handyman,
-          },
-        },
-      });
-    } catch (error) {
-      console.error('Error releasing escrow:', error);
-
-      // SECURITY FIX (Phase 0.4): Handle auth errors
-      if (error.message.includes('Unauthorized')) {
-        return res.status(401).json({ error: 'Unauthorized', message: error.message });
-      }
-      if (error.message.includes('Forbidden')) {
-        return res.status(403).json({ error: 'Forbidden', message: error.message });
-      }
-
-      return res.status(500).json({
-        error: 'Failed to release escrow',
-        message: error.message
-      });
-    }
-  });
-});
+// exports.releaseEscrowAndSplit = functions.https.onRequest((req, res) => {
+//   cors(req, res, async () => {
+//     if (req.method !== 'POST') {
+//       return res.status(405).json({ error: 'Method not allowed' });
+//     }
+//     try {
+//       const decodedToken = await verifyAuthToken(req);
+//       const validatedData = validate(escrowReleaseSchema)(req.body);
+//       const {
+//         paymentIntentId, jobId, serviceFee, platformFee,
+//         handymanAccountId, cofounderAccountId, operatorAccountId
+//       } = validatedData;
+//       const splits = calculateSplits(serviceFee, platformFee);
+//       const [cofounderTransfer, operatorTransfer, handymanTransfer] = await Promise.all([
+//         stripe.transfers.create({
+//           amount: dollarsToCents(splits.cofounder), currency: 'sgd',
+//           destination: cofounderAccountId,
+//           description: `Cofounder platform fee share for job #${jobId}`,
+//           metadata: { jobId, recipient: 'cofounder', share: '50% of platform fee', platformFee: platformFee.toString() },
+//         }),
+//         stripe.transfers.create({
+//           amount: dollarsToCents(splits.operator), currency: 'sgd',
+//           destination: operatorAccountId,
+//           description: `Operator platform fee share for job #${jobId}`,
+//           metadata: { jobId, recipient: 'operator', share: '50% of platform fee', platformFee: platformFee.toString() },
+//         }),
+//         stripe.transfers.create({
+//           amount: dollarsToCents(splits.handyman), currency: 'sgd',
+//           destination: handymanAccountId,
+//           description: `Handyman payment for job #${jobId}`,
+//           metadata: { jobId, recipient: 'handyman', share: '100% of service fee', serviceFee: serviceFee.toString() },
+//         })
+//       ]);
+//       await admin.firestore().collection('jobs').doc(jobId).update({
+//         paymentStatus: 'released',
+//         paymentReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
+//         transferIds: { cofounder: cofounderTransfer.id, operator: operatorTransfer.id, handyman: handymanTransfer.id },
+//         splits: { cofounder: splits.cofounder, operator: splits.operator, handyman: splits.handyman },
+//       });
+//       return res.status(200).json({
+//         success: true,
+//         transfers: {
+//           cofounder: { id: cofounderTransfer.id, amount: splits.cofounder },
+//           operator: { id: operatorTransfer.id, amount: splits.operator },
+//           handyman: { id: handymanTransfer.id, amount: splits.handyman },
+//         },
+//       });
+//     } catch (error) {
+//       console.error('Error releasing escrow:', error);
+//       if (error.message.includes('Unauthorized')) {
+//         return res.status(401).json({ error: 'Unauthorized', message: error.message });
+//       }
+//       if (error.message.includes('Forbidden')) {
+//         return res.status(403).json({ error: 'Forbidden', message: error.message });
+//       }
+//       return res.status(500).json({ error: 'Failed to release escrow', message: error.message });
+//     }
+//   });
+// });
 
 /**
  * Release Escrow (Simplified)
