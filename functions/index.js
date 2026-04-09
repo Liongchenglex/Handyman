@@ -1387,9 +1387,21 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     }
 
     // Twilio sends form-encoded POST data
-    const { From, Body } = req.body;
+    // Log the full body for debugging
+    console.log('📥 Webhook body keys:', Object.keys(req.body || {}));
 
+    const From = req.body.From;
+    const Body = req.body.Body;
+
+    // Twilio also sends status callbacks (delivery receipts) that don't have Body.
+    // These have a MessageStatus field instead — ignore them gracefully.
     if (!From || !Body) {
+      const status = req.body.MessageStatus || req.body.SmsStatus;
+      if (status) {
+        // This is a delivery status callback, not an incoming message
+        console.log(`📋 Delivery status update: ${status}`);
+        return res.status(200).json({ received: true, processed: false, type: 'status_callback' });
+      }
       console.warn('⚠️ Missing From or Body in Twilio webhook');
       return res.status(400).json({ error: 'Missing required fields' });
     }
