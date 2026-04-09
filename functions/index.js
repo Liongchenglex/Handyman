@@ -945,7 +945,9 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       }
 
       const jobData = jobDoc.data();
-      const { paymentIntentId, estimatedBudget, handymanId } = jobData;
+      const { estimatedBudget, handymanId } = jobData;
+      // Read payment intent ID from paymentResult (single source of truth)
+      const paymentIntentId = jobData.paymentResult?.id;
 
       if (!paymentIntentId) {
         return res.status(400).json({ error: 'No payment intent found for this job' });
