@@ -16,6 +16,7 @@ import ApproveHandyman from './pages/ApproveHandyman';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminAccountApproval from './pages/AdminAccountApproval';
 import AdminFundRelease from './pages/AdminFundRelease';
+import AdminDisputedJobs from './pages/AdminDisputedJobs';
 import TermsOfService from './pages/TermsOfService';
 import PrivacyPolicy from './pages/PrivacyPolicy';
 import JobCard from './components/handyman/JobCard';
@@ -52,6 +53,7 @@ function AppContent() {
           <Route path="/admin/account-approval" element={<AdminAccountApproval />} />
           <Route path="/admin/approve-handyman" element={<ApproveHandyman />} />
           <Route path="/admin/fund-release" element={<AdminFundRelease />} />
+          <Route path="/admin/disputed-jobs" element={<AdminDisputedJobs />} />
           <Route path="/terms-of-service" element={<TermsOfService />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/job-details/:jobId" element={<JobCard />} />

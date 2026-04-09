@@ -17,7 +17,8 @@ const AdminDashboard = () => {
 
   const [stats, setStats] = useState({
     pendingHandymen: 0,
-    pendingFundReleases: 0
+    pendingFundReleases: 0,
+    activeDisputes: 0
   });
   const [loadingStats, setLoadingStats] = useState(true);
 
@@ -69,9 +70,18 @@ const AdminDashboard = () => {
         const jobsSnapshot = await getDocs(pendingJobsQuery);
         const pendingFundReleasesCount = jobsSnapshot.size;
 
+        // Count active disputes
+        const disputedJobsQuery = query(
+          jobsRef,
+          where('status', '==', 'disputed')
+        );
+        const disputedSnapshot = await getDocs(disputedJobsQuery);
+        const activeDisputesCount = disputedSnapshot.size;
+
         setStats({
           pendingHandymen: pendingHandymenCount,
-          pendingFundReleases: pendingFundReleasesCount
+          pendingFundReleases: pendingFundReleasesCount,
+          activeDisputes: activeDisputesCount
         });
       } catch (error) {
         console.error('Error fetching stats:', error);
@@ -198,7 +208,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Pending Handymen Card */}
           <Link
             to="/admin/account-approval"
@@ -265,6 +275,39 @@ const AdminDashboard = () => {
             )}
           </Link>
 
+          {/* Disputed Jobs Card */}
+          <Link
+            to="/admin/disputed-jobs"
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow group"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-xl flex items-center justify-center">
+                <span className="material-symbols-outlined text-2xl text-red-600 dark:text-red-400">
+                  gavel
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-gray-400 group-hover:text-primary transition-colors">
+                arrow_forward
+              </span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+              Disputed Jobs
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+              Review and resolve job disputes
+            </p>
+            {loadingStats ? (
+              <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded animate-pulse w-20"></div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className={`text-2xl font-bold ${stats.activeDisputes > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400'}`}>
+                  {stats.activeDisputes}
+                </span>
+                <span className="text-sm text-gray-500 dark:text-gray-400">active</span>
+              </div>
+            )}
+          </Link>
+
           {/* Quick Links Card */}
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <div className="flex items-start justify-between mb-4">
@@ -325,6 +368,7 @@ const AdminDashboard = () => {
               <ul className="text-sm text-blue-800 dark:text-blue-200 space-y-1">
                 <li>• <strong>Account Approvals:</strong> Review new handyman registrations and approve/reject them</li>
                 <li>• <strong>Fund Releases:</strong> Release payments to handymen after job completion is confirmed</li>
+                <li>• <strong>Disputed Jobs:</strong> Review and resolve disputes between customers and handymen</li>
                 <li>• Approval links from emails will also work when you're logged in</li>
               </ul>
             </div>
