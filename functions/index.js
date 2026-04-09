@@ -1252,20 +1252,20 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 // ===================================
-// WHATSAPP WEBHOOK (Green-API)
+// WHATSAPP WEBHOOK (Twilio)
 // ===================================
 
 /**
- * WhatsApp Webhook Handler (Green-API)
+ * WhatsApp Webhook Handler (Twilio)
  *
- * Handles incoming WhatsApp messages and poll responses from Green-API
- * Used for processing poll votes from job completion notifications
+ * Handles incoming WhatsApp messages from Twilio.
+ * Customers reply with "YES" or "NO" to confirm job completion.
  *
- * Poll Options:
- * - "✅ Yes, Confirm Complete" → Updates job status to 'completed', releases payment
- * - "⚠️ No, Report Issue" → Updates job status to 'disputed', notifies support
+ * Customer Replies:
+ * - "YES" → Updates job status to 'pending_admin_approval', sends follow-up message
+ * - "NO"  → Updates job status to 'disputed', sends follow-up message
  *
- * Green-API Webhook Documentation: https://green-api.com/en/docs/api/receiving/
+ * Twilio Webhook Documentation: https://www.twilio.com/docs/messaging/guides/webhook-request
  */
 exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
   try {
@@ -1274,181 +1274,137 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       return res.status(405).send('Method Not Allowed');
     }
 
-    const webhookData = req.body;
+    // Twilio sends form-encoded POST data
+    const { From, Body } = req.body;
 
-    // Check if this is a valid Green-API webhook
-    if (!webhookData.typeWebhook) {
-      console.warn('⚠️ Invalid webhook format - missing typeWebhook');
-      return res.status(400).json({ error: 'Invalid webhook format' });
+    if (!From || !Body) {
+      console.warn('⚠️ Missing From or Body in Twilio webhook');
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Only process incoming messages
-    if (webhookData.typeWebhook !== 'incomingMessageReceived') {
-      return res.status(200).json({ received: true, processed: false });
+    // Extract customer phone from Twilio format (whatsapp:+6591234567)
+    const customerPhone = From.replace('whatsapp:', '').replace('+', '');
+    const messageText = Body.trim().toUpperCase();
+
+    console.log(`📱 Incoming WhatsApp from ${customerPhone}: "${Body.trim()}"`);
+
+    // Only process YES or NO replies for job confirmation
+    const isConfirm = messageText === 'YES' || messageText === 'Y';
+    const isReject = messageText === 'NO' || messageText === 'N';
+
+    if (!isConfirm && !isReject) {
+      // Not a confirmation reply — ignore or send help message
+      console.log('ℹ️ Non-confirmation message received, ignoring');
+      return res.status(200).json({ received: true, processed: false, reason: 'Not a confirmation reply' });
     }
 
-    const messageData = webhookData.messageData;
-    const senderData = webhookData.senderData;
+    // Try multiple phone formats since customer might have stored different format
+    const phoneFormats = [
+      customerPhone,
+      `+${customerPhone}`,
+      customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone
+    ];
 
-    if (!messageData || !senderData) {
-      console.warn('⚠️ Missing messageData or senderData');
-      return res.status(400).json({ error: 'Missing required data' });
+    // STEP 1: Check if there's already a locked job (response already processed)
+    let lockedJobSnapshot = null;
+    for (const phoneFormat of phoneFormats) {
+      const snapshot = await admin.firestore().collection('jobs')
+        .where('customerPhone', '==', phoneFormat)
+        .where('pollVoteLocked', '==', true)
+        .orderBy('customerConfirmedAt', 'desc')
+        .limit(1)
+        .get();
+
+      if (!snapshot.empty) {
+        lockedJobSnapshot = snapshot;
+        break;
+      }
     }
 
-    // Extract customer phone from chatId (format: 6591234567@c.us)
-    const chatId = senderData.chatId || senderData.sender;
-    const customerPhone = chatId.replace('@c.us', '');
+    // If response already recorded, notify customer
+    if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
+      const lockedJob = lockedJobSnapshot.docs[0];
+      const lockedJobId = lockedJob.id;
+      const lockedJobData = lockedJob.data();
 
-    // Handle poll vote updates
-    if (messageData.typeMessage === 'pollUpdateMessage') {
+      await sendTwilioMessage(
+        From,
+        `ℹ️ Your response has already been recorded.\n\nYour previous response: ${lockedJobData.status === 'pending_admin_approval' ? '✅ Confirmed' : '⚠️ Issue Reported'}\n\nIf you need to change your response, please contact our support team.\n\nJob ID: ${lockedJobId}`
+      );
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: 'Response already locked'
+      });
+    }
 
-      const pollData = messageData.pollMessageData;
-      if (!pollData || !pollData.votes) {
-        console.warn('⚠️ Invalid poll data');
-        return res.status(400).json({ error: 'Invalid poll data' });
+    // STEP 2: Look for jobs pending confirmation
+    let jobsSnapshot = null;
+    for (const phoneFormat of phoneFormats) {
+      const snapshot = await admin.firestore().collection('jobs')
+        .where('customerPhone', '==', phoneFormat)
+        .where('status', '==', 'pending_confirmation')
+        .orderBy('completedAt', 'desc')
+        .limit(1)
+        .get();
+
+      if (!snapshot.empty) {
+        jobsSnapshot = snapshot;
+        break;
       }
+    }
 
-      // Find which option was selected (has voters)
-      let selectedOption = null;
-      for (const vote of pollData.votes) {
-        if (vote.optionVoters && vote.optionVoters.length > 0) {
-          selectedOption = vote.optionName;
-          break;
-        }
-      }
+    if (!jobsSnapshot || jobsSnapshot.empty) {
+      console.warn('⚠️ No pending job found for customer:', customerPhone);
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: 'No pending job found'
+      });
+    }
 
-      if (!selectedOption) {
-        console.warn('⚠️ No option selected in poll');
-        return res.status(200).json({ received: true, processed: false });
-      }
+    const jobDoc = jobsSnapshot.docs[0];
+    const jobId = jobDoc.id;
+    const jobData = jobDoc.data();
 
-      // Try multiple phone formats since customer might have stored different format
-      const phoneFormats = [
-        customerPhone,
-        `+${customerPhone}`,
-        customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone
-      ];
+    // Handle customer response
+    if (isConfirm) {
+      // Customer confirmed job completion
+      await admin.firestore().collection('jobs').doc(jobId).update({
+        status: 'pending_admin_approval',
+        customerConfirmedAt: new Date().toISOString(),
+        confirmedVia: 'whatsapp_reply',
+        pollVoteLocked: true
+      });
 
-      // STEP 1: First check if there's already a locked job (vote already processed)
-      // This catches users trying to change their vote after it was recorded
-      let lockedJobSnapshot = null;
-      for (const phoneFormat of phoneFormats) {
-        const snapshot = await admin.firestore().collection('jobs')
-          .where('customerPhone', '==', phoneFormat)
-          .where('pollVoteLocked', '==', true)
-          .orderBy('customerConfirmedAt', 'desc')
-          .limit(1)
-          .get();
+      // Send admin notification email
+      await sendAdminNotificationEmail(jobData, jobId);
 
-        if (!snapshot.empty) {
-          lockedJobSnapshot = snapshot;
-          break;
-        }
-      }
+      // Send follow-up confirmation message
+      await sendTwilioMessage(
+        From,
+        `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${jobId}\n\nWe hope to serve you again! 🔧`
+      );
 
-      // If we found a locked job, tell user their vote is already recorded
-      if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
-        const lockedJob = lockedJobSnapshot.docs[0];
-        const lockedJobId = lockedJob.id;
-        const lockedJobData = lockedJob.data();
+      return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval' });
 
-        await sendGreenApiMessage(
-          chatId,
-          `ℹ️ Your response has already been recorded.\n\nYour previous selection: ${lockedJobData.status === 'pending_admin_approval' ? '✅ Confirmed' : '⚠️ Issue Reported'}\n\nIf you need to change your response, please contact our support team.\n\nJob ID: ${lockedJobId}`
-        );
-        return res.status(200).json({
-          received: true,
-          processed: false,
-          reason: 'Vote already locked'
-        });
-      }
+    } else if (isReject) {
+      // Customer reported an issue
+      await admin.firestore().collection('jobs').doc(jobId).update({
+        status: 'disputed',
+        disputedAt: new Date().toISOString(),
+        disputedVia: 'whatsapp_reply',
+        disputeReason: 'Customer reported issue via WhatsApp reply',
+        pollVoteLocked: true
+      });
 
-      // STEP 2: Look for jobs pending confirmation (first-time votes)
-      let jobsSnapshot = null;
-      for (const phoneFormat of phoneFormats) {
-        const snapshot = await admin.firestore().collection('jobs')
-          .where('customerPhone', '==', phoneFormat)
-          .where('status', '==', 'pending_confirmation')
-          .orderBy('completedAt', 'desc')
-          .limit(1)
-          .get();
+      // Send follow-up dispute message
+      await sendTwilioMessage(
+        From,
+        `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${jobId}\n\nWe take every feedback seriously and will resolve this promptly.`
+      );
 
-        if (!snapshot.empty) {
-          jobsSnapshot = snapshot;
-          break;
-        }
-      }
-
-      if (!jobsSnapshot || jobsSnapshot.empty) {
-        console.warn('⚠️ No pending job found for customer:', customerPhone);
-        return res.status(200).json({
-          received: true,
-          processed: false,
-          reason: 'No pending job found'
-        });
-      }
-
-      const jobDoc = jobsSnapshot.docs[0];
-      const jobId = jobDoc.id;
-      const jobData = jobDoc.data();
-
-      // Handle poll response
-      if (selectedOption.includes('Confirm') || selectedOption.includes('Yes') || selectedOption.includes('✅')) {
-        // Customer confirmed job completion
-        // Update job status to pending_admin_approval (admin must release funds)
-        await admin.firestore().collection('jobs').doc(jobId).update({
-          status: 'pending_admin_approval',
-          customerConfirmedAt: new Date().toISOString(),
-          confirmedVia: 'whatsapp_poll',
-          pollVoteLocked: true  // Lock the vote to prevent changes
-        });
-
-        // Send admin notification email
-        await sendAdminNotificationEmail(jobData, jobId);
-
-        // Send confirmation message via Green-API
-        await sendGreenApiMessage(
-          chatId,
-          `✅ Thank you for confirming!\n\nYour confirmation has been received. The payment will be processed shortly.\n\nJob ID: ${jobId}\n\nWe hope to serve you again! 🔧`
-        );
-
-        return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval' });
-
-      } else if (selectedOption.includes('Report') || selectedOption.includes('Issue') || selectedOption.includes('No') || selectedOption.includes('⚠️')) {
-        // Customer reported an issue
-
-        // Update job status to disputed and lock the vote
-        await admin.firestore().collection('jobs').doc(jobId).update({
-          status: 'disputed',
-          disputedAt: new Date().toISOString(),
-          disputedVia: 'whatsapp_poll',
-          disputeReason: 'Customer reported issue via WhatsApp poll',
-          pollVoteLocked: true  // Lock the vote to prevent changes
-        });
-
-        // TODO: Send notification to support team
-
-        // Send confirmation message
-        await sendGreenApiMessage(
-          chatId,
-          `⚠️ We've received your report.\n\nOur support team will contact you shortly to resolve the issue.\n\nJob ID: ${jobId}`
-        );
-
-        return res.status(200).json({ received: true, processed: true, action: 'disputed' });
-
-      } else {
-        console.warn('Unknown poll option selected:', selectedOption);
-        return res.status(200).json({ received: true, processed: false, reason: 'Unknown option' });
-      }
-
-    } else if (messageData.typeMessage === 'textMessage') {
-      // Handle text message (could be used for support replies)
-      // For now, just acknowledge receipt
-      return res.status(200).json({ received: true, processed: false, type: 'text' });
-
-    } else {
-      // Other message types (images, files, etc.)
-      return res.status(200).json({ received: true, processed: false });
+      return res.status(200).json({ received: true, processed: true, action: 'disputed' });
     }
 
   } catch (error) {
@@ -1458,101 +1414,109 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 });
 
 /**
- * Helper function to send a message via Green-API
- * Used by webhook to send confirmation messages
+ * Helper function to send a WhatsApp message via Twilio
+ * Used by webhook and scheduled functions to send messages from the backend.
  *
  * Reads from environment variables (functions/.env):
- * - GREENAPI_API_URL
- * - GREENAPI_ID_INSTANCE
- * - GREENAPI_API_TOKEN
- */
-async function sendGreenApiMessage(chatId, message) {
-  const apiUrl = process.env.GREENAPI_API_URL || 'https://api.green-api.com';
-  const idInstance = process.env.GREENAPI_ID_INSTANCE;
-  const apiToken = process.env.GREENAPI_API_TOKEN;
-
-  if (!idInstance || !apiToken) {
-    console.warn('⚠️ Green-API not configured. Add GREENAPI_ID_INSTANCE and GREENAPI_API_TOKEN to functions/.env');
-    return { success: false, error: 'Green-API not configured' };
-  }
-
-  try {
-    const response = await fetch(
-      `${apiUrl}/waInstance${idInstance}/sendMessage/${apiToken}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId, message })
-      }
-    );
-
-    const data = await response.json();
-    return { success: true, data };
-  } catch (error) {
-    console.error('❌ Error sending Green-API message:', error);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Helper function to send a poll via Green-API
- * Used by the auto-trigger to send completion confirmation polls from the backend.
+ * - TWILIO_ACCOUNT_SID
+ * - TWILIO_AUTH_TOKEN
+ * - TWILIO_WHATSAPP_FROM (e.g., whatsapp:+14155238886)
  *
- * @param {string} chatId - Recipient chatId (e.g., 6591234567@c.us)
- * @param {string} question - Poll question (max 255 characters)
- * @param {Array<string>} options - Poll options (2-12 options)
+ * @param {string} to - Recipient in Twilio format (whatsapp:+6591234567) or raw phone number
+ * @param {string} message - Message text to send
  * @returns {Promise<object>} - API response
  */
-async function sendGreenApiPoll(chatId, question, options) {
-  const apiUrl = process.env.GREENAPI_API_URL || 'https://api.green-api.com';
-  const idInstance = process.env.GREENAPI_ID_INSTANCE;
-  const apiToken = process.env.GREENAPI_API_TOKEN;
+async function sendTwilioMessage(to, message) {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
 
-  if (!idInstance || !apiToken) {
-    console.warn('⚠️ Green-API not configured. Add GREENAPI_ID_INSTANCE and GREENAPI_API_TOKEN to functions/.env');
-    return { success: false, error: 'Green-API not configured' };
+  if (!accountSid || !authToken) {
+    console.warn('⚠️ Twilio not configured. Add TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to functions/.env');
+    return { success: false, error: 'Twilio not configured' };
   }
 
   try {
-    const formattedOptions = options.map(opt => ({ optionName: opt }));
+    const twilio = require('twilio')(accountSid, authToken);
 
-    const response = await fetch(
-      `${apiUrl}/waInstance${idInstance}/sendPoll/${apiToken}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId: chatId,
-          message: question,
-          options: formattedOptions,
-          multipleAnswers: false
-        })
-      }
-    );
+    // Ensure 'to' is in Twilio WhatsApp format
+    const toFormatted = to.startsWith('whatsapp:') ? to : formatPhoneToWhatsApp(to);
 
-    const data = await response.json();
-    return { success: true, data };
+    const result = await twilio.messages.create({
+      from: whatsappFrom,
+      to: toFormatted,
+      body: message
+    });
+
+    console.log(`✅ Twilio message sent: ${result.sid}`);
+    return { success: true, sid: result.sid };
   } catch (error) {
-    console.error('❌ Error sending Green-API poll:', error);
+    console.error('❌ Error sending Twilio message:', error);
     return { success: false, error: error.message };
   }
 }
 
 /**
- * Helper function to format a phone number to Green-API chatId format.
+ * Helper function to send a WhatsApp template message via Twilio.
+ * Used for business-initiated messages outside the 24-hour session window.
+ * Falls back to freeform text if no template SID is provided (sandbox mode).
+ *
+ * @param {string} to - Recipient in Twilio format or raw phone number
+ * @param {string} contentSid - Twilio Content Template SID (HXxxxxx)
+ * @param {object} contentVariables - Template variable values
+ * @param {string} fallbackMessage - Freeform message if no template configured
+ * @returns {Promise<object>} - API response
+ */
+async function sendTwilioTemplateMessage(to, contentSid, contentVariables, fallbackMessage) {
+  // Fall back to freeform if no template SID (sandbox mode)
+  if (!contentSid) {
+    console.warn('⚠️ No template SID — sending freeform message (sandbox mode)');
+    return await sendTwilioMessage(to, fallbackMessage);
+  }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const whatsappFrom = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
+
+  if (!accountSid || !authToken) {
+    console.warn('⚠️ Twilio not configured.');
+    return { success: false, error: 'Twilio not configured' };
+  }
+
+  try {
+    const twilio = require('twilio')(accountSid, authToken);
+    const toFormatted = to.startsWith('whatsapp:') ? to : formatPhoneToWhatsApp(to);
+
+    const result = await twilio.messages.create({
+      from: whatsappFrom,
+      to: toFormatted,
+      contentSid: contentSid,
+      contentVariables: JSON.stringify(contentVariables)
+    });
+
+    console.log(`✅ Twilio template message sent: ${result.sid}`);
+    return { success: true, sid: result.sid };
+  } catch (error) {
+    console.error('❌ Error sending Twilio template message:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Format a phone number to Twilio WhatsApp format.
  * Strips non-digit characters, adds Singapore country code (65) if needed,
- * and appends @c.us suffix.
+ * and prepends whatsapp:+ prefix.
  *
  * @param {string} phone - Phone number in any format
- * @returns {string} - Formatted chatId (e.g., 6591234567@c.us)
+ * @returns {string} - Formatted Twilio WhatsApp number (e.g., whatsapp:+6591234567)
  */
-function formatPhoneToChatId(phone) {
+function formatPhoneToWhatsApp(phone) {
   let cleaned = phone.replace(/\D/g, '');
   if (cleaned.length === 8) {
     cleaned = `65${cleaned}`;
   }
   cleaned = cleaned.replace(/^0+/, '');
-  return `${cleaned}@c.us`;
+  return `whatsapp:+${cleaned}`;
 }
 
 /**
@@ -1612,7 +1576,7 @@ async function sendAdminNotificationEmail(jobData, jobId) {
               <p><strong>Customer:</strong> ${jobData.customerName}</p>
               <p><strong>Phone:</strong> ${jobData.customerPhone}</p>
               <p><strong>Amount:</strong> <span style="color: green; font-size: 1.2em; font-weight: bold;">$${jobData.estimatedBudget}</span></p>
-              <p><strong>Confirmed Via:</strong> WhatsApp Poll</p>
+              <p><strong>Confirmed Via:</strong> WhatsApp</p>
               <p><strong>Confirmed At:</strong> ${new Date().toLocaleString('en-SG')}</p>
             </div>
 
@@ -1695,10 +1659,10 @@ exports.cleanupAbandonedJobs = functions.pubsub
   });
 
 /**
- * Auto-Trigger Completion Poll
+ * Auto-Trigger Completion Confirmation
  *
- * Runs daily at 10:00 AM SGT to automatically send WhatsApp completion polls
- * to customers whose job's scheduled date has passed.
+ * Runs daily at 10:00 AM SGT to automatically send WhatsApp completion
+ * confirmation messages to customers whose job's scheduled date has passed.
  *
  * This ensures customers are prompted to confirm job completion even if the
  * handyman forgets to click "Mark Complete". It also prevents premature
@@ -1707,7 +1671,7 @@ exports.cleanupAbandonedJobs = functions.pubsub
  * Logic:
  * - Finds jobs where: status is 'in_progress', preferredDate < today,
  *   and completionPollSentAt is not yet set.
- * - Sends the WhatsApp info message + confirmation poll to the customer.
+ * - Sends a WhatsApp confirmation message asking customer to reply YES/NO.
  * - Sets completionPollSentAt and completionPollSentBy on the job document.
  * - Does NOT change the job status — the handyman can still click "Mark Complete"
  *   which will update the status without re-sending the poll.
@@ -1777,10 +1741,13 @@ exports.autoTriggerCompletionPoll = functions.pubsub
           continue;
         }
 
-        // Send the WhatsApp completion info message + poll
-        const chatId = formatPhoneToChatId(job.customerPhone);
+        // Send the WhatsApp completion confirmation via Twilio template
+        // Reuses the same job_completion template as the handyman "Mark Complete" path
+        const toWhatsApp = formatPhoneToWhatsApp(job.customerPhone);
+        const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
 
-        const infoMessage = `Hello ${job.customerName}! 👋
+        // Fallback freeform message for sandbox testing
+        const fallbackMessage = `Hello ${job.customerName}! 👋
 
 Your scheduled job has passed its appointment date:
 
@@ -1788,22 +1755,26 @@ Your scheduled job has passed its appointment date:
 🔖 *Job ID:* ${jobId}
 📅 *Scheduled Date:* ${new Date(job.preferredDate).toLocaleDateString('en-SG')}
 
-Please confirm if the work has been completed to your satisfaction.`;
+Please confirm if the work has been completed to your satisfaction.
 
-        const infoResult = await sendGreenApiMessage(chatId, infoMessage);
+👉 Reply *YES* to confirm completion
+👉 Reply *NO* to report an issue`;
 
-        if (!infoResult.success) {
-          console.error(`❌ Failed to send info message for job ${jobId}:`, infoResult.error);
-          continue;
-        }
+        // Template variables: {{1}} customerName, {{2}} handymanName, {{3}} serviceType, {{4}} jobId
+        // For auto-trigger, handyman name comes from the job's acceptedBy field
+        const handymanName = (job.completedBy && job.completedBy.name)
+          || (job.acceptedBy && job.acceptedBy.name)
+          || 'your handyman';
 
-        // Send confirmation poll
-        const pollQuestion = `Is the job "${job.serviceType}" completed satisfactorily?`;
-        const pollOptions = ['✅ Yes, Confirm Complete', '⚠️ No, Report Issue'];
-        const pollResult = await sendGreenApiPoll(chatId, pollQuestion, pollOptions);
+        const sendResult = await sendTwilioTemplateMessage(
+          toWhatsApp,
+          templateSid,
+          { '1': job.customerName, '2': handymanName, '3': job.serviceType, '4': jobId },
+          fallbackMessage
+        );
 
-        if (!pollResult.success) {
-          console.error(`❌ Failed to send poll for job ${jobId}:`, pollResult.error);
+        if (!sendResult.success) {
+          console.error(`❌ Failed to send message for job ${jobId}:`, sendResult.error);
           continue;
         }
 
