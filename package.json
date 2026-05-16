@@ -9,7 +9,9 @@
     "test": "react-scripts test",
     "lint": "eslint src --max-warnings 0",
     "eject": "react-scripts eject",
-    "deploy": "firebase deploy"
+    "deploy": "firebase deploy",
+    "deploy:dev": "cp .env.dev .env.production.local && npm run build && firebase use dev && firebase deploy",
+    "deploy:prod": "cp .env.prod .env.production.local && npm run build && firebase use prod && firebase deploy"
   },
   "eslintConfig": {
     "extends": [

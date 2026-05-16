@@ -27,12 +27,15 @@ node_modules/
 .env.production.local
 .env.uat
 functions/.env
-functions/.env.local
-functions/.env.development
-functions/.env.test
-functions/.env.production
-functions/.env.production.local
-functions/.env.uat
+functions/.env.*
+!functions/.env.example
+
+# Per-environment frontend build configs. `npm run deploy:dev` /
+# `deploy:prod` copy the chosen one onto .env.production.local before
+# building. They contain project config (and the dev one is a copy of
+# .env.local) — keep them out of the repo.
+.env.dev
+.env.prod
 
 # Duplicate/garbage node_modules folders that occasionally appear from
 # Finder copy-paste; keep them out of the repo.

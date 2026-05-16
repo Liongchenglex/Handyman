@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "eazydone-d06cf"
+    "default": "eazydone-d06cf",
+    "dev": "eazydone-d06cf"
   }
 }
