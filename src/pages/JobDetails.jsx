@@ -5,6 +5,15 @@ import { useAuth } from '../hooks/useAuth';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import Modal from '../components/common/Modal';
 
+/**
+ * JobDetails
+ *
+ * Full-detail view for a single job. Mobile-first Tailwind layout:
+ *  - Base styles target small screens (single column, stacked sidebar).
+ *  - `lg:` breakpoints introduce the two-column main/sidebar layout once
+ *    there is enough horizontal room.
+ *  - All buttons are full-width on mobile and use >=44px tall tap targets.
+ */
 const JobDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -20,8 +29,8 @@ const JobDetails = () => {
       try {
         const jobData = await getJobById(id);
         setJob(jobData);
-      } catch (error) {
-        console.error('Error loading job:', error);
+      } catch (err) {
+        console.error('Error loading job:', err);
         setError('Failed to load job details');
       } finally {
         setIsLoading(false);
@@ -40,10 +49,10 @@ const JobDetails = () => {
     setIsAccepting(true);
     try {
       await acceptJob(job.id, user.uid);
-      setJob(prev => ({ ...prev, status: 'in_progress', handymanId: user.uid }));
+      setJob((prev) => ({ ...prev, status: 'in_progress', handymanId: user.uid }));
       setShowContactModal(true);
-    } catch (error) {
-      console.error('Error accepting job:', error);
+    } catch (err) {
+      console.error('Error accepting job:', err);
       alert('Failed to accept job. Please try again.');
     } finally {
       setIsAccepting(false);
@@ -53,23 +62,24 @@ const JobDetails = () => {
   const handleMarkCompleted = async () => {
     try {
       await updateJobStatus(job.id, 'completed');
-      setJob(prev => ({ ...prev, status: 'completed' }));
+      setJob((prev) => ({ ...prev, status: 'completed' }));
       alert('Job marked as completed! Payment will be processed.');
-    } catch (error) {
-      console.error('Error updating job status:', error);
+    } catch (err) {
+      console.error('Error updating job status:', err);
       alert('Failed to update job status. Please try again.');
     }
   };
 
-  const getStatusColor = (status) => {
-    const colors = {
-      pending: 'orange',
-      accepted: 'blue',
-      in_progress: 'purple',
-      completed: 'green',
-      cancelled: 'red'
+  // Tailwind classes for each job status badge.
+  const getStatusBadgeClass = (status) => {
+    const classes = {
+      pending: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+      accepted: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+      in_progress: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+      completed: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300',
+      cancelled: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
     };
-    return colors[status] || 'gray';
+    return classes[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
   };
 
   const formatDate = (date) => {
@@ -78,7 +88,7 @@ const JobDetails = () => {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
-      day: 'numeric'
+      day: 'numeric',
     });
   };
 
@@ -88,12 +98,21 @@ const JobDetails = () => {
 
   if (error || !job) {
     return (
-      <div className="error-container">
-        <h2>Job Not Found</h2>
-        <p>{error || 'The job you are looking for does not exist.'}</p>
-        <button onClick={() => navigate('/jobs')} className="btn-primary">
-          Back to Job Board
-        </button>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-red-600 dark:text-red-400 mb-2">
+            Job Not Found
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            {error || 'The job you are looking for does not exist.'}
+          </p>
+          <button
+            onClick={() => navigate('/jobs')}
+            className="inline-flex items-center justify-center min-h-[44px] bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-medium"
+          >
+            Back to Job Board
+          </button>
+        </div>
       </div>
     );
   }
@@ -103,95 +122,133 @@ const JobDetails = () => {
   const canMarkCompleted = job.status === 'in_progress' && user && user.uid === job.handymanId;
 
   return (
-    <div className="job-details-page">
-      <div className="container">
-        <div className="job-details-header">
-          <button onClick={() => navigate(-1)} className="back-button">
-            ← Back
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {/* Page header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <button
+            onClick={() => navigate(-1)}
+            className="inline-flex items-center gap-1 min-h-[44px] px-3 py-2 rounded-lg text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined text-lg">arrow_back</span>
+            Back
           </button>
-          <div className="job-status">
-            <span className={`status-badge status-${job.status}`}>
-              {job.status.replace('_', ' ').toUpperCase()}
-            </span>
-          </div>
+          <span
+            className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadgeClass(job.status)}`}
+          >
+            {job.status.replace('_', ' ').toUpperCase()}
+          </span>
         </div>
 
-        <div className="job-details-content">
-          <div className="job-main-info">
-            <h1>{job.serviceType} Service Required</h1>
-            
-            <div className="job-meta">
-              <div className="meta-item">
-                <span className="meta-label">Posted:</span>
-                <span className="meta-value">
-                  {new Date(job.createdAt).toLocaleDateString('en-SG')}
-                </span>
-              </div>
-              <div className="meta-item">
-                <span className="meta-label">Job ID:</span>
-                <span className="meta-value">{job.id}</span>
-              </div>
+        {/* Main / sidebar — single column on mobile, two columns from lg up */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main content */}
+          <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 sm:p-6">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white break-words">
+              {job.serviceType} Service Required
+            </h1>
+
+            {/* Meta */}
+            <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-sm text-gray-600 dark:text-gray-400">
+              <span>
+                <span className="font-medium text-gray-900 dark:text-white">Posted: </span>
+                {new Date(job.createdAt).toLocaleDateString('en-SG')}
+              </span>
+              <span className="break-all">
+                <span className="font-medium text-gray-900 dark:text-white">Job ID: </span>
+                {job.id}
+              </span>
             </div>
 
-            <div className="job-budget">
-              <h3>Budget: SGD ${job.estimatedBudget}</h3>
+            {/* Budget */}
+            <div className="mt-4 bg-primary/10 dark:bg-primary/20 rounded-lg px-4 py-3">
+              <p className="text-lg font-bold text-primary">
+                Budget: SGD ${job.estimatedBudget}
+              </p>
             </div>
 
-            <div className="job-description">
-              <h3>Job Description</h3>
-              <p>{job.description}</p>
+            {/* Description */}
+            <div className="mt-6">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
+                Job Description
+              </h3>
+              <p className="text-gray-700 dark:text-gray-300 leading-relaxed break-words">
+                {job.description}
+              </p>
             </div>
 
-            <div className="job-info-grid">
-              <div className="info-section">
-                <h4>Location & Timing</h4>
-                <div className="info-item">
-                  <span className="icon">📍</span>
-                  <div>
-                    <strong>Location:</strong>
-                    <p>{job.location}</p>
+            {/* Location & timing */}
+            <div className="mt-6">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
+                Location &amp; Timing
+              </h4>
+              <div className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 flex-shrink-0">
+                    location_on
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-gray-900 dark:text-white">Location</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 break-words">
+                      {job.location}
+                    </p>
                   </div>
                 </div>
-                
+
                 {job.preferredDate && (
-                  <div className="info-item">
-                    <span className="icon">📅</span>
-                    <div>
-                      <strong>Preferred Date:</strong>
-                      <p>{formatDate(job.preferredDate)}</p>
+                  <div className="flex items-start gap-3">
+                    <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 flex-shrink-0">
+                      calendar_today
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-white">Preferred Date</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {formatDate(job.preferredDate)}
+                      </p>
                     </div>
                   </div>
                 )}
-                
+
                 {job.preferredTime && (
-                  <div className="info-item">
-                    <span className="icon">⏰</span>
-                    <div>
-                      <strong>Preferred Time:</strong>
-                      <p className="capitalize">{job.preferredTime}</p>
+                  <div className="flex items-start gap-3">
+                    <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 flex-shrink-0">
+                      schedule
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 dark:text-white">Preferred Time</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 capitalize">
+                        {job.preferredTime}
+                      </p>
                     </div>
                   </div>
                 )}
               </div>
-
             </div>
 
+            {/* Assigned handyman */}
             {job.handymanId && (
-              <div className="handyman-info">
-                <h4>Assigned Handyman</h4>
-                <p>This job has been accepted by a qualified handyman.</p>
+              <div className="mt-6 bg-gray-50 dark:bg-gray-900 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-900 dark:text-white mb-1">
+                  Assigned Handyman
+                </h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  This job has been accepted by a qualified handyman.
+                </p>
                 {isJobOwner && (
-                  <p>You will be contacted via WhatsApp to coordinate the service.</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    You will be contacted via WhatsApp to coordinate the service.
+                  </p>
                 )}
               </div>
             )}
 
-            <div className="job-actions">
+            {/* Actions */}
+            <div className="mt-6 space-y-3">
               {canAccept && (
                 <button
                   onClick={handleAcceptJob}
                   disabled={isAccepting}
-                  className="btn-primary btn-large"
+                  className="w-full inline-flex items-center justify-center min-h-[48px] bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-semibold disabled:opacity-60"
                 >
                   {isAccepting ? <LoadingSpinner size="small" /> : 'Accept This Job'}
                 </button>
@@ -200,86 +257,94 @@ const JobDetails = () => {
               {canMarkCompleted && (
                 <button
                   onClick={handleMarkCompleted}
-                  className="btn-success btn-large"
+                  className="w-full inline-flex items-center justify-center min-h-[48px] bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-semibold"
                 >
                   Mark as Completed
                 </button>
               )}
 
               {job.status === 'pending' && !canAccept && (
-                <div className="action-message">
-                  <p>This job is available for handymen to accept.</p>
-                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
+                  This job is available for handymen to accept.
+                </p>
               )}
 
               {job.status === 'in_progress' && !canMarkCompleted && (
-                <div className="action-message">
-                  <p>This job is currently in progress.</p>
-                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400 text-center">
+                  This job is currently in progress.
+                </p>
               )}
 
               {job.status === 'completed' && (
-                <div className="action-message success">
-                  <p>✅ This job has been completed successfully!</p>
-                </div>
+                <p className="text-sm font-medium text-green-700 dark:text-green-400 text-center">
+                  ✅ This job has been completed successfully!
+                </p>
               )}
             </div>
           </div>
 
-          <div className="job-sidebar">
-            <div className="sidebar-section">
-              <h4>Payment Protection</h4>
-              <div className="protection-info">
-                <p>💳 Payment secured in escrow</p>
-                <p>🛡️ Funds released after completion</p>
-                <p>⭐ Rate your experience</p>
-              </div>
+          {/* Sidebar — stacks under the main content on mobile */}
+          <div className="space-y-6">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
+                Payment Protection
+              </h4>
+              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                <li>💳 Payment secured in escrow</li>
+                <li>🛡️ Funds released after completion</li>
+                <li>⭐ Rate your experience</li>
+              </ul>
             </div>
 
-            <div className="sidebar-section">
-              <h4>Need Help?</h4>
-              <div className="help-info">
-                <p>📱 WhatsApp: +65 6123 4567</p>
-                <p>📧 easydonehandyman@gmail.com</p>
-              </div>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
+                Need Help?
+              </h4>
+              <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
+                <li className="break-words">📱 WhatsApp: +65 6123 4567</li>
+                <li className="break-all">📧 easydonehandyman@gmail.com</li>
+              </ul>
             </div>
           </div>
         </div>
       </div>
 
+      {/* Job accepted confirmation */}
       <Modal
         isOpen={showContactModal}
         onClose={() => setShowContactModal(false)}
         title="Job Accepted Successfully!"
         size="medium"
       >
-        <div className="contact-modal">
-          <div className="success-message">
-            <div className="success-icon">🎉</div>
-            <h3>Congratulations!</h3>
-            <p>You have successfully accepted this job.</p>
-          </div>
-
-          <div className="next-steps">
-            <h4>What happens next?</h4>
-            <ol>
-              <li>The customer will be notified via WhatsApp</li>
-              <li>You'll receive the customer's contact details</li>
-              <li>Coordinate timing and final details via WhatsApp</li>
-              <li>Complete the job and mark it as finished</li>
-              <li>Receive payment once customer confirms completion</li>
-            </ol>
-          </div>
-
-          <div className="modal-actions">
-            <button
-              onClick={() => setShowContactModal(false)}
-              className="btn-primary"
-            >
-              Got it, thanks!
-            </button>
-          </div>
+        <div className="text-center">
+          <div className="text-4xl mb-2">🎉</div>
+          <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+            Congratulations!
+          </h3>
+          <p className="text-gray-600 dark:text-gray-400 mt-1">
+            You have successfully accepted this job.
+          </p>
         </div>
+
+        <div className="mt-6">
+          <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+            What happens next?
+          </h4>
+          <ol className="list-decimal list-inside space-y-1 text-sm text-gray-700 dark:text-gray-300">
+            <li>The customer will be notified via WhatsApp</li>
+            <li>You&apos;ll receive the customer&apos;s contact details</li>
+            <li>Coordinate timing and final details via WhatsApp</li>
+            <li>Complete the job and mark it as finished</li>
+            <li>Receive payment once customer confirms completion</li>
+          </ol>
+        </div>
+
+        <button
+          onClick={() => setShowContactModal(false)}
+          className="w-full mt-6 inline-flex items-center justify-center min-h-[48px] bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-semibold"
+        >
+          Got it, thanks!
+        </button>
       </Modal>
     </div>
   );

@@ -44,12 +44,26 @@ const datePickerStyles = `
     color: #648772 !important;
     font-weight: 500 !important;
   }
+  .react-datepicker__day,
+  .react-datepicker__day-name {
+    /* Larger, finger-friendly tap targets (~44px) on mobile, slightly
+       more compact on wider pointer-driven screens. */
+    width: 2.75rem !important;
+    height: 2.75rem !important;
+    line-height: 2.75rem !important;
+    margin: 0.1rem !important;
+  }
   .react-datepicker__day {
     color: #111714 !important;
     border-radius: 50% !important;
-    width: 2rem !important;
-    height: 2rem !important;
-    line-height: 2rem !important;
+  }
+  @media (min-width: 640px) {
+    .react-datepicker__day,
+    .react-datepicker__day-name {
+      width: 2.25rem !important;
+      height: 2.25rem !important;
+      line-height: 2.25rem !important;
+    }
   }
   .react-datepicker__day:hover {
     background-color: rgba(56, 224, 123, 0.2) !important;
@@ -1096,12 +1110,16 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                         alt="Uploaded"
                         className="w-full h-24 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
                           />
+                          {/* Always visible on touch screens (hover doesn't
+                              exist there); reveals on hover for pointer devices.
+                              Sized for a comfortable tap target. */}
                           <button
                         type="button"
                         onClick={() => removeImage(image.id)}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Remove uploaded image"
+                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-9 h-9 flex items-center justify-center shadow-md opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
                           >
-                        <span className="material-symbols-outlined text-sm">close</span>
+                        <span className="material-symbols-outlined text-lg">close</span>
                       </button>
                     </div>
                   ))}

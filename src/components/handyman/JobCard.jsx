@@ -113,19 +113,19 @@ const JobCard = () => {
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
           {/* Job Header */}
           <div className="bg-gradient-to-r from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/10 p-6 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white break-words">
                     {job.serviceType}
                   </h2>
                   {getUrgencyBadge(job.urgency)}
                 </div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
+                <p className="text-sm text-gray-600 dark:text-gray-400 break-words">
                   Job ID: {job.id} • Posted {job.postedAt}
                 </p>
               </div>
-              <div className="text-right">
+              <div className="text-right flex-shrink-0">
                 <p className="text-2xl font-bold text-primary">
                   SGD ${job.estimatedBudget}
                 </p>
@@ -165,14 +165,19 @@ const JobCard = () => {
                         alt={`Job reference ${index + 1}`}
                         className="w-full h-full object-cover transition-transform group-hover:scale-110"
                       />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">
-                        <button
-                          onClick={() => window.open(imageUrl, '_blank')}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity bg-white text-gray-900 px-4 py-2 rounded-lg font-medium"
-                        >
+                      {/* Tap/click anywhere on the image to enlarge. The
+                          overlay button stays visible on touch screens
+                          (no hover) and reveals on hover for pointer devices. */}
+                      <button
+                        type="button"
+                        onClick={() => window.open(imageUrl, '_blank')}
+                        aria-label={`View job reference image ${index + 1} full size`}
+                        className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/50 transition-colors"
+                      >
+                        <span className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity bg-white text-gray-900 px-4 py-2 rounded-lg font-medium text-sm shadow">
                           View Full Size
-                        </button>
-                      </div>
+                        </span>
+                      </button>
                     </div>
                   ))}
                 </div>

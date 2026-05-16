@@ -80,7 +80,7 @@ const HomePage = () => {
     <div className="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
       {/* Hero Banner Section */}
       <div className="relative overflow-hidden">
-        <div className="flex flex-col items-center justify-center h-[70vh] p-4">
+        <div className="flex flex-col items-center justify-center min-h-[70vh] py-12 p-4">
           <div className="w-full max-w-md text-center">
             <div className="mb-8">
               {/* Animated Logo */}
@@ -248,10 +248,10 @@ const HomePage = () => {
 
               <div className="space-y-4 text-left">
                 <div className="flex items-center gap-3">
-                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">mail</span>
-                  <div>
+                  <span className="material-symbols-outlined text-gray-500 dark:text-gray-400 shrink-0">mail</span>
+                  <div className="min-w-0">
                     <span className="text-gray-700 dark:text-gray-300 block font-medium">Email</span>
-                    <a href="mailto:easydonehandyman@gmail.com" className="text-green-600 dark:text-green-400 hover:underline">
+                    <a href="mailto:easydonehandyman@gmail.com" className="text-green-600 dark:text-green-400 hover:underline break-words">
                       easydonehandyman@gmail.com
                     </a>
                   </div>

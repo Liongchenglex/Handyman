@@ -397,12 +397,14 @@ const JobBoard = ({
                     </div>
                   </div>
 
-                  {/* Customer Info */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="material-symbols-outlined text-gray-400">person</span>
-                    <span className="font-medium text-gray-900 dark:text-white">{job.customerName}</span>
-                    <span className="text-gray-400">•</span>
-                    <span className="text-gray-600 dark:text-gray-400">{job.location || job.address}</span>
+                  {/* Customer Info — wraps instead of overflowing on narrow screens */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3">
+                    <span className="flex items-center gap-1 min-w-0">
+                      <span className="material-symbols-outlined text-gray-400 flex-shrink-0">person</span>
+                      <span className="font-medium text-gray-900 dark:text-white truncate">{job.customerName}</span>
+                    </span>
+                    <span className="text-gray-400 hidden sm:inline">•</span>
+                    <span className="text-gray-600 dark:text-gray-400 break-words min-w-0">{job.location || job.address}</span>
                   </div>
 
                   {/* Job Description */}
