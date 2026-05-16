@@ -22,6 +22,9 @@ const AdminFundRelease = () => {
   // Tab state
   const [activeTab, setActiveTab] = useState('pending');
 
+  // Date sort order applied to both job lists ('newest' | 'oldest').
+  const [sortOrder, setSortOrder] = useState('newest');
+
   // Pending jobs state
   const [pendingJobs, setPendingJobs] = useState([]);
   const [loadingPending, setLoadingPending] = useState(true);
@@ -207,6 +210,24 @@ const AdminFundRelease = () => {
     }
   };
 
+  // Sort a job list by its relevant date for the given tab.
+  // Pending jobs sort by when the customer confirmed (falling back to
+  // completion / creation time); completed jobs sort by release time.
+  const sortJobsByDate = (jobs, tab) => {
+    const toMillis = (raw) => {
+      if (!raw) return 0;
+      const d = raw.toDate ? raw.toDate() : new Date(raw);
+      const t = d.getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
+    const dateOf = (job) => tab === 'completed'
+      ? toMillis(job.paymentReleasedAt)
+      : toMillis(job.customerConfirmedAt || job.completedAt || job.createdAt);
+    return [...jobs].sort((a, b) =>
+      sortOrder === 'newest' ? dateOf(b) - dateOf(a) : dateOf(a) - dateOf(b)
+    );
+  };
+
   // Format date helper
   const formatDate = (dateValue) => {
     if (!dateValue) return 'N/A';
@@ -289,28 +310,44 @@ const AdminFundRelease = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Tabs */}
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={() => handleTabChange('pending')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'pending'
-                ? 'bg-primary text-black'
-                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            Pending ({pendingJobs.length})
-          </button>
-          <button
-            onClick={() => handleTabChange('completed')}
-            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-              activeTab === 'completed'
-                ? 'bg-primary text-black'
-                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
-          >
-            Completed ({completedJobs.length})
-          </button>
+        {/* Tabs + sort control */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleTabChange('pending')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                activeTab === 'pending'
+                  ? 'bg-primary text-black'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Pending ({pendingJobs.length})
+            </button>
+            <button
+              onClick={() => handleTabChange('completed')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                activeTab === 'completed'
+                  ? 'bg-primary text-black'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              Completed ({completedJobs.length})
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="sortOrder" className="text-sm text-gray-500 dark:text-gray-400">
+              Sort by date:
+            </label>
+            <select
+              id="sortOrder"
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value)}
+              className="text-sm px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:border-primary focus:ring-1 focus:ring-primary"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </div>
         </div>
         {/* Pending Tab Content */}
         {activeTab === 'pending' && (
@@ -329,7 +366,7 @@ const AdminFundRelease = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {pendingJobs.map((job) => (
+                {sortJobsByDate(pendingJobs, 'pending').map((job) => (
                   <div
                     key={job.id}
                     className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"
@@ -436,7 +473,7 @@ const AdminFundRelease = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {completedJobs.map((job) => (
+                {sortJobsByDate(completedJobs, 'completed').map((job) => (
                   <div
                     key={job.id}
                     className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6"

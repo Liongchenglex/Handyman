@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 // import { useForm } from 'react-hook-form';
@@ -162,6 +162,30 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     return errors;
   };
 
+  // Time-slot availability: when a job is scheduled for today, slots
+  // whose start time has already passed must not be selectable.
+  const parseSlotStartMinutes = (slot) => {
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(slot || '');
+    if (!m) return 0;
+    let hour = parseInt(m[1], 10) % 12;
+    if (m[3].toUpperCase() === 'PM') hour += 12;
+    return hour * 60 + parseInt(m[2], 10);
+  };
+
+  const isSameCalendarDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  const nowDate = new Date();
+  const scheduledForToday = !!selectedDate &&
+    isSameCalendarDay(new Date(selectedDate), nowDate);
+  const nowMinutes = nowDate.getHours() * 60 + nowDate.getMinutes();
+  // A slot is "past" if the job is for today and the slot's START time
+  // has already been reached/passed.
+  const isSlotInPast = (slot) =>
+    scheduledForToday && parseSlotStartMinutes(slot) <= nowMinutes;
+
   const validateJobData = () => {
     const errors = {};
 
@@ -175,6 +199,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
 
     if (selectedTiming === 'Schedule' && !jobFormData.time) {
       errors.time = 'This field is required';
+    } else if (selectedTiming === 'Schedule' && isSlotInPast(jobFormData.time)) {
+      errors.time = 'That time slot has already passed — pick a later slot or date.';
     }
 
     if (!selectedMaterials) {
@@ -205,6 +231,18 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     '01:00 PM - 03:00 PM',
     '03:00 PM - 05:00 PM'
   ];
+
+  // Keep the selected time valid: if it falls into the past (e.g. the
+  // date is switched to today, or the page sits open past a slot),
+  // snap the selection to the first slot that's still available.
+  useEffect(() => {
+    if (selectedTiming !== 'Schedule') return;
+    if (jobFormData.time && isSlotInPast(jobFormData.time)) {
+      const firstAvailable = timeSlots.find((slot) => !isSlotInPast(slot));
+      setJobFormData((prev) => ({ ...prev, time: firstAvailable || '' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate, selectedTiming]);
 
   const handlePersonalSubmit = (data) => {
     const validationErrors = validatePersonalData(data);
@@ -967,12 +1005,14 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                   <label className="text-lg font-bold">Select time</label>
                   <select
                     className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 focus:border-primary focus:ring-primary focus:ring-2"
-                    defaultValue={jobFormData.time}
+                    value={jobFormData.time}
                     onChange={(e) => updateJobFormData('time', e.target.value)}
                     {...register('time')}
                       >
                     {timeSlots.map(slot => (
-                      <option key={slot} value={slot}>{slot}</option>
+                      <option key={slot} value={slot} disabled={isSlotInPast(slot)}>
+                        {slot}{isSlotInPast(slot) ? ' — passed' : ''}
+                      </option>
                     ))}
                   </select>
                   {jobErrors.time && <span className="text-red-500 text-sm mt-1">{jobErrors.time}</span>}

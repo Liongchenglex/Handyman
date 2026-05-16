@@ -1908,9 +1908,33 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         const paymentIntent = event.data.object;
         const jobId = paymentIntent.metadata?.jobId;
         if (jobId) {
-          await admin.firestore().collection('jobs').doc(jobId).update({
-            paymentStatus: 'succeeded',
-            paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
+          const jobRef = admin.firestore().collection('jobs').doc(jobId);
+          // Conditional update. releaseEscrowSimple CAPTURES the
+          // PaymentIntent, and a capture makes Stripe fire
+          // payment_intent.succeeded. If we blindly wrote
+          // paymentStatus:'succeeded' here, it would clobber the
+          // 'released' status the escrow-release flow just set —
+          // making the job vanish from the admin "Completed" tab
+          // (which queries paymentStatus == 'released'). So only
+          // advance a job that is still in an early payment state;
+          // never downgrade one that has already been released,
+          // is mid-release, or has been refunded.
+          await admin.firestore().runTransaction(async (tx) => {
+            const snap = await tx.get(jobRef);
+            if (!snap.exists) return;
+            const current = snap.data().paymentStatus;
+            const laterStates = [
+              'released',
+              'release_pending',
+              'release_failed',
+              'refunded',
+              'partially_refunded',
+            ];
+            if (laterStates.includes(current)) return;
+            tx.update(jobRef, {
+              paymentStatus: 'succeeded',
+              paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
           });
         }
         break;
@@ -2251,11 +2275,18 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     // Process confirmation replies — supports both text replies (YES/NO)
     // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
-    const isConfirm = messageText === 'YES' || messageText === 'Y'
+    // Intent detection. Word-boundary matches so a disambiguation
+    // reply like "1 YES" / "2 NO" (used when several jobs await
+    // confirmation) is still recognised as confirm/reject.
+    const isConfirm = /\bYES\b/.test(messageText) || /\bY\b/.test(messageText)
       || messageText.includes('CONFIRM') || messageText.includes('COMPLETE');
-    const isReject = messageText === 'NO' || messageText === 'N'
+    const isReject = /\bNO\b/.test(messageText) || /\bN\b/.test(messageText)
       || messageText.includes('REPORT') || messageText.includes('ISSUE')
       || messageText.includes('REJECT');
+    // Optional leading job selector ("1 YES" → job #1) for the
+    // multi-job disambiguation flow further below.
+    const selectorMatch = messageText.match(/\b([1-9])\b/);
+    const selectorIndex = selectorMatch ? parseInt(selectorMatch[1], 10) : null;
 
     if (!isConfirm && !isReject) {
       // Not a confirmation reply — ignore
@@ -2270,27 +2301,61 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone
     ];
 
-    // Find the job currently awaiting confirmation for this customer.
-    // Scoping by status (not by a separate "locked" flag) ensures that responding
-    // to one job never blocks responses to a later, distinct job.
-    let pendingJobRef = null;
+    // Collect ALL jobs awaiting confirmation for this customer.
+    // Scoping by per-job status (rather than a per-phone lock) keeps
+    // each job independent: confirming one job never blocks another.
+    const pendingByJobId = new Map();
     for (const phoneFormat of phoneFormats) {
       const snapshot = await admin.firestore().collection('jobs')
         .where('customerPhone', '==', phoneFormat)
         .where('status', '==', 'pending_confirmation')
         .orderBy('completedAt', 'desc')
-        .limit(1)
+        .limit(20)
         .get();
+      snapshot.docs.forEach((d) => pendingByJobId.set(d.id, d));
+    }
+    const pendingDocs = Array.from(pendingByJobId.values()).sort((a, b) => {
+      const ta = a.data().completedAt ? new Date(a.data().completedAt).getTime() : 0;
+      const tb = b.data().completedAt ? new Date(b.data().completedAt).getTime() : 0;
+      return tb - ta;
+    });
 
-      if (!snapshot.empty) {
-        pendingJobRef = snapshot.docs[0].ref;
-        break;
+    let pendingJobRef = null;
+
+    if (pendingDocs.length === 1) {
+      // Unambiguous — exactly one job is awaiting confirmation.
+      pendingJobRef = pendingDocs[0].ref;
+    } else if (pendingDocs.length > 1) {
+      // Several jobs await confirmation. A bare YES/NO cannot be
+      // safely attributed to a specific job — applying it to the
+      // wrong one would let a reply meant for job A silently
+      // confirm/reject job B. Require the customer to pick by number.
+      if (selectorIndex && selectorIndex <= pendingDocs.length) {
+        pendingJobRef = pendingDocs[selectorIndex - 1].ref;
+      } else {
+        const list = pendingDocs
+          .map((d, i) => `${i + 1}. ${d.data().serviceType || 'Job'} (#${d.id.slice(-6)})`)
+          .join('\n');
+        await sendTwilioMessage(
+          From,
+          `You have ${pendingDocs.length} jobs awaiting confirmation:\n\n${list}\n\n` +
+          `Please reply with the job number and YES or NO — e.g. "1 YES" to confirm job 1, or "2 NO" to report an issue with job 2.`
+        );
+        return res.status(200).json({
+          received: true,
+          processed: false,
+          reason: 'Multiple jobs pending — asked customer to disambiguate'
+        });
       }
     }
 
-    // Fallback: no job is currently pending. If the customer's most recent job
-    // was already responded to (e.g. they tapped Confirm then Report), reply with
-    // a helpful "already recorded" message pointing at support.
+    // No job is currently awaiting confirmation. If the customer's
+    // recent job was already responded to, tell them it's locked —
+    // this is what stops a job that was confirmed from later being
+    // rejected (or vice versa) in the same WhatsApp thread. Each
+    // job's status leaves 'pending_confirmation' once answered, and
+    // the transaction below re-checks it, so a second reply can never
+    // flip an already-decided job.
     if (!pendingJobRef) {
       let alreadyResponded = null;
       for (const phoneFormat of phoneFormats) {
@@ -2316,7 +2381,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           : '⚠️ Issue Reported';
         await sendTwilioMessage(
           From,
-          `ℹ️ Your response for Job #${alreadyResponded.id} has already been recorded as: ${previousAction}.\n\nIf this was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+          `ℹ️ Your response for Job #${alreadyResponded.id} has already been recorded as: ${previousAction}.\n\nThis cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
         );
         return res.status(200).json({
           received: true,
@@ -2367,11 +2432,28 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       });
     } catch (txError) {
       if (txError.message === 'ALREADY_PROCESSED') {
-        // Another webhook for the same job won the race — acknowledge silently.
+        // The job was already answered between the lookup and the
+        // transaction — typically the customer tapped both buttons
+        // (Confirm then Report, or the reverse) and this is the
+        // second tap. Tell them explicitly that this response did
+        // NOT change the outcome, rather than acknowledging silently.
+        let recordedAs = 'already recorded';
+        try {
+          const snap = await pendingJobRef.get();
+          const s = snap.exists ? snap.data().status : null;
+          if (s === 'pending_admin_approval') recordedAs = '✅ Confirmed';
+          else if (s === 'disputed') recordedAs = '⚠️ Issue Reported';
+        } catch (readErr) {
+          console.error('Could not read job status after ALREADY_PROCESSED:', readErr);
+        }
+        await sendTwilioMessage(
+          From,
+          `ℹ️ Your ${isConfirm ? 'confirmation' : 'report'} for Job #${jobId} did not go through — this job has already been recorded as: ${recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+        );
         return res.status(200).json({
           received: true,
           processed: false,
-          reason: 'Job already processed by concurrent webhook'
+          reason: 'Job already processed — customer notified'
         });
       }
       throw txError;

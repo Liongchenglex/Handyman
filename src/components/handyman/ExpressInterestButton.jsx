@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -23,6 +24,7 @@ const ExpressInterestButton = ({
   onSuccess
 }) => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
@@ -79,7 +81,7 @@ const ExpressInterestButton = ({
 
       alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
 
-      // Execute callbacks
+      // Execute callbacks (board/card cleanup) before navigating away.
       if (onJobSelect) {
         onJobSelect(job);
       }
@@ -88,6 +90,9 @@ const ExpressInterestButton = ({
       }
 
       setIsLoading(false);
+
+      // Take the handyman straight to the job they just picked up.
+      navigate(`/job-details/${job.id}`);
     } catch (error) {
       console.error('Error expressing interest:', error);
       alert('Failed to express interest. Please try again.');
@@ -175,7 +180,7 @@ const ExpressInterestButton = ({
       >
         {isLoading ? (
           <>
-            <LoadingSpinner />
+            <LoadingSpinner size="small" />
             Expressing Interest...
           </>
         ) : (
