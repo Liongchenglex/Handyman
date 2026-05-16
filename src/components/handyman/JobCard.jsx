@@ -1,8 +1,10 @@
-import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { getJob } from '../../services/firebase';
 import ExpressInterestButton from './ExpressInterestButton';
 import JobActionButtons from './JobActionButtons';
+import LoadingSpinner from '../common/LoadingSpinner';
 import { formatDate, getUrgencyBadge } from '../../utils/jobHelpers';
 
 /**
@@ -15,13 +17,48 @@ import { formatDate, getUrgencyBadge } from '../../utils/jobHelpers';
 const JobCard = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { jobId } = useParams();
   const { user } = useAuth();
 
-  // Get job data from navigation state
-  const job = location.state?.job;
+  // A job can arrive two ways:
+  //  1. Via navigation state — the fast path when coming from the job
+  //     board (the job object is already in hand, no fetch needed).
+  //  2. Via the /job-details/:jobId URL directly — a page refresh, a
+  //     shared link, or the post-express-interest redirect. There's
+  //     no state then, so we fetch the job by its ID. Previously this
+  //     case always showed "Job not found".
+  const [job, setJob] = useState(location.state?.job || null);
+  const [loading, setLoading] = useState(!location.state?.job && !!jobId);
+
+  useEffect(() => {
+    if (job || !jobId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fetched = await getJob(jobId);
+        if (!cancelled) setJob(fetched);
+      } catch (err) {
+        // getJob throws 'Document not found' for a missing job —
+        // leaving job null renders the not-found view below.
+        console.error('Failed to load job', jobId, err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [jobId, job]);
 
   // Check if this job belongs to the current handyman
   const isMyJob = job?.handymanId === user?.uid;
+
+  // While fetching a job opened directly by URL.
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   // Handle case where no job data is available
   if (!job) {
