@@ -12,7 +12,7 @@ export const EMAIL_CONFIG = {
 
   // Company details for email templates
   COMPANY_NAME: 'EazyDone',
-  COMPANY_SUPPORT_EMAIL: 'support@eazydone.com',
+  COMPANY_SUPPORT_EMAIL: 'easydonehandyman@gmail.com',
 
   // Email service configuration (using EmailJS - free tier)
   // Sign up at: https://www.emailjs.com/
@@ -86,7 +86,7 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
             <li>Earn money doing what you do best</li>
           </ul>
 
-          <p>If you have any questions, feel free to reach out to our support team at <a href="mailto:support@eazydone.com">support@eazydone.com</a>.</p>
+          <p>If you have any questions, feel free to reach out to our support team at <a href="mailto:easydonehandyman@gmail.com">easydonehandyman@gmail.com</a>.</p>
 
           <p>Best regards,<br>
           <strong>The EazyDone Team</strong></p>

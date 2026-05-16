@@ -224,8 +224,8 @@ const ApproveHandyman = () => {
         <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Questions or issues? Contact{' '}
-            <a href="mailto:support@eazydone.com" className="text-primary hover:underline">
-              support@eazydone.com
+            <a href="mailto:easydonehandyman@gmail.com" className="text-primary hover:underline">
+              easydonehandyman@gmail.com
             </a>
           </p>
         </div>

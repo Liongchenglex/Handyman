@@ -51,9 +51,14 @@ async function main() {
   // the GOOGLE_APPLICATION_CREDENTIALS env var, or the default file
   // path. We initialise the Admin SDK *with* the explicit credential
   // object so we don't accidentally pick up emulator credentials.
-  const keyPath = args.key
+  const rawKeyPath = args.key
     || process.env.GOOGLE_APPLICATION_CREDENTIALS
     || path.resolve(__dirname, '..', 'service-account.json');
+
+  // Resolve to an ABSOLUTE path against the current working directory.
+  // Without this, a bare filename like "service-account-dev.json" would
+  // be handed to require() as a module name and fail to resolve.
+  const keyPath = path.resolve(process.cwd(), rawKeyPath);
 
   let serviceAccount;
   try {

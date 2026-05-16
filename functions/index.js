@@ -435,6 +435,46 @@ exports.processHandymanApproval = functions.https.onRequest((req, res) => {
   });
 });
 
+/**
+ * checkEmailExists — reports whether a Firebase Auth user already exists
+ * for a given email. Called by the handyman signup screen so a
+ * duplicate registration is caught immediately, instead of after the
+ * applicant has filled out the entire multi-step profile form (where
+ * createUserWithEmailAndPassword would finally reject it).
+ *
+ * Unauthenticated by design — the signup screen has no user yet. This
+ * does technically allow email enumeration, but the registration flow
+ * ALREADY reveals the same fact ("This email is already registered")
+ * at final submit, so this endpoint exposes nothing new. It only
+ * returns a boolean — never any user data.
+ *
+ * Body: { email: string }  ->  { exists: boolean }
+ */
+exports.checkEmailExists = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    const { email } = req.body || {};
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Missing email' });
+    }
+    try {
+      await admin.auth().getUserByEmail(email.trim().toLowerCase());
+      return res.status(200).json({ exists: true });
+    } catch (err) {
+      if (err.code === 'auth/user-not-found') {
+        return res.status(200).json({ exists: false });
+      }
+      // auth/invalid-email or anything else — don't block signup on an
+      // infra hiccup; the final createUserWithEmailAndPassword is still
+      // the hard gate. Report the failure so the client can decide.
+      console.error('checkEmailExists lookup failed:', err.code || err.message);
+      return res.status(500).json({ error: 'Email lookup failed' });
+    }
+  });
+});
+
 // ===================================
 // HELPER FUNCTIONS
 // ===================================

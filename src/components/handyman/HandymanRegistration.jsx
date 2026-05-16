@@ -302,14 +302,33 @@ const HandymanRegistration = ({
         }
       }
 
-      // Step 4: Update handyman document with uploaded file URLs
-      if (workExperienceUrls.length > 0 || profileImageUrl) {
-        await updateDocument('handymen', user.uid, {
-          workExperienceUrls: workExperienceUrls,
-          profileImageUrl: profileImageUrl,
-          updatedAt: new Date().toISOString()
-        });
-      }
+      // Step 4: Persist the full handyman profile.
+      //
+      // registerHandyman() only writes the base doc (name, email,
+      // phone, serviceTypes). The profile fields collected across the
+      // later form steps — experience level, hourly rate, service
+      // areas, description, availability, address — were never being
+      // written, so the admin approval screen showed them blank.
+      // Field names here MUST match what AdminAccountApproval.jsx /
+      // ApproveHandyman.jsx read (experienceLevel, hourlyRate,
+      // serviceAreas, description).
+      //
+      // This runs unconditionally now (not only when files exist).
+      // It's an owner update that doesn't touch verified/status, so
+      // the Firestore handymen rule permits it.
+      await updateDocument('handymen', user.uid, {
+        address: personalData.address || null,
+        postalCode: personalData.postalCode || null,
+        experienceLevel: professionalData.experienceLevel || null,
+        hourlyRate: professionalData.hourlyRate || null,
+        serviceAreas: professionalData.serviceAreas || [],
+        description: professionalData.description || '',
+        availability: professionalData.availability || null,
+        preferences: preferencesData || {},
+        workExperienceUrls: workExperienceUrls,
+        profileImageUrl: profileImageUrl,
+        updatedAt: new Date().toISOString()
+      });
 
       // Combine all form data for callback
       const completeData = {

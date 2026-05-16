@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { signInHandyman } from '../../services/firebase';
+import { callFunction } from '../../services/api/cloudFunctions';
 
 /**
  * HandymanAuth Component
@@ -99,8 +100,29 @@ const HandymanAuth = ({
             });
           }
         } else {
-          // For signup, we just pass credentials to the registration page
-          // The full registration happens in HandymanRegistration component
+          // Signup: catch a duplicate account BEFORE sending the
+          // applicant through the whole multi-step profile form.
+          // createUserWithEmailAndPassword would otherwise only reject
+          // it at the very end. If the existence check itself fails
+          // (network/infra), we let signup proceed — the final account
+          // creation is still the hard gate.
+          try {
+            const { exists } = await callFunction(
+              'checkEmailExists',
+              { email: formData.email },
+              { requireAuth: false }
+            );
+            if (exists) {
+              setErrors({ email: 'This email is already registered. Please sign in instead.' });
+              setIsSubmitting(false);
+              return;
+            }
+          } catch (checkErr) {
+            console.warn('Email existence pre-check failed, proceeding to registration:', checkErr);
+          }
+
+          // Pass credentials to the registration page; the full
+          // registration happens in the HandymanRegistration component.
           if (onSignupSuccess) {
             onSignupSuccess({
               email: formData.email,

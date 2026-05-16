@@ -46,7 +46,7 @@ const SuspendedStatusView = ({ userProfile }) => {
             Please contact support to resolve this issue.
           </p>
           <a
-            href="mailto:support@eazydone.com"
+            href="mailto:easydonehandyman@gmail.com"
             className="inline-flex items-center gap-2 bg-primary text-black px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors font-medium"
           >
             <span className="material-symbols-outlined text-sm">email</span>

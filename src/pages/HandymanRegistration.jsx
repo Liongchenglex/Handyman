@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import HandymanRegistration from '../components/handyman/HandymanRegistration';
+import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
  * HandymanRegistration Page
@@ -11,6 +13,18 @@ import HandymanRegistration from '../components/handyman/HandymanRegistration';
 const HandymanRegistrationPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, isHandyman, loading } = useAuth();
+
+  // Guard: a user who is already a registered handyman has no business
+  // on the registration form — send them to their dashboard. This
+  // mirrors the guard on the /handyman-auth page. (An anonymous
+  // customer is allowed through — a customer may legitimately register
+  // as a handyman.)
+  useEffect(() => {
+    if (!loading && user && isHandyman) {
+      navigate('/handyman-dashboard', { replace: true });
+    }
+  }, [user, isHandyman, loading, navigate]);
 
   // Get email/password from navigation state
   const initialData = location.state || {};
@@ -30,6 +44,16 @@ const HandymanRegistrationPage = () => {
   const handleBackToAuth = () => {
     navigate('/handyman-auth');
   };
+
+  // While auth state resolves, or if the guard above is about to
+  // redirect an already-registered handyman, don't flash the form.
+  if (loading || (user && isHandyman)) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <LoadingSpinner />
+      </div>
+    );
+  }
 
   return (
     <HandymanRegistration

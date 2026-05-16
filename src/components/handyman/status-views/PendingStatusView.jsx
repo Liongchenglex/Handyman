@@ -83,7 +83,7 @@ const PendingStatusView = ({ userProfile }) => {
               Have questions about your application?
             </p>
             <a
-              href="mailto:support@eazydone.com"
+              href="mailto:easydonehandyman@gmail.com"
               className="inline-flex items-center gap-2 text-primary hover:underline font-medium"
             >
               <span className="material-symbols-outlined text-sm">email</span>
