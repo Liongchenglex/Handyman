@@ -65,7 +65,6 @@ const HandymanRegistration = ({
   // Error states for each step
   const [personalErrors, setPersonalErrors] = useState({});
   const [professionalErrors, setProfessionalErrors] = useState({});
-  const [documentsErrors, setDocumentsErrors] = useState({});
 
   // Service types and other options
   const serviceTypes = [

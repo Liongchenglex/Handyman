@@ -1,15 +1,16 @@
 import axios from 'axios';
 import { auth } from '../firebase/config';
+import { projectConfig } from '../../config/firebaseProject';
 
 /**
  * Stripe API Service
  *
  * This file contains all API calls to Firebase Cloud Functions for Stripe operations.
- * After deploying functions, replace BASE_URL with your actual Firebase Functions URL.
  */
 
-// Firebase Functions Base URL
-const BASE_URL = 'https://us-central1-eazydone-d06cf.cloudfunctions.net';
+// Firebase Functions Base URL — derived from the configured Firebase
+// project (see src/config/firebaseProject.js).
+const BASE_URL = projectConfig.functionsBaseUrl;
 
 // Add axios interceptor to include Firebase auth token in all requests
 axios.interceptors.request.use(

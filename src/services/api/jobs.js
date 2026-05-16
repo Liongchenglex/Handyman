@@ -44,7 +44,10 @@ export const createJob = async (jobData) => {
       console.log(`Uploading ${jobData.images.length} images...`);
 
       const uploadPromises = jobData.images.map(async (image, index) => {
-        const path = `jobs/temp-${Date.now()}/images/${image.file.name}`;
+        // Embed customerId (= auth uid) in the storage path so the storage
+        // rule can enforce that only the uploading user can write here.
+        // Path shape: jobs/temp-{uid}-{ts}/images/{filename}
+        const path = `jobs/temp-${jobData.customerId}-${Date.now()}/images/${image.file.name}`;
         try {
           const url = await uploadImage(image.file, path, {
             maxWidth: 1200,

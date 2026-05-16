@@ -31,10 +31,55 @@ service cloud.firestore {
              get(/databases/$(database)/documents/handymen/$(request.auth.uid)).data.verified == true;
     }
 
+    // Admin is identified by the Firebase Auth custom claim `admin: true`.
+    // This is set by scripts/grant-admin.js (bootstrap) or by the
+    // setAdminClaim Cloud Function. Custom claims travel inside the ID
+    // token, so this check is a constant-time field lookup — no Firestore
+    // read, no extra latency, no per-request quota cost. Keep the rule
+    // definition in sync with the equivalent helpers in functions/index.js
+    // and storage.rules.
     function isAdmin() {
-      return isSignedIn() &&
-             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    // Fields on a job document that represent settled financial state.
+    // Clients (customer or handyman) must NEVER mutate these directly —
+    // they are written exclusively by Cloud Functions (Admin SDK) in
+    // response to Stripe events (payment capture, transfer, refund) or
+    // admin actions. Mutating any of them client-side would let a user
+    // forge payment status, hijack a transfer, or fake a refund.
+    //
+    // Notes on what's intentionally NOT here:
+    //   - paymentResult / paymentIntentId / paymentCompletedAt are written
+    //     by the customer's client during the create→confirm flow. Cross-
+    //     referencing the paymentIntent metadata back to the job is the
+    //     defense for those (Batch B follow-up).
+    //   - status / handymanId are workflow fields the customer/handyman
+    //     legitimately update; financial state-machine integrity for
+    //     status (e.g. blocking client-set 'released') is enforced
+    //     server-side by the release/refund Cloud Functions.
+    function jobSystemFields() {
+      return [
+        'paymentStatus',
+        'paymentSucceededAt',
+        'paymentReleasedAt',
+        'paymentReleasedBy',
+        'paymentRefundedAt',
+        'paymentReleaseError',
+        'paymentReleaseFailedAt',
+        'paymentBreakdown',
+        'escrowReleased',
+        'priceAdjustment',
+        'transferId',
+        'transferReversalId',
+        'chargeId',
+        'refundId',
+        'refundedAmount'
+      ];
+    }
+
+    function touchesJobSystemFields() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(jobSystemFields());
     }
 
     // Users collection
@@ -55,19 +100,39 @@ service cloud.firestore {
 
     // Jobs collection
     match /jobs/{jobId} {
-      // Anyone can read jobs (for handymen to browse) - including anonymous users
+      // Any signed-in user can read jobs. Handymen browse the board for
+      // available work, and customers see their own job state.
+      //
+      // Known caveat (Batch B): customerPhone composite indexes are still
+      // present because the whatsappWebhook needs them to find the
+      // pending job by an incoming phone number. That means an
+      // authenticated user with read access can enumerate jobs by
+      // phone. Mitigation lives in restricting WHO can read; tightening
+      // this to (owner || assignedHandyman || isAdmin) would break the
+      // public job board, so the deeper fix is to route the webhook's
+      // lookup through a server-only mirror collection rather than the
+      // live jobs collection.
       allow read: if isSignedIn();
 
       // Customers can create jobs (including anonymous users)
       allow create: if isSignedIn() &&
                       request.resource.data.customerId == request.auth.uid;
 
-      // Job owner or assigned handyman can update
-      // Handymen can also update to assign themselves (express interest)
+      // Job owner or assigned handyman can update workflow fields. Financial
+      // and system fields (see jobSystemFields()) are NEVER writable by
+      // clients — those flow only through Cloud Functions / Admin SDK, which
+      // bypasses these rules. Admins can update anything (e.g. dispute
+      // resolution writes status changes).
       allow update: if isSignedIn() && (
-        isOwner(resource.data.customerId) ||
-        (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
-        (resource.data.handymanId == null && request.resource.data.handymanId == request.auth.uid)
+        isAdmin() ||
+        (
+          !touchesJobSystemFields() &&
+          (
+            isOwner(resource.data.customerId) ||
+            (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
+            (resource.data.handymanId == null && request.resource.data.handymanId == request.auth.uid)
+          )
+        )
       );
 
       // Only job owner can delete (within limits)
@@ -78,21 +143,23 @@ service cloud.firestore {
 
     // Handymen collection
     match /handymen/{handymanId} {
-      // Anyone can read verified handyman profiles
+      // Anyone signed in can read handyman profiles (browse / display).
       allow read: if isSignedIn();
 
       // Handyman can create their own profile
       allow create: if isSignedIn() && isOwner(handymanId);
 
-      // Handyman can update their own profile (except verified status)
+      // Handyman can update their own profile, but NOT the verified/status
+      // fields — those gate access to verified-handyman privileges and
+      // must remain admin-controlled.
       allow update: if isSignedIn() && isOwner(handymanId) &&
                       (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'status']));
 
-      // Allow approval/rejection for pending handymen (for email approval links)
-      // Anyone can update if current status is 'pending' (newly registered)
-      allow update: if resource.data.status == 'pending';
-
-      // Admin can update verification status anytime
+      // Admins can update anything, including verified/status. The email
+      // approval flow used to allow ANY caller to flip a pending handyman
+      // to active — that was a self-approval vulnerability. Operators must
+      // now be signed in as an admin before clicking approval links;
+      // ApproveHandyman.jsx renders a login prompt when they aren't.
       allow update: if isAdmin();
 
       // Only admins can delete
@@ -142,8 +209,10 @@ service cloud.firestore {
       // Users can read their own notifications
       allow read: if isSignedIn() && isOwner(resource.data.userId);
 
-      // System can create notifications (via Cloud Functions)
-      allow create: if true;
+      // Notifications are created server-side only.
+      // Cloud Functions use the Admin SDK, which bypasses these rules,
+      // so denying client creation prevents spoofing/spam without breaking server writes.
+      allow create: if false;
 
       // Users can update their own notifications (mark as read)
       allow update: if isSignedIn() && isOwner(resource.data.userId);
@@ -154,14 +223,19 @@ service cloud.firestore {
 
     // Payments collection - restricted access
     match /payments/{paymentId} {
-      // Only payment owner can read
+      // Owner (customer or handyman on the record) or admin can read.
       allow read: if isSignedIn() && (
         resource.data.customerId == request.auth.uid ||
-        resource.data.handymanId == request.auth.uid
+        resource.data.handymanId == request.auth.uid ||
+        isAdmin()
       );
 
-      // Only authenticated users can create payments
-      allow create: if isSignedIn();
+      // The creator must be the customer on the payment record. Previously
+      // any signed-in user could create arbitrary payment docs claiming
+      // any customerId/handymanId/amount, which enabled spoofed payment
+      // records that downstream code might trust.
+      allow create: if isSignedIn() &&
+                      request.resource.data.customerId == request.auth.uid;
 
       // Only system/admin can update payments
       allow update: if isAdmin();
@@ -173,6 +247,26 @@ service cloud.firestore {
     // Customers collection (legacy support)
     match /customers/{customerId} {
       allow read, write: if isSignedIn() && isOwner(customerId);
+    }
+
+    // Stripe webhook event log — used for webhook deduplication.
+    // Written only by Cloud Functions (Admin SDK bypasses these rules).
+    // Clients have no business reading or writing this collection.
+    match /stripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Audit log — append-only record of money-movement and admin
+    // actions (fund release, refund, transfer reversal, admin
+    // grant/revoke, handyman approval). Cloud Functions write here
+    // via the Admin SDK (which bypasses rules); admins can read for
+    // investigation. No client writes, no deletes — even admins.
+    // Deletions would defeat the audit purpose; if data must be
+    // purged for compliance, do it via the GCP console with a
+    // documented retention policy.
+    match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }

@@ -15,17 +15,44 @@ node_modules/
 /dist
 
 # Environment variables
+# IMPORTANT: only *.example files are tracked. Anything containing real
+# credentials must stay out of the repo. Patterns below cover both root
+# and functions/ subdirectories.
+.env
 .env.local
+.env.development
 .env.development.local
+.env.test
 .env.test.local
 .env.production.local
-.env
+.env.uat
 functions/.env
+functions/.env.local
+functions/.env.development
+functions/.env.test
+functions/.env.production
+functions/.env.production.local
+functions/.env.uat
+
+# Duplicate/garbage node_modules folders that occasionally appear from
+# Finder copy-paste; keep them out of the repo.
+node_modules?*/
+"node_modules 2/"
+
+# MS Office lock files (~$*.docx etc.)
+~$*
 
 # Firebase
 .firebase/
 firebase-debug.log
 firestore-debug.log
+
+# Service-account keys for admin SDK / scripts (see scripts/grant-admin.js).
+# These authenticate as a project owner and must never be committed.
+service-account.json
+service-account-*.json
+*-service-account.json
+gcp-service-account*.json
 
 # IDE
 .vscode/

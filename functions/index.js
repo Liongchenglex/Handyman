@@ -18,6 +18,19 @@ const jwt = require('jsonwebtoken'); // SECURITY FIX (Phase 1.3): JWT for approv
 // App URL - used for constructing redirect URLs (Stripe Connect, etc.)
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
+// Project ID. The Cloud Functions runtime injects GCLOUD_PROJECT
+// automatically, so this resolves correctly on deploy with no config.
+// PROJECT_ID env var allows an explicit override for local tooling /
+// the emulator. Everything project-bound (CORS origins, hosting links
+// in notifications) is derived from this so switching to a different
+// Firebase project requires no code edits — see also
+// src/config/firebaseProject.js for the frontend equivalent.
+const PROJECT_ID = process.env.PROJECT_ID
+  || process.env.GCLOUD_PROJECT
+  || process.env.GCP_PROJECT
+  || 'eazydone-d06cf';
+const HOSTING_URL = process.env.HOSTING_URL || `https://${PROJECT_ID}.web.app`;
+
 // SECURITY FIX (Phase 1.2): Import validation utilities
 const { validate } = require('./validation/middleware');
 const {
@@ -32,13 +45,25 @@ const {
   paymentStatusQuerySchema
 } = require('./validation/schemas');
 
+// Server-side pricing table. The client computes a serviceFee from
+// the same data and sends it on createPaymentIntent — the server
+// recomputes from this table and rejects any mismatch, so a tampered
+// client can never authorise $0.01 for a $120 job.
+const {
+  getServicePrice,
+  getServicePriceMax,
+  isKnownServiceType,
+} = require('./servicePricing');
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
-// Whitelist approved origins only - prevents unauthorized cross-origin requests
+// Whitelist approved origins only - prevents unauthorized cross-origin
+// requests. The two production origins are derived from PROJECT_ID so
+// they track whichever Firebase project this is deployed to.
 const allowedOrigins = [
-  'https://eazydone-d06cf.web.app',
-  'https://eazydone-d06cf.firebaseapp.com',
+  `https://${PROJECT_ID}.web.app`,
+  `https://${PROJECT_ID}.firebaseapp.com`,
   'http://localhost:3000',  // Development - React dev server
   'http://localhost:5000',  // Development - Firebase emulator
 ];
@@ -96,30 +121,395 @@ const verifyAuthToken = async (req) => {
 // ===================================
 
 /**
- * Admin email whitelist
- * Users with these emails can perform admin actions like releasing escrow
- * Consider moving to Firestore or environment config for easier management
+ * Admin authorization model.
+ *
+ * Source of truth: Firebase Auth custom claims. A user with the
+ * `admin: true` custom claim is an admin everywhere — backend
+ * Cloud Functions, Firestore rules, and Storage rules all read the
+ * same `request.auth.token.admin` field.
+ *
+ * Bootstrap path: see scripts/grant-admin.js. Run it once with a
+ * service-account key to seed the first admin; after that, admins
+ * grant other admins via the setAdminClaim callable below.
+ *
+ * Transitional email allow-list: kept as a SECONDARY path during the
+ * migration so existing admins don't lock themselves out before they
+ * run the bootstrap. Remove this constant (and the fallbacks below)
+ * once every admin user has the custom claim set.
  */
-const ADMIN_EMAILS = [
+const ADMIN_EMAILS_FALLBACK = [
   'easydonehandyman@gmail.com',
-  // Add more admin emails as needed
 ];
 
 /**
- * Verify user has admin privileges
- * @param {Object} decodedToken - Decoded Firebase auth token
- * @throws {Error} If user is not an admin
+ * Returns true if the decoded ID token carries the admin custom claim
+ * OR (transitionally) the caller's email is in the allow-list.
+ */
+const isAdminToken = (decodedToken) => {
+  if (!decodedToken) return false;
+  if (decodedToken.admin === true) return true;
+  if (decodedToken.email && ADMIN_EMAILS_FALLBACK.includes(decodedToken.email)) {
+    // Log so we can see who still relies on the fallback and clear it.
+    console.warn(`ℹ️ Admin via email fallback: ${decodedToken.email} (uid=${decodedToken.uid}). Run scripts/grant-admin.js to set the custom claim.`);
+    return true;
+  }
+  return false;
+};
+
+/**
+ * Throwing variant of isAdminToken. Use inside try/catch handlers that
+ * already map "Forbidden" to a 403 response.
  */
 const verifyAdminAccess = (decodedToken) => {
-  if (!decodedToken.email || !ADMIN_EMAILS.includes(decodedToken.email)) {
-    console.warn(`🚫 Unauthorized admin access attempt by: ${decodedToken.email || decodedToken.uid}`);
+  if (!isAdminToken(decodedToken)) {
+    console.warn(`🚫 Unauthorized admin access attempt by: ${decodedToken && (decodedToken.email || decodedToken.uid)}`);
     throw new Error('Forbidden: Admin access required');
   }
 };
 
+/**
+ * setAdminClaim — grants or revokes the `admin: true` custom claim on
+ * a target user. Once granted, the target's next ID-token refresh
+ * carries `auth.token.admin === true`, which both this backend and the
+ * Firestore/Storage rules read as the source of truth for admin auth.
+ *
+ * Authorization:
+ *   - Caller must already be an admin (custom claim OR transitional
+ *     email fallback). This means the FIRST admin must be seeded via
+ *     scripts/grant-admin.js — a one-time, service-account-authenticated
+ *     bootstrap step. After that, admins promote each other through
+ *     this endpoint.
+ *
+ * Body: { targetUid: string, admin: boolean }
+ *
+ * NOTE: the granted user must sign out and back in (or call
+ * user.getIdToken(true) to force-refresh) before the new claim appears
+ * on their ID token.
+ */
+exports.setAdminClaim = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const { targetUid, admin: makeAdmin } = req.body || {};
+      if (!targetUid || typeof makeAdmin !== 'boolean') {
+        return res.status(400).json({ error: 'Body must include { targetUid: string, admin: boolean }' });
+      }
+
+      // Refuse to let the last admin demote themselves — that would
+      // strand the platform with no admin at all (only fix: re-run the
+      // bootstrap script). Cheap defense: forbid an admin from removing
+      // their own claim through this endpoint. Demotions of other
+      // admins are allowed.
+      if (targetUid === decodedToken.uid && makeAdmin === false) {
+        return res.status(400).json({
+          error: 'Refusing to remove your own admin claim. Have another admin demote you, or use scripts/grant-admin.js.',
+        });
+      }
+
+      // Preserve any existing custom claims on the target user (don't
+      // clobber unrelated claims if we add others later).
+      const targetUser = await admin.auth().getUser(targetUid);
+      const existingClaims = targetUser.customClaims || {};
+      const nextClaims = { ...existingClaims };
+      if (makeAdmin) nextClaims.admin = true;
+      else delete nextClaims.admin;
+
+      await admin.auth().setCustomUserClaims(targetUid, nextClaims);
+
+      console.log(`🛡️ Admin claim ${makeAdmin ? 'granted' : 'revoked'}: target=${targetUid} (${targetUser.email}) by=${decodedToken.email || decodedToken.uid}`);
+
+      await writeAuditLog(makeAdmin ? 'admin_grant' : 'admin_revoke', decodedToken, {
+        targetUid,
+        targetEmail: targetUser.email || null,
+        previousClaims: existingClaims,
+        nextClaims,
+      });
+
+      return res.status(200).json({
+        success: true,
+        targetUid,
+        admin: !!makeAdmin,
+        message: 'Target user must refresh their ID token before the new claim takes effect (sign out/in or call getIdToken(true)).',
+      });
+    } catch (error) {
+      console.error('❌ setAdminClaim failed:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to set admin claim', message: error.message });
+    }
+  });
+});
+
+// ===================================
+// HANDYMAN APPROVAL TOKEN (server-issued JWT)
+// ===================================
+
+/**
+ * APPROVAL_SECRET is the symmetric HMAC key used to sign handyman-
+ * approval JWTs. It lives only in the Cloud Functions environment and
+ * is NEVER shipped to the browser. If unset, the code below refuses to
+ * sign or verify — failing closed is better than silently issuing
+ * unguessable-but-unsigned tokens.
+ *
+ * Previously the secret was REACT_APP_APPROVAL_SECRET on the frontend
+ * (baked into the JS bundle) — see emailService.js history. With the
+ * server-issued flow, that variable is no longer used in the bundle.
+ */
+const APPROVAL_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const APPROVAL_TOKEN_ISSUER = 'eazydone.handyman-approval';
+
+const getApprovalSecret = () => {
+  const secret = process.env.APPROVAL_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('Server misconfiguration: APPROVAL_SECRET is missing or too short');
+  }
+  return secret;
+};
+
+/**
+ * generateApprovalToken — issues a signed JWT that authorizes approval
+ * of a specific handymanId. The token is emailed to the operations
+ * team and consumed by processHandymanApproval.
+ *
+ * Auth model: the registering handyman calls this for their OWN
+ * handymanId (so the token can be embedded in the operations email
+ * that's sent on registration). An admin can call it for any id.
+ *
+ * Body: { handymanId: string }
+ */
+exports.generateApprovalToken = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { handymanId } = req.body || {};
+      if (!handymanId || typeof handymanId !== 'string') {
+        return res.status(400).json({ error: 'Body must include { handymanId: string }' });
+      }
+      // Restrict who can mint a token: the registering handyman (for
+      // their own id) or any admin. Anonymous customers do NOT need
+      // this endpoint, so we don't carve out an exception for them.
+      if (decodedToken.uid !== handymanId && !isAdminToken(decodedToken)) {
+        console.warn(`🚫 generateApprovalToken denied: ${decodedToken.uid} tried to mint token for ${handymanId}`);
+        return res.status(403).json({ error: 'Forbidden: can only mint approval tokens for your own handymanId' });
+      }
+
+      const token = jwt.sign(
+        { handymanId, purpose: 'handyman_approval' },
+        getApprovalSecret(),
+        {
+          algorithm: 'HS256',
+          expiresIn: APPROVAL_TOKEN_TTL_SECONDS,
+          issuer: APPROVAL_TOKEN_ISSUER,
+        }
+      );
+
+      return res.status(200).json({ token, expiresInSeconds: APPROVAL_TOKEN_TTL_SECONDS });
+    } catch (error) {
+      console.error('❌ generateApprovalToken failed:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Server misconfiguration')) {
+        return res.status(500).json({ error: 'Server misconfiguration', message: 'APPROVAL_SECRET not configured' });
+      }
+      return res.status(500).json({ error: 'Failed to mint approval token', message: error.message });
+    }
+  });
+});
+
+/**
+ * processHandymanApproval — verifies a server-signed approval JWT and
+ * applies the requested action ('approve' or 'reject') to the handyman
+ * document. Uses the Admin SDK so it bypasses Firestore rules — the
+ * combination of (signed JWT + admin auth) is the entire authorization.
+ *
+ * Both must be present:
+ *   1. A valid, unexpired JWT signed by APPROVAL_SECRET.
+ *   2. The caller's Firebase ID token carries the `admin` claim.
+ *
+ * Defence-in-depth: the token alone used to be sufficient (the old
+ * client-decoded scheme). Requiring admin auth on top means a leaked
+ * link can't be redeemed by a non-admin even before token expiry.
+ *
+ * Body: { token: string, action: 'approve' | 'reject', reason?: string }
+ */
+exports.processHandymanApproval = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const { token, action, reason } = req.body || {};
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'Missing token' });
+      }
+      if (action !== 'approve' && action !== 'reject') {
+        return res.status(400).json({ error: 'Action must be "approve" or "reject"' });
+      }
+
+      let payload;
+      try {
+        payload = jwt.verify(token, getApprovalSecret(), {
+          algorithms: ['HS256'],
+          issuer: APPROVAL_TOKEN_ISSUER,
+        });
+      } catch (verifyErr) {
+        // jsonwebtoken throws specific error classes for expired vs
+        // tampered vs unknown-issuer. We don't differentiate to the
+        // caller to avoid giving an attacker a "you're close" signal.
+        console.warn(`🚫 Approval token rejected (${verifyErr.name}): ${verifyErr.message}`);
+        return res.status(401).json({ error: 'Invalid or expired approval token' });
+      }
+
+      if (payload.purpose !== 'handyman_approval' || !payload.handymanId) {
+        return res.status(400).json({ error: 'Approval token payload is malformed' });
+      }
+
+      const handymanRef = admin.firestore().collection('handymen').doc(payload.handymanId);
+      const handymanSnap = await handymanRef.get();
+      if (!handymanSnap.exists) {
+        return res.status(404).json({ error: 'Handyman not found' });
+      }
+      const handyman = handymanSnap.data();
+
+      // Idempotent re-handling: if the handyman was already processed
+      // via the same action, return success so duplicate clicks (e.g.
+      // a refresh on the result page) don't surface an error.
+      if (action === 'approve' && handyman.status === 'active' && handyman.verified === true) {
+        return res.status(200).json({ success: true, alreadyProcessed: true, action: 'approve', handyman });
+      }
+      if (action === 'reject' && handyman.status === 'rejected') {
+        return res.status(200).json({ success: true, alreadyProcessed: true, action: 'reject', handyman });
+      }
+
+      const nowIso = new Date().toISOString();
+      const update = action === 'approve'
+        ? { verified: true, status: 'active', verifiedAt: nowIso, verifiedBy: decodedToken.email || decodedToken.uid, updatedAt: nowIso }
+        : { verified: false, status: 'rejected', rejectedAt: nowIso, rejectedBy: decodedToken.email || decodedToken.uid, rejectedReason: reason || '', updatedAt: nowIso };
+
+      await handymanRef.update(update);
+
+      await writeAuditLog(action === 'approve' ? 'handyman_approve' : 'handyman_reject', decodedToken, {
+        targetId: payload.handymanId,
+        targetEmail: handyman.email || null,
+        targetName: handyman.name || null,
+        reason: action === 'reject' ? (reason || '') : null,
+        previousStatus: handyman.status || null,
+        newStatus: update.status,
+      });
+
+      return res.status(200).json({
+        success: true,
+        action,
+        handymanId: payload.handymanId,
+        handyman: { ...handyman, ...update },
+      });
+    } catch (error) {
+      console.error('❌ processHandymanApproval failed:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: 'Forbidden', message: error.message });
+      }
+      if (error.message.includes('Server misconfiguration')) {
+        return res.status(500).json({ error: 'Server misconfiguration', message: 'APPROVAL_SECRET not configured' });
+      }
+      return res.status(500).json({ error: 'Failed to process approval', message: error.message });
+    }
+  });
+});
+
 // ===================================
 // HELPER FUNCTIONS
 // ===================================
+
+/**
+ * Sliding-window rate limit backed by a Firestore document at
+ * `rateLimits/{key}`. Wrapped in a transaction so concurrent callers
+ * can't both decide they're under the cap on the same request.
+ *
+ * The window is enforced by storing recent request timestamps (ms) and
+ * filtering anything older than now - windowSeconds*1000. The doc is
+ * idempotent to recreate; we don't TTL-expire it explicitly because
+ * the stored array is bounded by `maxRequests` and gets trimmed on
+ * every check.
+ *
+ * @param {string} key - Stable identifier (e.g. `whatsapp_send_${uid}`).
+ * @param {number} maxRequests - Cap within the window.
+ * @param {number} windowSeconds - Sliding window size in seconds.
+ * @returns {Promise<{allowed: boolean, retryAfterSeconds?: number, remaining?: number}>}
+ */
+const checkRateLimit = async (key, maxRequests, windowSeconds) => {
+  const docRef = admin.firestore().collection('rateLimits').doc(key);
+  return admin.firestore().runTransaction(async (tx) => {
+    const snap = await tx.get(docRef);
+    const now = Date.now();
+    const windowStart = now - windowSeconds * 1000;
+    const previous = (snap.exists && Array.isArray(snap.data().requests)) ? snap.data().requests : [];
+    const fresh = previous.filter((t) => typeof t === 'number' && t > windowStart);
+
+    if (fresh.length >= maxRequests) {
+      const oldest = fresh[0];
+      const retryAfterSeconds = Math.max(1, Math.ceil((oldest + windowSeconds * 1000 - now) / 1000));
+      return { allowed: false, retryAfterSeconds };
+    }
+
+    fresh.push(now);
+    tx.set(docRef, {
+      requests: fresh,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      windowSeconds,
+      maxRequests,
+    });
+    return { allowed: true, remaining: maxRequests - fresh.length };
+  });
+};
+
+/**
+ * Append an audit-log entry. Money-movement and admin actions call
+ * this on success so we have an immutable record (write-only via
+ * Admin SDK; clients can't write, admins can read).
+ *
+ * Failures here are NEVER allowed to bubble up and fail the caller's
+ * operation — losing an audit entry is bad, but it's much worse to
+ * roll back a successful Stripe transfer because we couldn't write
+ * a log row. Errors are logged to Cloud Logging instead so they're
+ * still observable.
+ *
+ * @param {string} action - e.g. 'fund_release', 'refund', 'admin_grant'
+ * @param {object} decodedToken - the caller's decoded ID token
+ * @param {object} fields - action-specific payload (targetId, amount, etc)
+ */
+const writeAuditLog = async (action, decodedToken, fields = {}) => {
+  try {
+    await admin.firestore().collection('auditLog').add({
+      action,
+      actorUid: (decodedToken && decodedToken.uid) || null,
+      actorEmail: (decodedToken && decodedToken.email) || null,
+      actorIsAdmin: isAdminToken(decodedToken),
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      ...fields,
+    });
+  } catch (err) {
+    console.error(`⚠️ writeAuditLog(${action}) failed:`, err);
+  }
+};
 
 /**
  * Convert dollars to cents for Stripe
@@ -504,10 +894,38 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
         return res.status(403).json({ error: 'Forbidden: Cannot create payment for another user' });
       }
 
-      // Calculate total (service fee + configurable platform fee %)
-      const platformFeePercentage = getPlatformFeePercentage();
-      const platformFee = calculatePlatformFee(serviceFee);
-      const totalAmount = serviceFee + platformFee;
+      // Server-side amount derivation. Previously the client could
+      // submit any `serviceFee` value and we'd charge it — meaning a
+      // tampered checkout could authorise $0.01 for a $120 job and
+      // the platform would only discover the under-charge after the
+      // handyman did the work. We now look up the published price
+      // for the serviceType and reject if the client-sent fee
+      // doesn't match.
+      //
+      // Tolerance: we allow a 1-cent epsilon to accommodate floating-
+      // point representation differences when the frontend computes
+      // and serialises the amount. Anything larger is a tamper signal.
+      if (!isKnownServiceType(serviceType)) {
+        console.warn(`🚫 Payment rejected: unknown serviceType "${serviceType}" from ${decodedToken.uid}`);
+        return res.status(400).json({
+          error: `Unknown serviceType: ${serviceType}`,
+          message: 'Service type must be one of the published service categories.',
+        });
+      }
+      const expectedServiceFee = getServicePrice(serviceType);
+      if (Math.abs(serviceFee - expectedServiceFee) > 0.01) {
+        console.warn(`🚫 Payment rejected: ${decodedToken.uid} sent serviceFee=${serviceFee} for ${serviceType}, expected ${expectedServiceFee}`);
+        return res.status(400).json({
+          error: 'Amount mismatch',
+          message: `The expected service fee for ${serviceType} is $${expectedServiceFee.toFixed(2)}. Refresh the page and try again.`,
+        });
+      }
+
+      // From here on the server-computed values are authoritative for
+      // the amount we actually charge — we never multiply by the
+      // client-supplied serviceFee again.
+      const platformFee = calculatePlatformFee(expectedServiceFee);
+      const totalAmount = expectedServiceFee + platformFee;
       const amountInCents = dollarsToCents(totalAmount);
 
       // Use Firestore transaction to prevent race conditions
@@ -558,7 +976,11 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
         // Create new payment intent if needed
         if (shouldCreateNewIntent) {
 
-          // Create NEW payment intent with manual capture (for escrow)
+          // Create NEW payment intent with manual capture (for escrow).
+          // Idempotency key is keyed on jobId so a network-level retry of this
+          // request cannot create a second PaymentIntent for the same job. The
+          // Firestore transaction above guards against the same client racing,
+          // and this guards against retries at the HTTP layer.
           paymentIntent = await stripe.paymentIntents.create({
             amount: amountInCents,
             currency: 'sgd',
@@ -570,7 +992,10 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
               jobId: jobId,
               customerId: customerId,
               handymanId: handymanId,
-              serviceFee: serviceFee.toString(),
+              // Persist the server-validated amounts (not the client-
+              // supplied values). Downstream reads — escrow release,
+              // refund, audit — should trust this metadata.
+              serviceFee: expectedServiceFee.toString(),
               platformFee: platformFee.toString(),
               totalAmount: totalAmount.toString(),
               serviceType: serviceType,
@@ -578,6 +1003,8 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
             },
             statement_descriptor: 'HANDYMAN SVC',
             statement_descriptor_suffix: serviceType.substring(0, 10),
+          }, {
+            idempotencyKey: `pi-create-${jobId}`,
           });
 
           // Update job document with the actual payment intent ID
@@ -658,10 +1085,28 @@ exports.confirmPayment = functions.https.onRequest((req, res) => {
       // Retrieve payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-      // SECURITY FIX (Phase 1.1): Verify user owns this payment
-      if (paymentIntent.metadata.customerId !== decodedToken.uid) {
-        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to confirm payment ${paymentIntentId} belonging to ${paymentIntent.metadata.customerId}`);
+      // Authorization: the caller must be the customer who owns the
+      // payment. We check this TWICE — once against the paymentIntent
+      // metadata (the recorded payer at intent creation) and once
+      // against the job document's customerId (the recorded owner of
+      // the work). The two should always agree; if they don't, treat
+      // it as a sign of tampered metadata and refuse.
+      const metadataCustomerId = paymentIntent.metadata && paymentIntent.metadata.customerId;
+      if (metadataCustomerId !== decodedToken.uid) {
+        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to confirm payment ${paymentIntentId} (metadata customer=${metadataCustomerId})`);
         return res.status(403).json({ error: 'Forbidden: Cannot confirm another user\'s payment' });
+      }
+
+      const metadataJobId = paymentIntent.metadata && paymentIntent.metadata.jobId;
+      if (metadataJobId) {
+        const jobSnap = await admin.firestore().collection('jobs').doc(metadataJobId).get();
+        if (jobSnap.exists) {
+          const jobCustomerId = jobSnap.data().customerId;
+          if (jobCustomerId && jobCustomerId !== decodedToken.uid) {
+            console.warn(`🚫 Authorization failed: customerId mismatch — caller=${decodedToken.uid}, job.customerId=${jobCustomerId}, pi.metadata.customerId=${metadataCustomerId} (pi=${paymentIntentId}, job=${metadataJobId})`);
+            return res.status(403).json({ error: 'Forbidden: payment/job customer mismatch' });
+          }
+        }
       }
 
       // If already succeeded, return success
@@ -883,29 +1328,105 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         return res.status(400).json({ error: 'Missing jobId' });
       }
 
-      // Get job data from Firestore
-      const jobDoc = await admin.firestore().collection('jobs').doc(jobId).get();
-      if (!jobDoc.exists) {
-        return res.status(404).json({ error: 'Job not found' });
+      // Pre-flight: claim a Firestore transaction lock on the job before
+      // touching Stripe. Two parallel admin clicks would otherwise both
+      // pass the same paymentStatus check and both attempt to transfer.
+      // The Stripe idempotency key dedups the second TRANSFER, but the
+      // surrounding Firestore writes could still race and leave the job
+      // in an inconsistent state.
+      //
+      // Stale-lock recovery: if a previous attempt crashed mid-flight
+      // (e.g. the function timed out between Stripe success and the
+      // final Firestore write), the lock would block all future
+      // attempts indefinitely. We treat a 'release_pending' lock older
+      // than RELEASE_LOCK_STALE_MS as stale and re-acquire it. The
+      // underlying Stripe call is idempotent, so re-running on a stale
+      // lock is safe — it returns the original transfer.
+      const RELEASE_LOCK_STALE_MS = 2 * 60 * 1000;
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+
+      let jobData;
+      let lockResult;
+      try {
+        lockResult = await admin.firestore().runTransaction(async (tx) => {
+          const snap = await tx.get(jobRef);
+          if (!snap.exists) {
+            return { ok: false, status: 404, error: 'Job not found' };
+          }
+          const data = snap.data();
+
+          if (data.paymentStatus === 'released') {
+            return { ok: false, status: 409, error: 'Payment already released for this job' };
+          }
+
+          if (data.paymentStatus === 'release_pending') {
+            const lockedAt = data.releaseLockedAt && data.releaseLockedAt.toMillis
+              ? data.releaseLockedAt.toMillis()
+              : 0;
+            const ageMs = Date.now() - lockedAt;
+            if (ageMs < RELEASE_LOCK_STALE_MS) {
+              return {
+                ok: false,
+                status: 409,
+                error: 'A release for this job is already in progress',
+              };
+            }
+            console.warn(`🔓 Re-acquiring stale release lock for job ${jobId} (age=${ageMs}ms)`);
+          }
+
+          tx.update(jobRef, {
+            paymentStatus: 'release_pending',
+            releaseLockedAt: admin.firestore.FieldValue.serverTimestamp(),
+            releaseLockedBy: decodedToken.email || decodedToken.uid,
+          });
+          return { ok: true, data };
+        });
+      } catch (txErr) {
+        console.error(`❌ Release lock transaction failed for job ${jobId}:`, txErr);
+        return res.status(500).json({ error: 'Failed to acquire release lock', message: txErr.message });
       }
 
-      const jobData = jobDoc.data();
+      if (!lockResult.ok) {
+        return res.status(lockResult.status).json({ error: lockResult.error });
+      }
+
+      jobData = lockResult.data;
       const { estimatedBudget, handymanId } = jobData;
       // Read payment intent ID from paymentResult (single source of truth)
       // Structure: paymentResult.paymentIntent.id
       const paymentIntentId = jobData.paymentResult?.paymentIntent?.id;
 
+      // Helper used by every early-exit path below to release the lock
+      // when we bail before reaching the final state-write. Without
+      // this, validation failures (missing paymentIntent, handyman not
+      // onboarded, etc.) would strand the job in 'release_pending'.
+      const releaseLock = async (reason) => {
+        try {
+          await jobRef.update({
+            paymentStatus: jobData.paymentStatus || 'pending_admin_approval',
+            releaseLockedAt: admin.firestore.FieldValue.delete(),
+            releaseLockedBy: admin.firestore.FieldValue.delete(),
+            paymentReleaseError: reason || null,
+          });
+        } catch (clearErr) {
+          console.error(`⚠️ Failed to clear release lock for job ${jobId}:`, clearErr);
+        }
+      };
+
       if (!paymentIntentId) {
+        await releaseLock('No payment intent found for this job');
         return res.status(400).json({ error: 'No payment intent found for this job' });
       }
 
       if (!handymanId) {
+        await releaseLock('No handyman assigned to this job');
         return res.status(400).json({ error: 'No handyman assigned to this job' });
       }
 
       // Get handyman's Stripe connected account
       const handymanDoc = await admin.firestore().collection('handymen').doc(handymanId).get();
       if (!handymanDoc.exists) {
+        await releaseLock('Handyman not found');
         return res.status(404).json({ error: 'Handyman not found' });
       }
 
@@ -913,6 +1434,7 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       const handymanAccountId = handymanData.stripeConnectedAccountId;
 
       if (!handymanAccountId) {
+        await releaseLock('Handyman has not completed Stripe onboarding');
         return res.status(400).json({
           error: 'Handyman has not completed Stripe onboarding',
           message: 'The handyman needs to complete Stripe Connect setup before receiving payments.'
@@ -922,6 +1444,7 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       // Check if Stripe account is ready for transfers
       const stripeAccount = await stripe.accounts.retrieve(handymanAccountId);
       if (!stripeAccount.charges_enabled || !stripeAccount.payouts_enabled) {
+        await releaseLock('Handyman Stripe account not ready');
         return res.status(400).json({
           error: 'Handyman Stripe account not ready',
           message: 'The handyman Stripe account is not fully set up for receiving payments.'
@@ -941,6 +1464,7 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       if (paymentIntent.status === 'requires_capture') {
         paymentIntent = await stripe.paymentIntents.capture(paymentIntentId);
       } else if (paymentIntent.status !== 'succeeded') {
+        await releaseLock(`Cannot release payment with status: ${paymentIntent.status}`);
         return res.status(400).json({
           error: `Cannot release payment with status: ${paymentIntent.status}`,
           message: 'Payment must be authorized or captured before release.'
@@ -950,6 +1474,7 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       // Get the charge ID from the payment intent (needed for source_transaction)
       const chargeId = paymentIntent.latest_charge;
       if (!chargeId) {
+        await releaseLock('No charge found for this payment');
         return res.status(400).json({
           error: 'No charge found for this payment',
           message: 'Payment must have a successful charge before transfer.'
@@ -971,27 +1496,56 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       const platformFeeFromNet = netAmount * platformFeePercentage / (1 + platformFeePercentage);
       const handymanPayout = netAmount - platformFeeFromNet;
 
-      // Transfer to handyman using source_transaction to use funds from this specific charge
-      const transfer = await stripe.transfers.create({
-        amount: Math.round(handymanPayout * 100), // Convert to cents
-        currency: 'sgd',
-        destination: handymanAccountId,
-        source_transaction: chargeId, // Links transfer to specific charge - allows immediate transfer
-        description: `Payment for job #${jobId} - ${jobData.serviceType}`,
-        metadata: {
-          jobId: jobId,
-          serviceType: jobData.serviceType,
-          customerName: jobData.customerName,
-          grossAmount: totalAmount.toFixed(2),
-          stripeFee: stripeFee.toFixed(2),
-          netAmount: netAmount.toFixed(2),
-          handymanPayout: handymanPayout.toFixed(2),
-          platformFee: platformFeeFromNet.toFixed(2),
-        },
-      });
+      // Transfer to handyman using source_transaction to use funds from this
+      // specific charge. Idempotency key is keyed on the charge so a retry
+      // can never produce a second transfer for the same charge — Stripe
+      // will return the original transfer instead of creating a duplicate.
+      let transfer;
+      try {
+        transfer = await stripe.transfers.create({
+          amount: Math.round(handymanPayout * 100), // Convert to cents
+          currency: 'sgd',
+          destination: handymanAccountId,
+          source_transaction: chargeId, // Links transfer to specific charge - allows immediate transfer
+          description: `Payment for job #${jobId} - ${jobData.serviceType}`,
+          metadata: {
+            jobId: jobId,
+            serviceType: jobData.serviceType,
+            customerName: jobData.customerName,
+            grossAmount: totalAmount.toFixed(2),
+            stripeFee: stripeFee.toFixed(2),
+            netAmount: netAmount.toFixed(2),
+            handymanPayout: handymanPayout.toFixed(2),
+            platformFee: platformFeeFromNet.toFixed(2),
+          },
+        }, {
+          idempotencyKey: `transfer-${chargeId}`,
+        });
+      } catch (transferErr) {
+        // If the transfer call fails, mark the job so an admin can see it
+        // needs manual intervention rather than letting it sit in an
+        // ambiguous state. The catch above for the whole handler will
+        // still surface the 500 to the caller. We also clear the
+        // release_pending lock so it shows the actionable failed state.
+        console.error('❌ Stripe transfer failed for job', jobId, transferErr);
+        try {
+          await jobRef.update({
+            paymentStatus: 'release_failed',
+            paymentReleaseError: transferErr.message || 'Transfer failed',
+            paymentReleaseFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+            releaseLockedAt: admin.firestore.FieldValue.delete(),
+            releaseLockedBy: admin.firestore.FieldValue.delete(),
+          });
+        } catch (markErr) {
+          console.error('Failed to mark job release_failed:', markErr);
+        }
+        throw transferErr;
+      }
 
-      // Update job document with detailed payment breakdown
-      await admin.firestore().collection('jobs').doc(jobId).update({
+      // Final state write: flip the lock to 'released' and record the
+      // payout breakdown. This is the only path that transitions a
+      // 'release_pending' job to 'released'.
+      await jobRef.update({
         status: 'completed',
         paymentStatus: 'released',
         paymentReleasedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1005,6 +1559,19 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
           handymanPayout: handymanPayout,
           platformFee: platformFeeFromNet,
         },
+        releaseLockedAt: admin.firestore.FieldValue.delete(),
+        releaseLockedBy: admin.firestore.FieldValue.delete(),
+      });
+
+      await writeAuditLog('fund_release', decodedToken, {
+        jobId,
+        handymanId,
+        chargeId,
+        transferId: transfer.id,
+        amountTransferred: handymanPayout,
+        platformFee: platformFeeFromNet,
+        stripeFee,
+        grossAmount: totalAmount,
       });
 
       return res.status(200).json({
@@ -1059,7 +1626,6 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
     }
 
     try {
-      // SECURITY FIX (Phase 1.1): Verify authentication
       const decodedToken = await verifyAuthToken(req);
 
       const { paymentIntentId, reason } = req.body;
@@ -1071,13 +1637,17 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
       // Get payment intent
       const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-      // SECURITY FIX (Phase 1.1): Only customer or handyman can request refund
+      // Authorization: only the customer who paid, or a platform admin,
+      // can initiate a refund. Handymen MUST NOT be able to refund —
+      // doing so would let a malicious handyman cancel a job they're
+      // already assigned to and force a chargeback against the customer.
       const customerId = paymentIntent.metadata?.customerId;
-      const handymanId = paymentIntent.metadata?.handymanId;
+      const callerIsCustomer = decodedToken.uid === customerId;
+      const callerIsAdmin = isAdminToken(decodedToken);
 
-      if (decodedToken.uid !== customerId && decodedToken.uid !== handymanId) {
-        console.warn(`🚫 Authorization failed: User ${decodedToken.uid} tried to refund payment ${paymentIntentId}`);
-        return res.status(403).json({ error: 'Forbidden: Cannot refund another user\'s payment' });
+      if (!callerIsCustomer && !callerIsAdmin) {
+        console.warn(`🚫 Refund denied: ${decodedToken.uid} (admin=${callerIsAdmin}) tried to refund ${paymentIntentId} owned by ${customerId}`);
+        return res.status(403).json({ error: 'Forbidden: Only the paying customer or an admin can issue a refund' });
       }
 
       if (paymentIntent.status !== 'succeeded') {
@@ -1086,28 +1656,96 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         });
       }
 
-      // Get charge ID
-      const chargeId = paymentIntent.charges?.data?.[0]?.id;
+      // Get charge ID. Newer Stripe SDKs don't populate `paymentIntent.charges`
+      // by default; `latest_charge` is the canonical field. Fall back to
+      // the legacy charges array for older SDK versions.
+      const chargeId = paymentIntent.latest_charge || paymentIntent.charges?.data?.[0]?.id;
 
       if (!chargeId) {
         return res.status(400).json({ error: 'No charge found for this payment' });
       }
 
-      // Create refund
+      // If escrow has already been released to the handyman, we MUST
+      // reverse the transfer BEFORE refunding the charge. Otherwise the
+      // platform's Stripe balance gets debited the refund amount while
+      // the payout to the handyman stands — the platform absorbs the
+      // entire loss (and Stripe's processing fee on top). See
+      // docs/features/stripe-payment.md for the original documented gap.
+      const jobId = paymentIntent.metadata?.jobId;
+      const jobRef = jobId ? admin.firestore().collection('jobs').doc(jobId) : null;
+      const jobSnapshot = jobRef ? await jobRef.get() : null;
+      const jobData = jobSnapshot && jobSnapshot.exists ? jobSnapshot.data() : null;
+
+      let transferReversalId = null;
+      if (jobData && jobData.paymentStatus === 'released' && jobData.transferId) {
+        try {
+          const reversal = await stripe.transfers.createReversal(jobData.transferId, {
+            description: `Refund reversal for job #${jobId}`,
+            metadata: {
+              jobId: jobId || '',
+              refundReason: reason || 'requested_by_customer',
+              initiatedBy: decodedToken.uid,
+              callerRole: callerIsAdmin ? 'admin' : 'customer',
+            },
+          }, {
+            idempotencyKey: `reversal-${jobData.transferId}`,
+          });
+          transferReversalId = reversal.id;
+          console.log(`↩️ Reversed transfer ${jobData.transferId} for job ${jobId} → reversal ${reversal.id}`);
+        } catch (reversalErr) {
+          // If the reversal fails (e.g. the handyman has already withdrawn
+          // the payout from their Stripe balance), the platform cannot
+          // safely refund — doing so would create the exact loss we're
+          // trying to prevent. Surface the failure so an admin can handle
+          // it manually via Stripe Dashboard (which supports chargeback
+          // workflows that pull funds back from the connected account).
+          console.error(`❌ Transfer reversal failed for job ${jobId}:`, reversalErr.message);
+          return res.status(409).json({
+            error: 'Cannot refund: handyman payout was already disbursed and the transfer reversal failed.',
+            message: reversalErr.message,
+            requiresManualReview: true,
+          });
+        }
+      }
+
+      // Create refund. Idempotency key is keyed on the charge so a retry
+      // returns the original refund object rather than issuing a second one.
       const refund = await stripe.refunds.create({
         charge: chargeId,
         reason: reason || 'requested_by_customer',
         metadata: {
-          jobId: paymentIntent.metadata?.jobId,
+          jobId: jobId || '',
           refundedBy: 'platform',
+          initiatedBy: decodedToken.uid,
+          callerRole: callerIsAdmin ? 'admin' : 'customer',
+          transferReversalId: transferReversalId || '',
         },
+      }, {
+        idempotencyKey: `refund-${chargeId}`,
       });
 
-      // Update job document
-      await admin.firestore().collection('jobs').doc(paymentIntent.metadata.jobId).update({
-        paymentStatus: 'refunded',
-        paymentRefundedAt: admin.firestore.FieldValue.serverTimestamp(),
+      // Update job document. Include transferReversalId when present so
+      // the job history reflects that the handyman payout was clawed back.
+      if (jobRef) {
+        const update = {
+          paymentStatus: 'refunded',
+          paymentRefundedAt: admin.firestore.FieldValue.serverTimestamp(),
+          refundId: refund.id,
+        };
+        if (transferReversalId) update.transferReversalId = transferReversalId;
+        await jobRef.update(update);
+      }
+
+      await writeAuditLog('refund', decodedToken, {
+        jobId: jobId || null,
+        paymentIntentId,
+        chargeId,
         refundId: refund.id,
+        amountRefunded: centsToDollars(refund.amount),
+        reason: reason || 'requested_by_customer',
+        callerRole: callerIsAdmin ? 'admin' : 'customer',
+        transferReversalId: transferReversalId || null,
+        previousPaymentStatus: jobData ? jobData.paymentStatus : null,
       });
 
       return res.status(200).json({
@@ -1115,6 +1753,7 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         refundId: refund.id,
         amount: centsToDollars(refund.amount),
         status: refund.status,
+        transferReversalId,
       });
     } catch (error) {
       console.error('Error refunding payment:', error);
@@ -1140,12 +1779,52 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
 // ===================================
 
 /**
- * Handle Stripe webhooks
+ * Handle Stripe webhooks.
+ *
  * POST /stripeWebhook
+ *
+ * Signature verification relies on the raw, unparsed request body
+ * because Stripe's HMAC is computed over the exact bytes that were
+ * sent. Firebase Functions onRequest handlers expose this on
+ * `req.rawBody` (a Buffer); the guard below fails closed if it's
+ * missing, instead of passing `undefined` to constructEvent and
+ * surfacing an ambiguous parse error. If you ever wrap this handler
+ * in middleware that parses the body before constructEvent runs,
+ * `req.rawBody` will still be the original bytes — but a bodyParser
+ * higher up in the chain that consumes the stream will break the
+ * signature check; preserve the raw stream.
+ *
+ * Quick smoke test for the rejection path:
+ *   curl -X POST https://<your-fn-url>/stripeWebhook \
+ *     -H 'stripe-signature: t=0,v1=deadbeef' \
+ *     -H 'Content-Type: application/json' \
+ *     -d '{"id":"evt_test"}'
+ *   # → expect HTTP 400 "Webhook Error: ..."
  */
 exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  // Fail-closed config guard: a missing webhook secret would otherwise
+  // surface as a confusing parse error from constructEvent. Calling
+  // this out explicitly so a misconfigured environment is obvious in
+  // the Cloud Logging stream.
+  if (!webhookSecret) {
+    console.error('Webhook misconfigured: STRIPE_WEBHOOK_SECRET is not set.');
+    return res.status(500).send('Webhook misconfigured');
+  }
+  if (!sig) {
+    console.warn('Webhook rejected: missing Stripe-Signature header.');
+    return res.status(400).send('Missing Stripe-Signature header');
+  }
+  if (!req.rawBody) {
+    // This should never happen on Firebase Functions onRequest — the
+    // runtime injects req.rawBody for us. If it ever does, we want
+    // a loud, specific error rather than the generic "No matching
+    // signatures found" that constructEvent emits when passed undefined.
+    console.error('Webhook rejected: req.rawBody is missing — check that no upstream middleware is consuming the raw stream.');
+    return res.status(400).send('Webhook Error: raw request body unavailable');
+  }
 
   let event;
 
@@ -1156,19 +1835,50 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // Event-level idempotency. Stripe retries webhooks (e.g. on a 5xx or
+  // timeout), so we record each processed event.id and short-circuit on
+  // re-delivery. We use a Firestore transaction on /stripeEvents/{id} so
+  // two concurrent deliveries can't both decide they're the "first".
+  const eventRef = admin.firestore().collection('stripeEvents').doc(event.id);
+  try {
+    const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
+      const snap = await tx.get(eventRef);
+      if (snap.exists) return false;
+      tx.set(eventRef, {
+        type: event.type,
+        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+
+    if (!isFirstDelivery) {
+      // Already handled — acknowledge so Stripe stops retrying.
+      return res.json({ received: true, duplicate: true });
+    }
+  } catch (dedupErr) {
+    // If the dedup write itself fails we'd rather process than drop, so
+    // we log and continue. Worst case is double-processing, which the
+    // downstream updates are mostly idempotent against anyway.
+    console.error('Webhook dedup write failed (continuing):', dedupErr);
+  }
+
   try {
     switch (event.type) {
-      case 'payment_intent.succeeded':
+      case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object;
-        await admin.firestore().collection('jobs').doc(paymentIntent.metadata.jobId).update({
-          paymentStatus: 'succeeded',
-          paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        const jobId = paymentIntent.metadata?.jobId;
+        if (jobId) {
+          await admin.firestore().collection('jobs').doc(jobId).update({
+            paymentStatus: 'succeeded',
+            paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
         break;
+      }
 
-      case 'account.updated':
+      case 'account.updated': {
         const account = event.data.object;
-        const firebaseUid = account.metadata.firebaseUid;
+        const firebaseUid = account.metadata?.firebaseUid;
         if (firebaseUid) {
           await admin.firestore().collection('handymen').doc(firebaseUid).update({
             stripeAccountStatus: account.details_submitted ? 'complete' : 'pending',
@@ -1182,10 +1892,75 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
           });
         }
         break;
+      }
 
       case 'transfer.created':
         // Transfer created - no additional action needed
         break;
+
+      // ===== Refund / dispute events =====
+      // These cover the cases where money moves OUT of the platform via the
+      // Stripe dashboard (manual refunds), or where a customer files a
+      // chargeback. The job state needs to reflect that so admins can see
+      // it and we don't release escrow on a job that's been refunded.
+
+      case 'charge.refunded': {
+        // Fired whenever a charge is refunded (full or partial), including
+        // refunds initiated manually from the Stripe Dashboard.
+        const charge = event.data.object;
+        const jobId = charge.metadata?.jobId
+          || (charge.payment_intent
+            ? (await stripe.paymentIntents.retrieve(charge.payment_intent)).metadata?.jobId
+            : null);
+        if (jobId) {
+          const fullyRefunded = charge.amount_refunded >= charge.amount;
+          await admin.firestore().collection('jobs').doc(jobId).update({
+            paymentStatus: fullyRefunded ? 'refunded' : 'partially_refunded',
+            paymentRefundedAt: admin.firestore.FieldValue.serverTimestamp(),
+            refundedAmount: charge.amount_refunded / 100,
+          });
+        }
+        break;
+      }
+
+      case 'charge.dispute.created': {
+        // Customer filed a chargeback. Flag the job so admins can respond
+        // and so we don't release escrow on disputed funds.
+        const dispute = event.data.object;
+        const charge = await stripe.charges.retrieve(dispute.charge);
+        const jobId = charge.metadata?.jobId
+          || (charge.payment_intent
+            ? (await stripe.paymentIntents.retrieve(charge.payment_intent)).metadata?.jobId
+            : null);
+        if (jobId) {
+          await admin.firestore().collection('jobs').doc(jobId).update({
+            paymentStatus: 'disputed',
+            disputeId: dispute.id,
+            disputeReason: dispute.reason,
+            disputeStatus: dispute.status,
+            disputeAmount: dispute.amount / 100,
+            disputeCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        break;
+      }
+
+      case 'charge.dispute.closed': {
+        // Dispute resolved — could be won, lost, or warning_closed.
+        const dispute = event.data.object;
+        const charge = await stripe.charges.retrieve(dispute.charge);
+        const jobId = charge.metadata?.jobId
+          || (charge.payment_intent
+            ? (await stripe.paymentIntents.retrieve(charge.payment_intent)).metadata?.jobId
+            : null);
+        if (jobId) {
+          await admin.firestore().collection('jobs').doc(jobId).update({
+            disputeStatus: dispute.status, // 'won', 'lost', etc.
+            disputeClosedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+        break;
+      }
 
       default:
         // Unhandled event type
@@ -1229,7 +2004,7 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
       }
 
       // Verify authenticated user
-      await verifyAuthToken(req);
+      const decodedToken = await verifyAuthToken(req);
 
       const { type, data } = req.body;
 
@@ -1239,6 +2014,62 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
 
       if (!data.customerPhone) {
         return res.status(400).json({ error: 'Missing customerPhone' });
+      }
+
+      // Per-user rate limit: 10 sends per hour. Prevents an authenticated
+      // user (or compromised account) from spamming arbitrary phone
+      // numbers via this proxy. Admins are exempt because they may
+      // legitimately re-send notifications during dispute handling.
+      if (!isAdminToken(decodedToken)) {
+        const rl = await checkRateLimit(`whatsapp_send_${decodedToken.uid}`, 10, 3600);
+        if (!rl.allowed) {
+          console.warn(`🚫 WhatsApp send rate-limited for ${decodedToken.uid} — retry in ${rl.retryAfterSeconds}s`);
+          res.set('Retry-After', String(rl.retryAfterSeconds));
+          return res.status(429).json({
+            error: 'Too many WhatsApp notifications',
+            retryAfterSeconds: rl.retryAfterSeconds,
+          });
+        }
+      }
+
+      // Phone-ownership check: the requesting user can only trigger
+      // notifications to a phone number they're actually a party on
+      // (the customer of a job they own, or the handyman assigned to
+      // a job whose customer's phone matches). Without this guard, an
+      // authenticated user could spam arbitrary numbers by guessing
+      // them. Admins skip the check (they handle disputes).
+      if (!isAdminToken(decodedToken)) {
+        const phoneNormalized = String(data.customerPhone).replace(/\D/g, '');
+        let phoneAuthorized = false;
+        try {
+          const jobsRef = admin.firestore().collection('jobs');
+          const candidateQueries = [
+            jobsRef.where('customerId', '==', decodedToken.uid).limit(50),
+            jobsRef.where('handymanId', '==', decodedToken.uid).limit(50),
+          ];
+          for (const q of candidateQueries) {
+            const snap = await q.get();
+            for (const doc of snap.docs) {
+              const jobPhone = String(doc.data().customerPhone || '').replace(/\D/g, '');
+              if (jobPhone && (jobPhone === phoneNormalized || phoneNormalized.endsWith(jobPhone) || jobPhone.endsWith(phoneNormalized))) {
+                phoneAuthorized = true;
+                break;
+              }
+            }
+            if (phoneAuthorized) break;
+          }
+        } catch (lookupErr) {
+          // Conservatively allow the send if the lookup itself fails —
+          // it's an availability concern but doesn't open the abuse
+          // path (rate limit still caps total volume). Log so we can
+          // detect index issues.
+          console.warn('Phone-ownership lookup failed (allowing):', lookupErr.message);
+          phoneAuthorized = true;
+        }
+        if (!phoneAuthorized) {
+          console.warn(`🚫 WhatsApp send blocked: ${decodedToken.uid} tried to message unrelated phone ${phoneNormalized.slice(-4)}`);
+          return res.status(403).json({ error: 'Forbidden: target phone not associated with a job you participate in' });
+        }
       }
 
       const toWhatsApp = formatPhoneToWhatsApp(data.customerPhone);
@@ -1263,13 +2094,17 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
         }
 
         case 'job_accepted': {
+          const scheduledTime = data.preferredTiming === 'Schedule'
+            ? `${new Date(data.preferredDate).toLocaleDateString()} at ${data.preferredTime}`
+            : 'As soon as possible';
+
           const templateSid = process.env.TWILIO_TEMPLATE_JOB_ACCEPTED;
-          const fallback = `Great news, ${data.customerName}! 🎉\n\n*${data.handymanName}* has accepted your job request!\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nThe handyman will contact you shortly to discuss the job details and confirm the appointment time.\n\nNeed help? Contact us at support@easydone.com`;
+          const fallback = `Your job has been accepted by "${data.handymanName}"\n\nService Fee: $${data.estimatedBudget}\nJob ID: ${data.jobId}\nScheduled Time: ${scheduledTime}\n\nImportant:\nIf the handyman does not show up at the scheduled appointment time, please contact us at easydonehandyman@gmail.com.`;
 
           result = await sendTwilioTemplateMessage(
             toWhatsApp,
             templateSid,
-            { '1': data.customerName, '2': data.handymanName, '3': data.serviceType, '4': data.jobId },
+            { '1': data.handymanName, '2': `${data.estimatedBudget}`, '3': data.jobId, '4': scheduledTime },
             fallback
           );
           break;
@@ -1341,6 +2176,20 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     const From = req.body.From;
     const Body = req.body.Body;
 
+    // Per-phone rate limit on incoming customer replies. Twilio retries
+    // on 5xx, so we acknowledge with 200 (don't make Twilio retry) but
+    // skip processing once a phone has hit the cap. 30/hour leaves
+    // plenty of headroom for legitimate confirmation flows while
+    // capping enumeration / spam if a phone is hijacked.
+    if (From) {
+      const phoneKey = String(From).replace(/\D/g, '').slice(-12) || 'unknown';
+      const rl = await checkRateLimit(`whatsapp_webhook_${phoneKey}`, 30, 3600);
+      if (!rl.allowed) {
+        console.warn(`🚫 WhatsApp webhook rate-limited for ${phoneKey} — retry in ${rl.retryAfterSeconds}s`);
+        return res.status(200).send('Rate limited');
+      }
+    }
+
     // Twilio also sends status callbacks (delivery receipts) that don't have Body.
     // These have a MessageStatus field instead — ignore them gracefully.
     if (!From || !Body) {
@@ -1381,41 +2230,10 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone
     ];
 
-    // STEP 1: Check if there's already a locked job (response already processed)
-    let lockedJobSnapshot = null;
-    for (const phoneFormat of phoneFormats) {
-      const snapshot = await admin.firestore().collection('jobs')
-        .where('customerPhone', '==', phoneFormat)
-        .where('pollVoteLocked', '==', true)
-        .orderBy('customerConfirmedAt', 'desc')
-        .limit(1)
-        .get();
-
-      if (!snapshot.empty) {
-        lockedJobSnapshot = snapshot;
-        break;
-      }
-    }
-
-    // If response already recorded, notify customer
-    if (lockedJobSnapshot && !lockedJobSnapshot.empty) {
-      const lockedJob = lockedJobSnapshot.docs[0];
-      const lockedJobId = lockedJob.id;
-      const lockedJobData = lockedJob.data();
-
-      await sendTwilioMessage(
-        From,
-        `ℹ️ Your response has already been recorded.\n\nYour previous response: ${lockedJobData.status === 'pending_admin_approval' ? '✅ Confirmed' : '⚠️ Issue Reported'}\n\nIf you need to change your response, please contact our support team.\n\nJob ID: ${lockedJobId}`
-      );
-      return res.status(200).json({
-        received: true,
-        processed: false,
-        reason: 'Response already locked'
-      });
-    }
-
-    // STEP 2: Look for jobs pending confirmation
-    let jobsSnapshot = null;
+    // Find the job currently awaiting confirmation for this customer.
+    // Scoping by status (not by a separate "locked" flag) ensures that responding
+    // to one job never blocks responses to a later, distinct job.
+    let pendingJobRef = null;
     for (const phoneFormat of phoneFormats) {
       const snapshot = await admin.firestore().collection('jobs')
         .where('customerPhone', '==', phoneFormat)
@@ -1425,12 +2243,48 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         .get();
 
       if (!snapshot.empty) {
-        jobsSnapshot = snapshot;
+        pendingJobRef = snapshot.docs[0].ref;
         break;
       }
     }
 
-    if (!jobsSnapshot || jobsSnapshot.empty) {
+    // Fallback: no job is currently pending. If the customer's most recent job
+    // was already responded to (e.g. they tapped Confirm then Report), reply with
+    // a helpful "already recorded" message pointing at support.
+    if (!pendingJobRef) {
+      let alreadyResponded = null;
+      for (const phoneFormat of phoneFormats) {
+        const snapshot = await admin.firestore().collection('jobs')
+          .where('customerPhone', '==', phoneFormat)
+          .orderBy('completedAt', 'desc')
+          .limit(5)
+          .get();
+
+        const found = snapshot.docs.find((doc) => {
+          const s = doc.data().status;
+          return s === 'pending_admin_approval' || s === 'disputed';
+        });
+        if (found) {
+          alreadyResponded = found;
+          break;
+        }
+      }
+
+      if (alreadyResponded) {
+        const previousAction = alreadyResponded.data().status === 'pending_admin_approval'
+          ? '✅ Confirmed'
+          : '⚠️ Issue Reported';
+        await sendTwilioMessage(
+          From,
+          `ℹ️ Your response for Job #${alreadyResponded.id} has already been recorded as: ${previousAction}.\n\nIf this was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+        );
+        return res.status(200).json({
+          received: true,
+          processed: false,
+          reason: 'Response already recorded for previous job'
+        });
+      }
+
       console.warn('⚠️ No pending job found for customer:', customerPhone);
       return res.status(200).json({
         received: true,
@@ -1439,49 +2293,67 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       });
     }
 
-    const jobDoc = jobsSnapshot.docs[0];
-    const jobId = jobDoc.id;
-    const jobData = jobDoc.data();
+    // Atomically verify the job is still pending_confirmation, then write the response.
+    // The transaction protects against a double-tap race where two webhooks for the
+    // same button arrive near-simultaneously and both try to process the same job.
+    const jobId = pendingJobRef.id;
+    let action;
+    let jobData;
+    try {
+      await admin.firestore().runTransaction(async (tx) => {
+        const fresh = await tx.get(pendingJobRef);
+        if (!fresh.exists || fresh.data().status !== 'pending_confirmation') {
+          throw new Error('ALREADY_PROCESSED');
+        }
 
-    // Handle customer response
-    if (isConfirm) {
-      // Customer confirmed job completion
-      await admin.firestore().collection('jobs').doc(jobId).update({
-        status: 'pending_admin_approval',
-        customerConfirmedAt: new Date().toISOString(),
-        confirmedVia: 'whatsapp_reply',
-        pollVoteLocked: true
+        jobData = fresh.data();
+
+        if (isConfirm) {
+          tx.update(pendingJobRef, {
+            status: 'pending_admin_approval',
+            customerConfirmedAt: new Date().toISOString(),
+            confirmedVia: 'whatsapp_reply'
+          });
+          action = 'confirm';
+        } else {
+          tx.update(pendingJobRef, {
+            status: 'disputed',
+            disputedAt: new Date().toISOString(),
+            disputedVia: 'whatsapp_reply',
+            disputeReason: 'Customer reported issue via WhatsApp reply'
+          });
+          action = 'reject';
+        }
       });
+    } catch (txError) {
+      if (txError.message === 'ALREADY_PROCESSED') {
+        // Another webhook for the same job won the race — acknowledge silently.
+        return res.status(200).json({
+          received: true,
+          processed: false,
+          reason: 'Job already processed by concurrent webhook'
+        });
+      }
+      throw txError;
+    }
 
-      // Send admin notification email
+    if (action === 'confirm') {
       await sendAdminNotificationEmail(jobData, jobId);
 
-      // Send follow-up confirmation message
       await sendTwilioMessage(
         From,
-        `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${jobId}\n\nWe hope to serve you again! 🔧`
+        `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${jobId}\n\nIf you confirmed by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe hope to serve you again! 🔧`
       );
 
       return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval' });
-
-    } else if (isReject) {
-      // Customer reported an issue
-      await admin.firestore().collection('jobs').doc(jobId).update({
-        status: 'disputed',
-        disputedAt: new Date().toISOString(),
-        disputedVia: 'whatsapp_reply',
-        disputeReason: 'Customer reported issue via WhatsApp reply',
-        pollVoteLocked: true
-      });
-
-      // Send follow-up dispute message
-      await sendTwilioMessage(
-        From,
-        `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${jobId}\n\nWe take every feedback seriously and will resolve this promptly.`
-      );
-
-      return res.status(200).json({ received: true, processed: true, action: 'disputed' });
     }
+
+    await sendTwilioMessage(
+      From,
+      `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`
+    );
+
+    return res.status(200).json({ received: true, processed: true, action: 'disputed' });
 
   } catch (error) {
     console.error('❌ Error processing WhatsApp webhook:', error);
@@ -1668,7 +2540,7 @@ async function sendAdminNotificationEmail(jobData, jobId) {
       }
     });
 
-    const adminUrl = 'https://eazydone-d06cf.web.app/admin/fund-release';
+    const adminUrl = `${HOSTING_URL}/admin/fund-release`;
 
     const mailOptions = {
       from: `"EazyDone System" <${smtpUser}>`,

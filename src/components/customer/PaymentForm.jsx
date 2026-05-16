@@ -100,7 +100,14 @@ const PaymentForm = ({
 
     // Cleanup: Don't reset refs/tracker - they should persist across remounts
     // This prevents duplicate payment intent creation if component remounts
-  }, [jobId]); // Only re-create if jobId changes (prevents duplicate payment intents)
+    //
+    // exhaustive-deps is intentionally disabled: the payment intent must
+    // be created exactly once per jobId. Including customerId/serviceFee/
+    // etc. in the deps would re-run this effect (and risk creating a
+    // second PaymentIntent) if any of those props change identity on a
+    // re-render. They are captured at first run by design.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
 
   // Handle successful card confirmation
   const handleCardSuccess = (paymentIntent) => {
@@ -148,7 +155,7 @@ const PaymentForm = ({
           <h2 className="text-2xl font-bold tracking-tight mb-4">Estimated price breakdown</h2>
           <div className="rounded-lg border border-border-light dark:border-border-dark p-4 space-y-3">
             <div className="flex justify-between items-center">
-              <p className="text-muted-light dark:text-muted-dark">Service fee</p>
+              <p className="text-muted-light dark:text-muted-dark">Service fee (lower bound)</p>
               <p className="font-medium">${serviceFee.toFixed(2)}</p>
             </div>
             <div className="flex justify-between items-center">
@@ -157,8 +164,32 @@ const PaymentForm = ({
             </div>
             <div className="border-t border-border-light dark:border-border-dark my-3"></div>
             <div className="flex justify-between items-center text-lg">
-              <p className="font-bold">Total</p>
+              <p className="font-bold">Total charged today</p>
               <p className="font-bold">${totalAmount.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Pricing Rule Notice */}
+        <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-blue-600 dark:text-blue-400 mt-0.5">info</span>
+            <div className="flex-1">
+              <h3 className="font-semibold text-blue-900 dark:text-blue-200 mb-2">
+                Pricing Rule
+              </h3>
+              <ul className="text-sm text-blue-800 dark:text-blue-300 space-y-1.5 list-disc list-inside leading-relaxed">
+                <li>The platform automatically charges the <span className="font-semibold">lower end</span> of the estimated range.</li>
+                <li>The handyman can request an adjustment <span className="font-semibold">upward only after the on-site inspection</span>.</li>
+                <li>
+                  Any increase must include:
+                  <ul className="list-[circle] list-inside ml-5 mt-1 space-y-0.5">
+                    <li>Reason (mandatory)</li>
+                    <li>Updated breakdown</li>
+                    <li>Customer approval required</li>
+                  </ul>
+                </li>
+              </ul>
             </div>
           </div>
         </div>

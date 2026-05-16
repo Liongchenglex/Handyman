@@ -4,6 +4,8 @@
  * Configure email settings for the handyman platform
  */
 
+import { projectConfig } from './firebaseProject';
+
 export const EMAIL_CONFIG = {
   // Operations team email - receives handyman registration notifications
   OPERATIONS_EMAIL: process.env.REACT_APP_OPERATIONS_EMAIL || 'operations@eazydone.com',
@@ -17,10 +19,21 @@ export const EMAIL_CONFIG = {
   EMAILJS_SERVICE_ID: process.env.REACT_APP_EMAILJS_SERVICE_ID || '',
   EMAILJS_TEMPLATE_ID_HANDYMAN: process.env.REACT_APP_EMAILJS_TEMPLATE_HANDYMAN || '',
   EMAILJS_TEMPLATE_ID_OPERATIONS: process.env.REACT_APP_EMAILJS_TEMPLATE_OPERATIONS || '',
+  // Approval/rejection notifications use the same template family. If a
+  // dedicated template isn't configured we fall back to the handyman
+  // template so something still goes out.
+  EMAILJS_TEMPLATE_ID_APPROVAL: process.env.REACT_APP_EMAILJS_TEMPLATE_APPROVAL
+    || process.env.REACT_APP_EMAILJS_TEMPLATE_HANDYMAN
+    || '',
+  EMAILJS_TEMPLATE_ID_REJECTION: process.env.REACT_APP_EMAILJS_TEMPLATE_REJECTION
+    || process.env.REACT_APP_EMAILJS_TEMPLATE_HANDYMAN
+    || '',
   EMAILJS_PUBLIC_KEY: process.env.REACT_APP_EMAILJS_PUBLIC_KEY || '',
 
-  // Approval link base URL
-  APPROVAL_BASE_URL: process.env.REACT_APP_APPROVAL_BASE_URL || 'https://eazydone-d06cf.web.app/admin/approve-handyman'
+  // Approval link base URL. Falls back to the configured project's
+  // hosting domain so it tracks the Firebase project automatically.
+  APPROVAL_BASE_URL: process.env.REACT_APP_APPROVAL_BASE_URL
+    || `${projectConfig.hostingUrl}/admin/approve-handyman`
 };
 
 /**
@@ -80,6 +93,109 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
         </div>
         <div class="footer">
           <p>© 2024 EazyDone. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `
+});
+
+// Handyman approval-confirmation email template (sent after operations
+// approves the registration).
+export const HANDYMAN_APPROVAL_EMAIL = (handymanData) => ({
+  subject: 'Your EazyDone Account Has Been Approved!',
+  html: `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #22c55e; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; color: white; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+        .button { display: inline-block; padding: 14px 28px; background: #FFD60A; color: #000; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 20px 0; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        .checklist li { margin: 8px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 style="margin: 0;">🎉 You're Approved!</h1>
+        </div>
+        <div class="content">
+          <h2>Hi ${handymanData.name},</h2>
+
+          <p>Great news — your EazyDone handyman account has been <strong>approved</strong>. You can now start accepting jobs in your service area.</p>
+
+          <p><strong>What you can do now:</strong></p>
+          <ul class="checklist">
+            <li>✅ Sign in to your dashboard</li>
+            <li>✅ Browse available jobs near you</li>
+            <li>✅ Express interest in jobs that match your skills</li>
+            <li>✅ Get paid via Stripe Connect when you complete jobs</li>
+          </ul>
+
+          <p style="text-align: center;">
+            <a href="${EMAIL_CONFIG.APPROVAL_BASE_URL.replace('/admin/approve-handyman', '/handyman-auth')}" class="button">
+              Sign In to Your Dashboard
+            </a>
+          </p>
+
+          <p><strong>Next step — payment setup:</strong></p>
+          <p>Before you can receive payments, you'll need to complete Stripe Connect onboarding. Sign in to your dashboard and follow the prompts to set this up.</p>
+
+          <p>Questions? Reach out at <a href="mailto:${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}">${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}</a>.</p>
+
+          <p>Welcome aboard!<br>
+          <strong>The EazyDone Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>© ${new Date().getFullYear()} ${EMAIL_CONFIG.COMPANY_NAME}. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `
+});
+
+// Handyman rejection email template (sent after operations rejects the
+// registration).
+export const HANDYMAN_REJECTION_EMAIL = (handymanData, reason = '') => ({
+  subject: 'Update on Your EazyDone Application',
+  html: `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #6b7280; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; color: white; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1 style="margin: 0;">Application Update</h1>
+        </div>
+        <div class="content">
+          <h2>Hi ${handymanData.name},</h2>
+
+          <p>Thank you for applying to join EazyDone. After reviewing your application, we're unable to approve your account at this time.</p>
+
+          ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
+
+          <p>This decision isn't necessarily final — if you'd like to discuss it, gather additional documentation, or reapply in the future, please reach out to our support team at <a href="mailto:${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}">${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}</a>.</p>
+
+          <p>We appreciate your interest in EazyDone and wish you the best.</p>
+
+          <p>Best regards,<br>
+          <strong>The EazyDone Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>© ${new Date().getFullYear()} ${EMAIL_CONFIG.COMPANY_NAME}. All rights reserved.</p>
         </div>
       </div>
     </body>
@@ -227,7 +343,7 @@ export const OPERATIONS_NOTIFICATION_EMAIL = (handymanData, approvalToken) => ({
           <div style="margin-top: 20px; padding: 15px; background: #e5e7eb; border-radius: 6px;">
             <p style="margin: 0; font-size: 12px; color: #666;">
               <strong>Registered:</strong> ${new Date(handymanData.registeredAt).toLocaleString()}<br>
-              <strong>Direct Link to Firestore:</strong> <a href="https://console.firebase.google.com/project/eazydone-d06cf/firestore/data/handymen/${handymanData.uid}" target="_blank">View in Firebase Console</a>
+              <strong>Direct Link to Firestore:</strong> <a href="${projectConfig.firebaseConsoleUrl}/firestore/data/handymen/${handymanData.uid}" target="_blank">View in Firebase Console</a>
             </p>
           </div>
         </div>

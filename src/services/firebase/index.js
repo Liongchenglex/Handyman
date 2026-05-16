@@ -12,6 +12,82 @@
  * import { COLLECTIONS, JOB_STATUS } from './services/firebase';
  */
 
+// ---------------------------------------------------------------------
+// Imports first (ESLint import/first). These named imports back the
+// aggregated `export default` object at the bottom of the file; the
+// re-export blocks that follow expose the same symbols as named
+// exports for `import { x } from './services/firebase'` style usage.
+// ---------------------------------------------------------------------
+import { db as database, auth as authentication, storage as storageInstance } from './config';
+import {
+  registerHandyman as registerHandymanFunc,
+  signInHandyman as signInHandymanFunc,
+  createAnonymousUser as createAnonymousUserFunc,
+  signOutUser as signOutUserFunc,
+  onAuthStateChange as onAuthStateChangeFunc,
+  getCurrentUser as getCurrentUserFunc,
+  isAuthenticated as isAuthenticatedFunc,
+  getCurrentUserRole as getCurrentUserRoleFunc,
+  resetPassword as resetPasswordFunc
+} from './auth';
+import {
+  COLLECTIONS as COLLECTIONS_CONST,
+  JOB_STATUS as JOB_STATUS_CONST,
+  SERVICE_TYPES as SERVICE_TYPES_CONST,
+  createUser as createUserFunc,
+  getUser as getUserFunc,
+  updateUser as updateUserFunc,
+  createJob as createJobFunc,
+  getJob as getJobFunc,
+  updateJob as updateJobFunc,
+  getJobsByCustomer as getJobsByCustomerFunc,
+  getJobsByHandyman as getJobsByHandymanFunc,
+  getAvailableJobs as getAvailableJobsFunc,
+  subscribeToJob as subscribeToJobFunc,
+  subscribeToCustomerJobs as subscribeToCustomerJobsFunc,
+  createHandyman as createHandymanFunc,
+  getHandyman as getHandymanFunc,
+  updateHandyman as updateHandymanFunc,
+  getVerifiedHandymen as getVerifiedHandymenFunc,
+  subscribeToHandyman as subscribeToHandymanFunc,
+  createJobApplication as createJobApplicationFunc,
+  getJobApplications as getJobApplicationsFunc,
+  getHandymanApplications as getHandymanApplicationsFunc,
+  updateJobApplication as updateJobApplicationFunc,
+  deleteJobApplication as deleteJobApplicationFunc,
+  createReview as createReviewFunc,
+  getHandymanReviews as getHandymanReviewsFunc,
+  createNotification as createNotificationFunc,
+  getUserNotifications as getUserNotificationsFunc,
+  markNotificationAsRead as markNotificationAsReadFunc,
+  markAllNotificationsAsRead as markAllNotificationsAsReadFunc,
+  subscribeToNotifications as subscribeToNotificationsFunc,
+  createPayment as createPaymentFunc,
+  getPayment as getPaymentFunc,
+  getCustomerPayments as getCustomerPaymentsFunc
+} from './collections';
+import {
+  createDocument as createDocumentFunc,
+  getDocument as getDocumentFunc,
+  updateDocument as updateDocumentFunc,
+  deleteDocument as deleteDocumentFunc,
+  queryDocuments as queryDocumentsFunc,
+  subscribeToDocument as subscribeToDocumentFunc,
+  subscribeToCollection as subscribeToCollectionFunc
+} from './firestore';
+import {
+  uploadFile as uploadFileFunc,
+  uploadImage as uploadImageFunc,
+  deleteFile as deleteFileFunc,
+  getFileURL as getFileURLFunc,
+  listFiles as listFilesFunc
+} from './storage';
+
+// ---------------------------------------------------------------------
+// Named re-exports. `export ... from` statements must come after the
+// bare imports above to satisfy ESLint's import/first rule.
+// ---------------------------------------------------------------------
+
 // Core Firebase instances
 export { db, auth, storage } from './config';
 
@@ -105,74 +181,8 @@ export {
   listFiles
 } from './storage';
 
-// Import for default export
-import { db as database, auth as authentication, storage as storageInstance } from './config';
-import {
-  registerHandyman as registerHandymanFunc,
-  signInHandyman as signInHandymanFunc,
-  createAnonymousUser as createAnonymousUserFunc,
-  signOutUser as signOutUserFunc,
-  onAuthStateChange as onAuthStateChangeFunc,
-  getCurrentUser as getCurrentUserFunc,
-  isAuthenticated as isAuthenticatedFunc,
-  getCurrentUserRole as getCurrentUserRoleFunc,
-  resetPassword as resetPasswordFunc
-} from './auth';
-import {
-  COLLECTIONS as COLLECTIONS_CONST,
-  JOB_STATUS as JOB_STATUS_CONST,
-  SERVICE_TYPES as SERVICE_TYPES_CONST,
-  createUser as createUserFunc,
-  getUser as getUserFunc,
-  updateUser as updateUserFunc,
-  createJob as createJobFunc,
-  getJob as getJobFunc,
-  updateJob as updateJobFunc,
-  getJobsByCustomer as getJobsByCustomerFunc,
-  getJobsByHandyman as getJobsByHandymanFunc,
-  getAvailableJobs as getAvailableJobsFunc,
-  subscribeToJob as subscribeToJobFunc,
-  subscribeToCustomerJobs as subscribeToCustomerJobsFunc,
-  createHandyman as createHandymanFunc,
-  getHandyman as getHandymanFunc,
-  updateHandyman as updateHandymanFunc,
-  getVerifiedHandymen as getVerifiedHandymenFunc,
-  subscribeToHandyman as subscribeToHandymanFunc,
-  createJobApplication as createJobApplicationFunc,
-  getJobApplications as getJobApplicationsFunc,
-  getHandymanApplications as getHandymanApplicationsFunc,
-  updateJobApplication as updateJobApplicationFunc,
-  deleteJobApplication as deleteJobApplicationFunc,
-  createReview as createReviewFunc,
-  getHandymanReviews as getHandymanReviewsFunc,
-  createNotification as createNotificationFunc,
-  getUserNotifications as getUserNotificationsFunc,
-  markNotificationAsRead as markNotificationAsReadFunc,
-  markAllNotificationsAsRead as markAllNotificationsAsReadFunc,
-  subscribeToNotifications as subscribeToNotificationsFunc,
-  createPayment as createPaymentFunc,
-  getPayment as getPaymentFunc,
-  getCustomerPayments as getCustomerPaymentsFunc
-} from './collections';
-import {
-  createDocument as createDocumentFunc,
-  getDocument as getDocumentFunc,
-  updateDocument as updateDocumentFunc,
-  deleteDocument as deleteDocumentFunc,
-  queryDocuments as queryDocumentsFunc,
-  subscribeToDocument as subscribeToDocumentFunc,
-  subscribeToCollection as subscribeToCollectionFunc
-} from './firestore';
-import {
-  uploadFile as uploadFileFunc,
-  uploadImage as uploadImageFunc,
-  deleteFile as deleteFileFunc,
-  getFileURL as getFileURLFunc,
-  listFiles as listFilesFunc
-} from './storage';
-
 // Default export with all services
-export default {
+const firebaseServices = {
   // Core
   db: database,
   auth: authentication,
@@ -243,3 +253,5 @@ export default {
   getFileURL: getFileURLFunc,
   listFiles: listFilesFunc
 };
+
+export default firebaseServices;

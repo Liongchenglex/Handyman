@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { verifyApprovalToken } from '../services/emailService';
-import { updateDocument, getDocument } from '../services/firebase';
+import { sendApprovalEmail, sendRejectionEmail } from '../services/emailService';
+import { callFunction, CloudFunctionError } from '../services/api/cloudFunctions';
+import { projectConfig } from '../config/firebaseProject';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
@@ -20,94 +21,93 @@ const ApproveHandyman = () => {
   const [action, setAction] = useState(null);
 
   useEffect(() => {
+    // Approval is now performed server-side by the processHandymanApproval
+    // Cloud Function. The function:
+    //   1. Verifies the operator is an admin (Firebase Auth custom claim).
+    //   2. Verifies the JWT in the URL was signed by the server's
+    //      APPROVAL_SECRET (which never reaches the browser).
+    //   3. Updates the handyman document via the Admin SDK.
+    //
+    // The frontend's responsibility shrinks to: pass the token through,
+    // render the response, and trigger the courtesy approval/rejection
+    // email to the handyman. The approval status is authoritative
+    // server-side regardless of email-send success/failure.
     const processApproval = async () => {
       try {
-        // Extract token and action from URL
         const token = searchParams.get('token');
-        const actionParam = searchParams.get('action'); // 'approve' or 'reject'
+        const actionParam = searchParams.get('action');
 
         if (!token || !actionParam) {
           setStatus('error');
           setMessage('Invalid approval link. Missing token or action parameter.');
           return;
         }
+        if (actionParam !== 'approve' && actionParam !== 'reject') {
+          setStatus('error');
+          setMessage('Invalid action. Must be "approve" or "reject".');
+          return;
+        }
 
         setAction(actionParam);
 
-        // Verify the token
-        console.log('Verifying approval token...');
-        const tokenData = verifyApprovalToken(token);
-
-        if (!tokenData) {
-          setStatus('invalid');
-          setMessage('This approval link is invalid or has expired (links expire after 30 days).');
-          return;
+        let result;
+        try {
+          result = await callFunction('processHandymanApproval', {
+            token,
+            action: actionParam,
+          });
+        } catch (err) {
+          if (err instanceof CloudFunctionError) {
+            if (err.status === 401) {
+              setStatus('invalid');
+              setMessage('This approval link is invalid or has expired (links expire after 30 days). If you believe this is wrong, please sign in to the admin dashboard and process the request manually.');
+              return;
+            }
+            if (err.status === 403) {
+              setStatus('error');
+              setMessage('You are signed in, but your account does not have admin permissions. Sign in as an admin to process approvals.');
+              return;
+            }
+            if (err.status === 404) {
+              setStatus('error');
+              setMessage('Handyman not found in database.');
+              return;
+            }
+          }
+          throw err;
         }
 
-        const { handymanId } = tokenData;
-
-        // Fetch handyman data from Firestore
-        console.log('Fetching handyman data for ID:', handymanId);
-        const handyman = await getDocument('handymen', handymanId);
-
-        if (!handyman) {
-          setStatus('error');
-          setMessage('Handyman not found in database.');
-          return;
-        }
-
+        const handyman = result.handyman || {};
         setHandymanData(handyman);
 
-        // Check if already processed
-        if (handyman.status === 'active' && handyman.verified === true) {
+        if (result.alreadyProcessed) {
           setStatus('success');
-          setMessage(`This handyman has already been approved on ${new Date(handyman.verifiedAt).toLocaleDateString()}.`);
+          const dateField = actionParam === 'approve' ? handyman.verifiedAt : handyman.rejectedAt;
+          const formatted = dateField ? new Date(dateField).toLocaleDateString() : 'a previous date';
+          setMessage(
+            actionParam === 'approve'
+              ? `This handyman was already approved on ${formatted}.`
+              : `This handyman was already rejected on ${formatted}.`
+          );
           return;
         }
 
-        if (handyman.status === 'rejected') {
-          setStatus('error');
-          setMessage(`This handyman has already been rejected on ${new Date(handyman.rejectedAt).toLocaleDateString()}.`);
-          return;
-        }
+        // Fire-and-forget courtesy email to the handyman. Approval state
+        // is already committed server-side; we don't want to flip the
+        // result UI to "error" just because email is down.
+        const courtesy = actionParam === 'approve' ? sendApprovalEmail : sendRejectionEmail;
+        courtesy({
+          uid: result.handymanId,
+          name: handyman.name,
+          email: handyman.email,
+        }).catch((err) => console.error('Courtesy email failed:', err));
 
-        // Process the approval/rejection
-        if (actionParam === 'approve') {
-          console.log('Approving handyman:', handymanId);
-          await updateDocument('handymen', handymanId, {
-            verified: true,
-            verifiedAt: new Date().toISOString(),
-            status: 'active',
-            updatedAt: new Date().toISOString()
-          });
-
-          setStatus('success');
-          setMessage(`✅ Handyman "${handyman.name}" has been successfully approved! They can now start accepting jobs.`);
-
-          // TODO: Send confirmation email to handyman
-          console.log('TODO: Send approval confirmation email to:', handyman.email);
-
-        } else if (actionParam === 'reject') {
-          console.log('Rejecting handyman:', handymanId);
-          await updateDocument('handymen', handymanId, {
-            verified: false,
-            rejectedAt: new Date().toISOString(),
-            status: 'rejected',
-            rejectedReason: '', // Can be added to UI later
-            updatedAt: new Date().toISOString()
-          });
-
-          setStatus('success');
-          setMessage(`Handyman "${handyman.name}" has been rejected. They have been notified.`);
-
-          // TODO: Send rejection email to handyman
-          console.log('TODO: Send rejection notification email to:', handyman.email);
-
-        } else {
-          setStatus('error');
-          setMessage('Invalid action. Must be "approve" or "reject".');
-        }
-
+        setStatus('success');
+        setMessage(
+          actionParam === 'approve'
+            ? `✅ Handyman "${handyman.name}" has been successfully approved! They can now start accepting jobs.`
+            : `Handyman "${handyman.name}" has been rejected. They have been notified.`
+        );
       } catch (error) {
         console.error('Error processing approval:', error);
         setStatus('error');
@@ -210,7 +210,7 @@ const ApproveHandyman = () => {
 
           {status === 'success' && (
             <a
-              href={`https://console.firebase.google.com/project/eazydone-d06cf/firestore/data/handymen/${handymanData?.uid || ''}`}
+              href={`${projectConfig.firebaseConsoleUrl}/firestore/data/handymen/${handymanData?.uid || ''}`}
               target="_blank"
               rel="noopener noreferrer"
               className="px-6 py-3 bg-primary text-black font-semibold rounded-xl hover:bg-opacity-80 transition-colors text-center"

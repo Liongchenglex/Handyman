@@ -62,21 +62,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
-    <!-- Tailwind CSS CDN (for development only) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: '#38e07b',
-              'background-dark': '#122017',
-            }
-          }
-        }
-      }
-    </script>
+    <!-- Tailwind is compiled at build time from src/styles/globals.css
+         and tailwind.config.js. We deliberately do NOT load the
+         cdn.tailwindcss.com runtime — it was unversioned, lacked SRI,
+         and would have broken any strict Content-Security-Policy. -->
 
     <!-- Structured Data - Local Business -->
     <script type="application/ld+json">

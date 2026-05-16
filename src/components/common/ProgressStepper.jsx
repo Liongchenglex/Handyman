@@ -30,21 +30,11 @@ const ProgressStepper = ({
   };
 
   const getStepClasses = (stepNumber) => {
-    const status = getStepStatus(stepNumber);
     const isClickable = allowClickBack && stepNumber < currentStep && onStepClick;
 
     const baseClasses = "flex items-center justify-center w-10 h-10 rounded-full text-sm font-bold transition-all duration-300";
 
     return `${baseClasses} ${isClickable ? 'cursor-pointer hover:shadow-md' : ''}`;
-  };
-
-  const getConnectorClasses = (stepNumber) => {
-    const isCompleted = stepNumber < currentStep;
-    return `h-1 rounded transition-all duration-200 ${
-      isCompleted
-        ? 'bg-primary'
-        : 'bg-gray-200 dark:bg-gray-700'
-    }`;
   };
 
   return (

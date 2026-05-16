@@ -38,6 +38,14 @@ service firebase.storage {
       return request.resource.size < 5 * 1024 * 1024;
     }
 
+    // Admin is identified by the `admin: true` custom claim on the
+    // Firebase Auth ID token. Mirrors the definition in firestore.rules
+    // and functions/index.js. The claim is set by scripts/grant-admin.js
+    // (bootstrap) or by the setAdminClaim Cloud Function.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
     // Handyman profile images
     match /handymen/{handymanId}/profile/{filename} {
       // Read: anyone can view verified handyman profiles
@@ -69,9 +77,13 @@ service firebase.storage {
     }
 
     // Handyman work experience / CV documents
+    // These are CV-like artefacts (resumes, employment proofs) that
+    // frequently contain home addresses, ID numbers, references and
+    // other personal contact details. Treat them as private to the
+    // handyman who uploaded them and to platform admins reviewing
+    // approval — they are NOT a public portfolio.
     match /handymen/{handymanId}/work-experience/{filename} {
-      // Read: authenticated users can view work experience
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && (isOwner(handymanId) || isAdmin());
 
       // Write: only the handyman can upload their work experience (images, PDFs, DOC)
       allow write: if isSignedIn() &&
@@ -98,17 +110,23 @@ service firebase.storage {
     }
 
     // Job-related images
+    // Storage path convention: jobs/temp-{uid}-{timestamp}/images/{filename}
+    // The {uid} prefix lets the storage rules enforce that only the uploader
+    // can write under their own path, without requiring a Firestore lookup
+    // (the job document doesn't exist yet at upload time).
     match /jobs/{jobId}/images/{filename} {
       // Read: authenticated users can view job images
       allow read: if isSignedIn();
 
-      // Write: authenticated users can upload job images
+      // Write: only the user whose uid is embedded in the temp path may upload
       allow write: if isSignedIn() &&
+                     jobId.matches('temp-' + request.auth.uid + '-.*') &&
                      isImage() &&
                      isValidSize();
 
-      // Delete: authenticated users can delete (will be restricted by app logic)
-      allow delete: if isSignedIn();
+      // Delete: only the user who owns the temp path can delete
+      allow delete: if isSignedIn() &&
+                      jobId.matches('temp-' + request.auth.uid + '-.*');
     }
 
     // Customer/User profile images
@@ -126,18 +144,15 @@ service firebase.storage {
       allow delete: if isSignedIn() && isOwner(userId);
     }
 
-    // Job before/after images
+    // Job before/after images.
+    // No client callers today; client writes are denied so the path can't be
+    // abused as an open dumping ground. Server-side writes (Admin SDK) bypass
+    // these rules. When a feature needs this, follow the jobs/{jobId}/images
+    // convention and embed the uploader's uid in the path before re-opening.
     match /jobs/{jobId}/before-after/{filename} {
-      // Read: authenticated users can view
       allow read: if isSignedIn();
-
-      // Write: authenticated users can upload
-      allow write: if isSignedIn() &&
-                     isImage() &&
-                     isValidSize();
-
-      // Delete: authenticated users can delete
-      allow delete: if isSignedIn();
+      allow write: if false;
+      allow delete: if false;
     }
 
     // Default: deny all other access

@@ -34,16 +34,6 @@ const ConfirmationScreen = ({
     }).format(amount || 120);
   };
 
-  // Handle view job action
-  const handleViewJob = () => {
-    if (onViewJob && typeof onViewJob === 'function') {
-      onViewJob(jobData, jobId);
-    } else {
-      // Fallback behavior - could navigate to a job detail page
-      console.log('View job functionality not implemented yet');
-    }
-  };
-
   // Handle back to home action
   const handleBackToHome = () => {
     if (onBackToHome && typeof onBackToHome === 'function') {

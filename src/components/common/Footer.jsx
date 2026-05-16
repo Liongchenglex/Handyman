@@ -19,15 +19,17 @@ const Footer = () => {
             </p>
           </div>
 
-          {/* Services Section */}
+          {/* Services Section — each links to the job request flow.
+              Previously href="#" placeholders, which failed the
+              jsx-a11y/anchor-is-valid lint rule. */}
           <div>
             <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-4 uppercase tracking-wide">Services</h4>
             <ul className="space-y-2">
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Plumbing</a></li>
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Electrical</a></li>
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Carpentry</a></li>
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Painting</a></li>
-              <li><a href="#" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Air-con Servicing</a></li>
+              <li><Link to="/request-job" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Plumbing</Link></li>
+              <li><Link to="/request-job" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Electrical</Link></li>
+              <li><Link to="/request-job" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Carpentry</Link></li>
+              <li><Link to="/request-job" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Painting</Link></li>
+              <li><Link to="/request-job" className="text-gray-600 dark:text-gray-400 hover:text-primary transition-colors text-sm">Air-con Servicing</Link></li>
             </ul>
           </div>
 
@@ -68,16 +70,19 @@ const Footer = () => {
             <p className="text-gray-500 dark:text-gray-400 text-sm text-center sm:text-left">
               &copy; 2024 EasyDoneHandyman. All rights reserved.
             </p>
+            {/* Social placeholders — rendered as buttons (no real
+                destinations yet) so they don't trip jsx-a11y. Wire up
+                href values once the social accounts exist. */}
             <div className="flex items-center gap-3">
-              <a href="#" className="text-gray-400 hover:text-primary transition-colors">
+              <button type="button" aria-label="Website" className="text-gray-400 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-lg">language</span>
-              </a>
-              <a href="#" className="text-gray-400 hover:text-primary transition-colors">
+              </button>
+              <button type="button" aria-label="Facebook" className="text-gray-400 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-lg">facebook</span>
-              </a>
-              <a href="#" className="text-gray-400 hover:text-primary transition-colors">
+              </button>
+              <button type="button" aria-label="Email" className="text-gray-400 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-lg">alternate_email</span>
-              </a>
+              </button>
             </div>
           </div>
         </div>

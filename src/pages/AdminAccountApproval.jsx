@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
+import { projectConfig } from '../config/firebaseProject';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
@@ -13,7 +14,9 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
  */
 const AdminAccountApproval = () => {
   const navigate = useNavigate();
-  const { user, logout, loading: authLoading } = useAuth();
+  // Admin status from Firebase Auth custom claim via AuthContext.
+  // ProtectedRoute gates this route; the local check is defense-in-depth.
+  const { user, isAdmin, logout, loading: authLoading } = useAuth();
 
   // Tab state
   const [activeTab, setActiveTab] = useState('pending');
@@ -34,15 +37,6 @@ const AdminAccountApproval = () => {
 
   const [error, setError] = useState(null);
   const [processingId, setProcessingId] = useState(null);
-
-  // Admin emails - must match AdminFundRelease.jsx and AdminDashboard.jsx
-  const ADMIN_EMAILS = [
-    'easydonehandyman@gmail.com',
-    // Add more admin emails as needed
-  ];
-
-  // Check if current user is admin
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
   // Handle logout
   const handleLogout = async () => {
@@ -497,7 +491,7 @@ const AdminAccountApproval = () => {
       {/* Firebase link */}
       <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
         <a
-          href={`https://console.firebase.google.com/project/eazydone-d06cf/firestore/data/handymen/${handyman.id}`}
+          href={`${projectConfig.firebaseConsoleUrl}/firestore/data/handymen/${handyman.id}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-gray-500 dark:text-gray-400 hover:text-primary transition-colors"

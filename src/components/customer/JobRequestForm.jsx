@@ -3,17 +3,22 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 // import { useForm } from 'react-hook-form';
 // import { validateSingaporeAddress } from '../../services/onemap/addressValidation'; // Future OneMap integration
-import LoadingSpinner from '../common/LoadingSpinner';
 import PaymentForm from './PaymentForm';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
 
 // Firebase imports
-import { createAnonymousUser, getCurrentUser } from '../../services/firebase';
+import { createAnonymousUser } from '../../services/firebase';
 // Jobs API
 import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
-import { SERVICE_PRICING, getServicePrice, getPlatformFee } from '../../config/servicePricing';
+import {
+  SERVICE_PRICING,
+  getServicePrice,
+  getServicePriceMax,
+  getPlatformFee,
+  formatPriceRange
+} from '../../config/servicePricing';
 // WhatsApp notification service
 import { sendJobCreationNotification } from '../../services/whatsappService';
 
@@ -85,8 +90,6 @@ if (typeof document !== 'undefined') {
 const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [aiAccordionOpen, setAiAccordionOpen] = useState(false);
-  const [aiDescription, setAiDescription] = useState('');
   const [personalData, setPersonalData] = useState({});
   const [personalErrors, setPersonalErrors] = useState({});
   const [jobErrors, setJobErrors] = useState({});
@@ -127,7 +130,6 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     const data = Object.fromEntries(formData);
     callback(data);
   };
-  const reset = () => {};
 
   // Validation functions
   const validatePersonalData = (data) => {
@@ -361,39 +363,6 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
     }
   };
 
-  const handleJobSubmit = async (data) => {
-    setIsSubmitting(true);
-    try {
-      const jobData = {
-        // Personal details
-        customerName: personalData.name,
-        customerEmail: personalData.email,
-        customerPhone: personalData.phone,
-        address: personalData.address,
-        // Job details
-        serviceType: selectedCategory,
-        description: data.notes || `${selectedCategory} service requested`,
-        location: personalData.address || 'Singapore',
-        preferredTiming: selectedTiming,
-        preferredDate: selectedTiming === 'Schedule' ? `2024-10-${selectedDate.toString().padStart(2, '0')}` : null,
-        preferredTime: data.time,
-        materials: selectedMaterials,
-        siteVisit: selectedSiteVisit,
-        estimatedBudget: getServicePrice(selectedCategory),
-        status: 'pending',
-        createdAt: new Date()
-      };
-
-      const job = await createJob(jobData);
-      onJobCreated(job);
-      reset();
-    } catch (error) {
-      console.error('Error creating job:', error);
-      alert('Failed to create job. Please try again.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   const handleImageUpload = (event) => {
     const files = Array.from(event.target.files);
@@ -736,8 +705,12 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
               </h3>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-gray-600 dark:text-gray-400">Service Fee ({selectedCategory}):</span>
-                  <span className="font-medium">${getServicePrice(selectedCategory)}</span>
+                  <span className="text-gray-600 dark:text-gray-400">Estimated Range ({selectedCategory}):</span>
+                  <span className="font-medium">${getServicePrice(selectedCategory)}–${getServicePriceMax(selectedCategory)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600 dark:text-gray-400">Service Fee charged today (lower bound):</span>
+                  <span className="font-medium">${getServicePrice(selectedCategory).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500 dark:text-gray-500">Platform Fee (10%):</span>
@@ -745,10 +718,13 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 </div>
                 <div className="border-t border-primary/20 dark:border-primary/30 pt-2 mt-2">
                   <div className="flex justify-between items-center">
-                    <span className="font-bold text-lg">Total:</span>
+                    <span className="font-bold text-lg">Total charged today:</span>
                     <span className="font-bold text-lg text-primary">${(getServicePrice(selectedCategory) + getPlatformFee(getServicePrice(selectedCategory))).toFixed(2)}</span>
                   </div>
                 </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 leading-relaxed">
+                  We charge the lower end of the estimated range upfront. Any upward adjustment after on-site inspection requires your written approval with a reason and updated breakdown.
+                </p>
               </div>
             </div>
 
@@ -941,7 +917,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                       >
                     <div className="flex flex-col items-center gap-1">
                       <span className="font-medium">{service}</span>
-                      <span className="text-xs opacity-75">${getServicePrice(service)}</span>
+                      <span className="text-xs opacity-75">{formatPriceRange(service)}</span>
                     </div>
                   </button>
                 ))}

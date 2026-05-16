@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const Header = () => {
-  const location = useLocation();
   const navigate = useNavigate();
   const { user, userProfile, isAuthenticated, isHandyman, logout } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);

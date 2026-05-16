@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, doc, getDoc, updateDoc, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -18,7 +18,9 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
  */
 const AdminDisputedJobs = () => {
   const navigate = useNavigate();
-  const { user, logout, loading: authLoading } = useAuth();
+  // Admin status from Firebase Auth custom claim via AuthContext.
+  // ProtectedRoute gates this route; the local check is defense-in-depth.
+  const { user, isAdmin, logout, loading: authLoading } = useAuth();
 
   // Tab state
   const [activeTab, setActiveTab] = useState('active');
@@ -39,15 +41,6 @@ const AdminDisputedJobs = () => {
   const [expandedJobId, setExpandedJobId] = useState(null);
 
   const [error, setError] = useState(null);
-
-  // Admin emails - must match other admin pages
-  const ADMIN_EMAILS = [
-    'easydonehandyman@gmail.com',
-    // Add more admin emails as needed
-  ];
-
-  // Check if current user is admin
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
   // Handle logout
   const handleLogout = async () => {
@@ -187,12 +180,22 @@ const AdminDisputedJobs = () => {
   };
 
   /**
-   * Resolve a dispute by refunding the customer
-   * Updates job status to 'cancelled' with dispute resolution details
+   * Resolve a dispute by recording that the customer should be refunded.
+   *
+   * IMPORTANT: This does NOT call Stripe. The actual refund must be issued
+   * manually in the Stripe Dashboard against the job's paymentIntentId.
+   * This action only marks the job as cancelled and records the resolution
+   * so the admin queue stays in sync. We surface this clearly in the prompt
+   * and confirmation so the operator knows the manual step is still required.
    */
   const handleRefundCustomer = async (job) => {
     const reason = window.prompt(
-      `Refund customer for job "${job.serviceType}"?\n\nThis will mark the job as cancelled and initiate a refund.\n\nPlease enter a resolution note:`
+      `Mark job "${job.serviceType}" as refunded?\n\n` +
+      `⚠️  This does NOT issue the refund automatically.\n` +
+      `You must process the refund manually in the Stripe Dashboard:\n` +
+      `   PaymentIntent: ${job.paymentIntentId || '(not recorded)'}\n\n` +
+      `This action only marks the job as cancelled and records the resolution.\n\n` +
+      `Please enter a resolution note (e.g. Stripe refund ID once issued):`
     );
 
     if (reason === null) return; // User cancelled the prompt
@@ -203,8 +206,8 @@ const AdminDisputedJobs = () => {
       const jobRef = doc(db, 'jobs', job.id);
       await updateDoc(jobRef, {
         status: 'cancelled',
-        disputeResolution: 'refunded',
-        disputeResolutionNote: reason || 'Refund issued to customer',
+        disputeResolution: 'refund_pending_manual',
+        disputeResolutionNote: reason || 'Refund to be processed manually in Stripe',
         disputeResolvedAt: new Date(),
         disputeResolvedBy: user.email,
       });
@@ -214,13 +217,16 @@ const AdminDisputedJobs = () => {
       setResolvedDisputes(prev => [{
         ...job,
         status: 'cancelled',
-        disputeResolution: 'refunded',
-        disputeResolutionNote: reason || 'Refund issued to customer',
+        disputeResolution: 'refund_pending_manual',
+        disputeResolutionNote: reason || 'Refund to be processed manually in Stripe',
         disputeResolvedAt: new Date(),
         disputeResolvedBy: user.email,
       }, ...prev]);
 
-      alert('Dispute resolved — customer refund initiated.');
+      alert(
+        'Job marked as cancelled.\n\n' +
+        'Reminder: process the refund in the Stripe Dashboard now if you have not already.'
+      );
     } catch (err) {
       console.error('Error resolving dispute (refund):', err);
       alert('Failed to resolve dispute. Please try again.');
@@ -293,6 +299,11 @@ const AdminDisputedJobs = () => {
       case 'refunded':
         return {
           text: 'Refunded',
+          className: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+        };
+      case 'refund_pending_manual':
+        return {
+          text: 'Refund (Manual in Stripe)',
           className: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
         };
       case 'released_to_handyman':
@@ -568,7 +579,7 @@ const AdminDisputedJobs = () => {
             <div className="mt-8 bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 text-sm">
               <h4 className="font-semibold text-blue-900 dark:text-blue-300 mb-2">Dispute Resolution Guide:</h4>
               <ul className="space-y-1 text-blue-800 dark:text-blue-200">
-                <li>• <strong>Refund Customer:</strong> Cancels the job and initiates a refund to the customer</li>
+                <li>• <strong>Refund Customer:</strong> Cancels the job and records the resolution. <em>Refunds are processed manually in the Stripe Dashboard</em> — this button does not trigger Stripe.</li>
                 <li>• <strong>Release to Handyman:</strong> Moves the job to the Fund Release queue for payment to the handyman</li>
                 <li>• Review the dispute reason and contact both parties before making a decision</li>
                 <li>• Use the WhatsApp links to communicate directly with the customer or handyman</li>

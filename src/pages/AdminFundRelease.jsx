@@ -15,7 +15,9 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
  */
 const AdminFundRelease = () => {
   const navigate = useNavigate();
-  const { user, logout, loading: authLoading } = useAuth();
+  // Admin status from Firebase Auth custom claim via AuthContext.
+  // ProtectedRoute gates this route; the local check is defense-in-depth.
+  const { user, isAdmin, logout, loading: authLoading } = useAuth();
 
   // Tab state
   const [activeTab, setActiveTab] = useState('pending');
@@ -31,15 +33,6 @@ const AdminFundRelease = () => {
 
   const [error, setError] = useState(null);
   const [processingJobId, setProcessingJobId] = useState(null);
-
-  // Admin emails - can be moved to Firebase config later
-  const ADMIN_EMAILS = [
-    'easydonehandyman@gmail.com',
-    // Add more admin emails as needed
-  ];
-
-  // Check if current user is admin
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
   // Handle logout
   const handleLogout = async () => {
@@ -184,10 +177,16 @@ const AdminFundRelease = () => {
     try {
       const result = await releaseEscrow(job.id);
 
-      // Remove from pending list and add to completed
+      // releaseEscrowSimple (Cloud Function) is the authoritative writer
+      // of status/paymentStatus/transferId/paymentBreakdown on the job
+      // document. We mirror the same shape into local UI state so the
+      // operator sees the change instantly without a re-fetch — but we
+      // do NOT write these fields back to Firestore from the client.
+      // Firestore rules now block client writes to settled-payment
+      // fields (see firestore.rules jobSystemFields), so attempting a
+      // client write here would fail with permission-denied.
       setPendingJobs(pendingJobs.filter(j => j.id !== job.id));
 
-      // Add to completed jobs list with updated data
       const completedJob = {
         ...job,
         status: 'completed',

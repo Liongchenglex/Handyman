@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
+import { projectConfig } from '../config/firebaseProject';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
@@ -13,7 +14,12 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
  */
 const AdminDashboard = () => {
   const navigate = useNavigate();
-  const { user, logout, loading: authLoading } = useAuth();
+  // Admin status comes from useAuth().isAdmin, which is derived from the
+  // Firebase Auth custom claim set by scripts/grant-admin.js or the
+  // setAdminClaim Cloud Function (with a transitional email fallback).
+  // ProtectedRoute also gates this route — the local check below is
+  // defense-in-depth.
+  const { user, isAdmin, logout, loading: authLoading } = useAuth();
 
   const [stats, setStats] = useState({
     pendingHandymen: 0,
@@ -21,15 +27,6 @@ const AdminDashboard = () => {
     activeDisputes: 0
   });
   const [loadingStats, setLoadingStats] = useState(true);
-
-  // Admin emails - must match AdminFundRelease.jsx
-  const ADMIN_EMAILS = [
-    'easydonehandyman@gmail.com',
-    // Add more admin emails as needed
-  ];
-
-  // Check if current user is admin
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
   // Handle logout
   const handleLogout = async () => {
@@ -322,7 +319,7 @@ const AdminDashboard = () => {
             </h3>
             <div className="space-y-2">
               <a
-                href="https://console.firebase.google.com/project/eazydone-d06cf/firestore"
+                href={`${projectConfig.firebaseConsoleUrl}/firestore`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-primary transition-colors"

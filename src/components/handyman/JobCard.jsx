@@ -125,7 +125,7 @@ const JobCard = () => {
                     >
                       <img
                         src={imageUrl}
-                        alt={`Job image ${index + 1}`}
+                        alt={`Job reference ${index + 1}`}
                         className="w-full h-full object-cover transition-transform group-hover:scale-110"
                       />
                       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-center justify-center">

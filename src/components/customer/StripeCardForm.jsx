@@ -63,10 +63,10 @@ const StripeCardForm = ({
     setCardError(null);
 
     try {
-      console.log('🎯 Confirming payment with card...');
-      console.log('Client Secret:', clientSecret.substring(0, 30) + '...');
-
-      // Confirm the payment with card details
+      // Confirm the payment with card details. We intentionally do NOT
+      // log the clientSecret (even truncated) or the full paymentIntent
+      // object here — they include payment-method handles and metadata
+      // that should not appear in user-facing devtools.
       const { error, paymentIntent } = await stripe.confirmCardPayment(
         clientSecret,
         {
@@ -86,14 +86,9 @@ const StripeCardForm = ({
         return;
       }
 
-      // Payment successful!
-      console.log('✅ Payment confirmed successfully!');
-      console.log('Payment Intent:', paymentIntent);
-      console.log('Status:', paymentIntent.status);
-
-      if (paymentIntent.status === 'requires_capture') {
-        console.log('💰 Payment authorized - Funds held in escrow!');
-      }
+      // Payment successful. console.log is no-opped in production
+      // (see src/index.js); only minimal status info is emitted in dev.
+      console.log(`Payment confirmed (status: ${paymentIntent.status})`);
 
       if (onSuccess) {
         onSuccess(paymentIntent);

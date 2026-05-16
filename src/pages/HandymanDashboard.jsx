@@ -9,7 +9,7 @@ import SuspendedStatusView from '../components/handyman/status-views/SuspendedSt
 import MyJobsView from '../components/handyman/MyJobsView';
 import ProfileView from '../components/handyman/ProfileView';
 import StripeOnboardingPrompt from '../components/handyman/StripeOnboardingPrompt';
-import { updateHandyman, getHandyman } from '../services/firebase/collections';
+import { updateHandyman } from '../services/firebase/collections';
 
 /**
  * HandymanDashboard Page

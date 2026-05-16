@@ -478,7 +478,7 @@ export const getCustomerPayments = async (customerId) => {
   );
 };
 
-export default {
+const collectionsApi = {
   COLLECTIONS,
   JOB_STATUS,
   SERVICE_TYPES,
@@ -521,3 +521,5 @@ export default {
   getPayment,
   getCustomerPayments
 };
+
+export default collectionsApi;

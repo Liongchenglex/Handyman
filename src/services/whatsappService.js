@@ -13,9 +13,11 @@
  */
 
 import { auth } from './firebase/config';
+import { projectConfig } from '../config/firebaseProject';
 
-// Cloud Functions base URL
-const FUNCTIONS_BASE_URL = 'https://us-central1-eazydone-d06cf.cloudfunctions.net';
+// Cloud Functions base URL — derived from the configured Firebase
+// project (see src/config/firebaseProject.js).
+const FUNCTIONS_BASE_URL = projectConfig.functionsBaseUrl;
 
 /**
  * Send a WhatsApp notification via the Cloud Function proxy.
@@ -95,7 +97,11 @@ export const sendJobAcceptanceNotification = async (job, handyman) => {
     customerName: job.customerName,
     handymanName: handyman.name,
     serviceType: job.serviceType,
-    jobId: job.id
+    jobId: job.id,
+    estimatedBudget: job.estimatedBudget,
+    preferredTiming: job.preferredTiming,
+    preferredDate: job.preferredDate,
+    preferredTime: job.preferredTime
   });
 };
 
@@ -147,10 +153,12 @@ export const formatPhoneNumber = (phone) => {
 };
 
 // Export all functions
-export default {
+const whatsappService = {
   isWhatsAppConfigured,
   formatPhoneNumber,
   sendJobCompletionNotification,
   sendJobAcceptanceNotification,
   sendJobCreationNotification
 };
+
+export default whatsappService;
