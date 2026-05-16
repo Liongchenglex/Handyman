@@ -15,7 +15,7 @@ const TermsOfService = () => {
             <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
               <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
             </svg>
-            <span className="text-xl font-bold text-gray-900 dark:text-white">EazyDone Handyman</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white">EasyDone Handyman</span>
           </Link>
         </div>
       </header>
@@ -31,7 +31,7 @@ const TermsOfService = () => {
           <section className="mb-8">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">1. Introduction</h2>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-              Welcome to EazyDone Handyman ("Platform", "we", "us", or "our"). These Terms of Service ("Terms") govern your access to and use of our website, mobile application, and services that connect customers with independent handyman service providers.
+              Welcome to EasyDone Handyman ("Platform", "we", "us", or "our"). These Terms of Service ("Terms") govern your access to and use of our website, mobile application, and services that connect customers with independent handyman service providers.
             </p>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed mt-4">
               By accessing or using our Platform, you agree to be bound by these Terms. If you do not agree to these Terms, please do not use our Platform.
@@ -46,7 +46,7 @@ const TermsOfService = () => {
               <li><strong>"Handyman"</strong> or <strong>"Service Provider"</strong> refers to independent contractors who offer handyman services through the Platform.</li>
               <li><strong>"Job"</strong> refers to a service request created by a Customer and fulfilled by a Handyman.</li>
               <li><strong>"Service Fee"</strong> refers to the amount payable to the Handyman for completing a Job.</li>
-              <li><strong>"Platform Fee"</strong> refers to the fee charged by EazyDone Handyman for facilitating the transaction.</li>
+              <li><strong>"Platform Fee"</strong> refers to the fee charged by EasyDone Handyman for facilitating the transaction.</li>
               <li><strong>"Total Amount"</strong> refers to the combined Service Fee and Platform Fee paid by the Customer.</li>
             </ul>
           </section>
@@ -55,7 +55,7 @@ const TermsOfService = () => {
           <section className="mb-8">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">3. Platform Description</h2>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-              EazyDone Handyman is an online marketplace that connects Customers with independent Handymen for home repair and maintenance services. We do not directly provide handyman services. Handymen are independent contractors and not employees of EazyDone Handyman.
+              EasyDone Handyman is an online marketplace that connects Customers with independent Handymen for home repair and maintenance services. We do not directly provide handyman services. Handymen are independent contractors and not employees of EasyDone Handyman.
             </p>
 
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">3.1 Our Role</h3>
@@ -242,7 +242,7 @@ const TermsOfService = () => {
           <section className="mb-8">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">9. Limitation of Liability</h2>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed mb-4">
-              EazyDone Handyman is not liable for:
+              EasyDone Handyman is not liable for:
             </p>
             <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
               <li>Quality or outcome of services provided by Handymen</li>
@@ -271,7 +271,7 @@ const TermsOfService = () => {
               For questions about these Terms, please contact us:
             </p>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <p className="font-semibold text-gray-900 dark:text-white">EazyDone Handyman</p>
+              <p className="font-semibold text-gray-900 dark:text-white">EasyDone Handyman</p>
               <p className="text-gray-600 dark:text-gray-300">Email: easydonehandyman@gmail.com</p>
             </div>
           </section>
@@ -279,7 +279,7 @@ const TermsOfService = () => {
           {/* Agreement Notice */}
           <div className="mt-10 p-4 bg-primary/10 dark:bg-primary/20 rounded-lg">
             <p className="text-gray-700 dark:text-gray-200 text-sm text-center">
-              By using EazyDone Handyman, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
+              By using EasyDone Handyman, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
             </p>
           </div>
 

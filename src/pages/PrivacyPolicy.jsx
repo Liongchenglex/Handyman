@@ -15,7 +15,7 @@ const PrivacyPolicy = () => {
             <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
               <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
             </svg>
-            <span className="text-xl font-bold text-gray-900 dark:text-white">EazyDone Handyman</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white">EasyDone Handyman</span>
           </Link>
         </div>
       </header>
@@ -31,7 +31,7 @@ const PrivacyPolicy = () => {
           <section className="mb-8">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">1. Introduction</h2>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-              EazyDone Handyman ("we", "us", "our", or "Platform") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our website, mobile application, and services.
+              EasyDone Handyman ("we", "us", "our", or "Platform") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our website, mobile application, and services.
             </p>
             <p className="text-gray-600 dark:text-gray-300 leading-relaxed mt-4">
               By using our Platform, you consent to the data practices described in this Privacy Policy. If you do not agree with this Privacy Policy, please do not use our Platform.
@@ -253,7 +253,7 @@ const PrivacyPolicy = () => {
               For questions about this Privacy Policy or our data practices, please contact:
             </p>
             <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
-              <p className="font-semibold text-gray-900 dark:text-white">EazyDone Handyman</p>
+              <p className="font-semibold text-gray-900 dark:text-white">EasyDone Handyman</p>
               <p className="text-gray-600 dark:text-gray-300">Email: easydonehandyman@gmail.com</p>
               <p className="text-gray-600 dark:text-gray-300">Data Protection Officer: easydonehandyman@gmail.com</p>
             </div>
@@ -262,7 +262,7 @@ const PrivacyPolicy = () => {
           {/* Consent Notice */}
           <div className="mt-10 p-4 bg-primary/10 dark:bg-primary/20 rounded-lg">
             <p className="text-gray-700 dark:text-gray-200 text-sm text-center">
-              By using EazyDone Handyman, you acknowledge that you have read and understood this Privacy Policy and consent to the collection, use, and disclosure of your information as described.
+              By using EasyDone Handyman, you acknowledge that you have read and understood this Privacy Policy and consent to the collection, use, and disclosure of your information as described.
             </p>
           </div>
 

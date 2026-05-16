@@ -239,7 +239,7 @@ const JobDetails = () => {
             <div className="sidebar-section">
               <h4>Need Help?</h4>
               <div className="help-info">
-                <p>📱 WhatsApp: +65 XXXX XXXX</p>
+                <p>📱 WhatsApp: +65 6123 4567</p>
                 <p>📧 easydonehandyman@gmail.com</p>
               </div>
             </div>

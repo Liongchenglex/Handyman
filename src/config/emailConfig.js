@@ -11,7 +11,7 @@ export const EMAIL_CONFIG = {
   OPERATIONS_EMAIL: process.env.REACT_APP_OPERATIONS_EMAIL || 'operations@eazydone.com',
 
   // Company details for email templates
-  COMPANY_NAME: 'EazyDone',
+  COMPANY_NAME: 'EasyDone',
   COMPANY_SUPPORT_EMAIL: 'easydonehandyman@gmail.com',
 
   // Email service configuration (using EmailJS - free tier)
@@ -42,7 +42,7 @@ export const EMAIL_CONFIG = {
 
 // Handyman acknowledgment email template
 export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
-  subject: 'Welcome to EazyDone - Registration Received!',
+  subject: 'Welcome to EasyDone - Registration Received!',
   html: `
     <!DOCTYPE html>
     <html>
@@ -59,12 +59,12 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
     <body>
       <div class="container">
         <div class="header">
-          <h1 style="margin: 0; color: #000;">Welcome to EazyDone!</h1>
+          <h1 style="margin: 0; color: #000;">Welcome to EasyDone!</h1>
         </div>
         <div class="content">
           <h2>Hi ${handymanData.name},</h2>
 
-          <p>Thank you for registering as a handyman with EazyDone! We're excited to have you on our platform.</p>
+          <p>Thank you for registering as a handyman with EasyDone! We're excited to have you on our platform.</p>
 
           <p><strong>Registration Details:</strong></p>
           <ul>
@@ -89,10 +89,10 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
           <p>If you have any questions, feel free to reach out to our support team at <a href="mailto:easydonehandyman@gmail.com">easydonehandyman@gmail.com</a>.</p>
 
           <p>Best regards,<br>
-          <strong>The EazyDone Team</strong></p>
+          <strong>The EasyDone Team</strong></p>
         </div>
         <div class="footer">
-          <p>© 2024 EazyDone. All rights reserved.</p>
+          <p>© 2024 EasyDone. All rights reserved.</p>
         </div>
       </div>
     </body>
@@ -103,7 +103,7 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
 // Handyman approval-confirmation email template (sent after operations
 // approves the registration).
 export const HANDYMAN_APPROVAL_EMAIL = (handymanData) => ({
-  subject: 'Your EazyDone Account Has Been Approved!',
+  subject: 'Your EasyDone Account Has Been Approved!',
   html: `
     <!DOCTYPE html>
     <html>
@@ -126,7 +126,7 @@ export const HANDYMAN_APPROVAL_EMAIL = (handymanData) => ({
         <div class="content">
           <h2>Hi ${handymanData.name},</h2>
 
-          <p>Great news — your EazyDone handyman account has been <strong>approved</strong>. You can now start accepting jobs in your service area.</p>
+          <p>Great news — your EasyDone handyman account has been <strong>approved</strong>. You can now start accepting jobs in your service area.</p>
 
           <p><strong>What you can do now:</strong></p>
           <ul class="checklist">
@@ -148,7 +148,7 @@ export const HANDYMAN_APPROVAL_EMAIL = (handymanData) => ({
           <p>Questions? Reach out at <a href="mailto:${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}">${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}</a>.</p>
 
           <p>Welcome aboard!<br>
-          <strong>The EazyDone Team</strong></p>
+          <strong>The EasyDone Team</strong></p>
         </div>
         <div class="footer">
           <p>© ${new Date().getFullYear()} ${EMAIL_CONFIG.COMPANY_NAME}. All rights reserved.</p>
@@ -162,7 +162,7 @@ export const HANDYMAN_APPROVAL_EMAIL = (handymanData) => ({
 // Handyman rejection email template (sent after operations rejects the
 // registration).
 export const HANDYMAN_REJECTION_EMAIL = (handymanData, reason = '') => ({
-  subject: 'Update on Your EazyDone Application',
+  subject: 'Update on Your EasyDone Application',
   html: `
     <!DOCTYPE html>
     <html>
@@ -183,16 +183,16 @@ export const HANDYMAN_REJECTION_EMAIL = (handymanData, reason = '') => ({
         <div class="content">
           <h2>Hi ${handymanData.name},</h2>
 
-          <p>Thank you for applying to join EazyDone. After reviewing your application, we're unable to approve your account at this time.</p>
+          <p>Thank you for applying to join EasyDone. After reviewing your application, we're unable to approve your account at this time.</p>
 
           ${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}
 
           <p>This decision isn't necessarily final — if you'd like to discuss it, gather additional documentation, or reapply in the future, please reach out to our support team at <a href="mailto:${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}">${EMAIL_CONFIG.COMPANY_SUPPORT_EMAIL}</a>.</p>
 
-          <p>We appreciate your interest in EazyDone and wish you the best.</p>
+          <p>We appreciate your interest in EasyDone and wish you the best.</p>
 
           <p>Best regards,<br>
-          <strong>The EazyDone Team</strong></p>
+          <strong>The EasyDone Team</strong></p>
         </div>
         <div class="footer">
           <p>© ${new Date().getFullYear()} ${EMAIL_CONFIG.COMPANY_NAME}. All rights reserved.</p>
