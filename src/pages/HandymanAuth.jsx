@@ -12,14 +12,19 @@ import HandymanAuth from '../components/handyman/HandymanAuth';
  */
 const HandymanAuthPage = () => {
   const navigate = useNavigate();
-  const { user, isHandyman, loading, sessionExpired, clearSessionExpired } = useAuth();
+  const { user, isHandyman, isAdmin, loading, sessionExpired, clearSessionExpired } = useAuth();
 
-  // Redirect if already logged in as handyman
+  // Redirect an already-signed-in user to where they belong:
+  // admins → the admin dashboard, handymen → the handyman dashboard.
+  // Admins have no handyman profile, so they're matched on isAdmin first.
   useEffect(() => {
-    if (!loading && user && isHandyman) {
+    if (loading || !user) return;
+    if (isAdmin) {
+      navigate('/admin', { replace: true });
+    } else if (isHandyman) {
       navigate('/handyman-dashboard', { replace: true });
     }
-  }, [user, isHandyman, loading, navigate]);
+  }, [user, isHandyman, isAdmin, loading, navigate]);
 
   const handleLoginSuccess = (userData) => {
     // Don't navigate here - let the useEffect handle it once AuthContext updates
@@ -53,7 +58,7 @@ const HandymanAuthPage = () => {
   }
 
   // Don't show auth form if already logged in (useEffect will redirect)
-  if (user && isHandyman) {
+  if (user && (isHandyman || isAdmin)) {
     return null;
   }
 

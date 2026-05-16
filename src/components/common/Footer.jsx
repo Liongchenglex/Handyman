@@ -68,7 +68,7 @@ const Footer = () => {
         <div className="border-t border-gray-200 dark:border-gray-700 mt-6 pt-6">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-3">
             <p className="text-gray-500 dark:text-gray-400 text-sm text-center sm:text-left">
-              &copy; 2024 EasyDoneHandyman. All rights reserved.
+              &copy; 2025 EasyDoneHandyman. All rights reserved.
             </p>
             {/* Social placeholders — rendered as buttons (no real
                 destinations yet) so they don't trip jsx-a11y. Wire up

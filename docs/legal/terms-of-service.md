@@ -103,7 +103,7 @@ When a Customer pays for a service, the Total Amount is distributed as follows:
 | Recipient | Percentage | Description |
 |-----------|------------|-------------|
 | Payment Processor (Stripe) | ~3.4% + $0.50 | Third-party processing fee |
-| EazyDone Handyman | ~9% of net | Platform fee for services |
+| EasyDone Handyman | ~9% of net | Platform fee for services |
 | Handyman | ~88% of net | Service fee for work performed |
 
 **Detailed Example ($110 Total):**
@@ -273,7 +273,7 @@ Our maximum liability for any claim shall not exceed the Platform Fee paid for t
 
 ### 11.3 Indemnification
 
-Users agree to indemnify and hold harmless EazyDone Handyman from any claims, damages, or expenses arising from:
+Users agree to indemnify and hold harmless EasyDone Handyman from any claims, damages, or expenses arising from:
 - Violation of these Terms
 - Violation of any law or third-party rights
 - Content posted on the Platform
@@ -284,7 +284,7 @@ Users agree to indemnify and hold harmless EazyDone Handyman from any claims, da
 
 ### 12.1 Platform Ownership
 
-All content, features, and functionality of the Platform are owned by EazyDone Handyman and protected by intellectual property laws.
+All content, features, and functionality of the Platform are owned by EasyDone Handyman and protected by intellectual property laws.
 
 ### 12.2 User Content
 
@@ -310,7 +310,7 @@ We reserve the right to modify these Terms at any time. Changes will be effectiv
 
 You may terminate your account at any time by contacting us. Outstanding payments must be settled before account closure.
 
-### 15.2 By EazyDone Handyman
+### 15.2 By EasyDone Handyman
 
 We may suspend or terminate accounts for:
 - Violation of these Terms
@@ -330,7 +330,7 @@ These Terms shall be governed by and construed in accordance with the laws of Si
 
 For questions about these Terms, please contact us:
 
-**EazyDone Handyman**
+**EasyDone Handyman**
 - Email: easydonehandyman@gmail.com
 - Website: [Your Website URL]
 
@@ -344,8 +344,8 @@ If any provision of these Terms is found to be unenforceable, the remaining prov
 
 ## 19. Entire Agreement
 
-These Terms, together with our Privacy Policy, constitute the entire agreement between you and EazyDone Handyman regarding the use of our Platform.
+These Terms, together with our Privacy Policy, constitute the entire agreement between you and EasyDone Handyman regarding the use of our Platform.
 
 ---
 
-*By using EazyDone Handyman, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.*
+*By using EasyDone Handyman, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.*

@@ -345,6 +345,15 @@ const AdminDashboard = () => {
                 <span className="material-symbols-outlined text-lg">mail</span>
                 EmailJS Dashboard
               </a>
+              <a
+                href="https://console.twilio.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-lg">sms</span>
+                Twilio Console
+              </a>
               <Link
                 to="/"
                 className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-primary transition-colors"

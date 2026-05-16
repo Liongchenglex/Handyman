@@ -18,6 +18,7 @@ import {
 } from 'firebase/auth';
 import { auth } from './config';
 import { createHandyman, getHandyman } from './collections';
+import { isAdminUser } from '../../config/admins';
 
 // ==================== HANDYMAN AUTHENTICATION ====================
 
@@ -118,6 +119,25 @@ export const signInHandyman = async (email, password) => {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
+
+    // Admins sign in through this same form, but they have NO handyman
+    // profile — they're authorised by the 'admin' custom claim (set via
+    // scripts/grant-admin.js). Let them through without requiring a
+    // handymen/ document; the rest of the handyman-only checks below
+    // would otherwise sign them straight back out.
+    let isAdmin = false;
+    try {
+      const tokenResult = await user.getIdTokenResult();
+      isAdmin = tokenResult.claims && tokenResult.claims.admin === true;
+    } catch (_) {
+      // Token read failed — fall through to the email allow-list below.
+    }
+    if (isAdmin || isAdminUser(user)) {
+      return {
+        user,
+        profile: { uid: user.uid, email: user.email, role: 'admin' }
+      };
+    }
 
     // Try to get handyman profile from Firestore
     let handymanProfile;

@@ -289,7 +289,7 @@ const HomePage = () => {
             Privacy Policy
           </Link>
         </div>
-        <p>&copy; 2024 EasyDoneHandyman. All rights reserved.</p>
+        <p>&copy; 2025 EasyDoneHandyman. All rights reserved.</p>
       </footer>
     </div>
   );

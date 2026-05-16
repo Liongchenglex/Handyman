@@ -220,7 +220,7 @@ const HandymanAuth = ({
                   Email Address
                 </label>
                 <input
-                  className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
+                  className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                     errors.email ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
                   }`}
                   id="email"
@@ -239,7 +239,7 @@ const HandymanAuth = ({
                   Password
                 </label>
                 <input
-                  className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
+                  className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                     errors.password ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
                   }`}
                   id="password"
@@ -259,7 +259,7 @@ const HandymanAuth = ({
                     Confirm Password
                   </label>
                   <input
-                    className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
+                    className={`w-full h-12 bg-gray-50 dark:bg-gray-900 border rounded-xl p-4 font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-primary/50 focus:border-primary placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-shadow ${
                       errors.confirmPassword ? 'border-red-500' : 'border-gray-300 dark:border-gray-700'
                     }`}
                     id="confirmPassword"

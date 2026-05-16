@@ -92,7 +92,7 @@ export const HANDYMAN_ACKNOWLEDGMENT_EMAIL = (handymanData) => ({
           <strong>The EasyDone Team</strong></p>
         </div>
         <div class="footer">
-          <p>© 2024 EasyDone. All rights reserved.</p>
+          <p>© 2025 EasyDone. All rights reserved.</p>
         </div>
       </div>
     </body>

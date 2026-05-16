@@ -1,6 +1,9 @@
 {
   "projects": {
     "default": "eazydone-d06cf",
-    "dev": "eazydone-d06cf"
-  }
+    "dev": "eazydone-d06cf",
+    "prod": "handyman-sg-3b418"
+  },
+  "targets": {},
+  "etags": {}
 }

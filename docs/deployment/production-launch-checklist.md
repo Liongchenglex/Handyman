@@ -12,19 +12,19 @@ people most often miss.
 
 ## 1. Provision the company Firebase project
 
-- [ ] Create a new Firebase project under the **company's** Google
+- [ x] Create a new Firebase project under the **company's** Google
       account / organisation. Note the **project ID** (e.g.
       `eazydone-prod`) — everything else derives from it.
-- [ ] ⚠️ Upgrade the project to the **Blaze (pay-as-you-go) plan**.
+- [ x] ⚠️ Upgrade the project to the **Blaze (pay-as-you-go) plan**.
       Cloud Functions and outbound network calls (Stripe, Twilio,
       EmailJS) do not work on the free Spark plan.
-- [ ] Enable **Authentication** → sign-in methods: **Email/Password**
+- [ x] Enable **Authentication** → sign-in methods: **Email/Password**
       and **Anonymous** (customers sign in anonymously).
-- [ ] Create **Cloud Firestore** (production mode) — pick the region
+- [ x] Create **Cloud Firestore** (production mode) — pick the region
       closest to your users (e.g. `asia-southeast1` for Singapore).
-- [ ] Enable **Cloud Storage**.
-- [ ] Enable **Hosting**.
-- [ ] Register a **Web App** in Project Settings → General → copy the
+- [ x] Enable **Cloud Storage**.
+- [ x] Enable **Hosting**.
+- [ x] Register a **Web App** in Project Settings → General → copy the
       Firebase SDK config values (apiKey, authDomain, etc.).
 
 ## 2. Frontend configuration
@@ -41,22 +41,22 @@ Frontend env is managed with two gitignored files and two npm scripts:
 builds, points the CLI at the company project, and deploys. You never
 edit `.env.production.local` by hand — it's generated each deploy.
 
-- [ ] Fill in **`.env.prod`** — replace every `CHANGE_ME` with the
+- [ x] Fill in **`.env.prod`** — replace every `CHANGE_ME` with the
       company project's values:
-  - [ ] `REACT_APP_FIREBASE_API_KEY`
-  - [ ] `REACT_APP_FIREBASE_AUTH_DOMAIN`
-  - [ ] `REACT_APP_FIREBASE_PROJECT_ID` ← drives all Cloud Function /
+  - [x ] `REACT_APP_FIREBASE_API_KEY`
+  - [ x] `REACT_APP_FIREBASE_AUTH_DOMAIN`
+  - [ x] `REACT_APP_FIREBASE_PROJECT_ID` ← drives all Cloud Function /
         hosting / console URLs
-  - [ ] `REACT_APP_FIREBASE_STORAGE_BUCKET`
-  - [ ] `REACT_APP_FIREBASE_MESSAGING_SENDER_ID`
-  - [ ] `REACT_APP_FIREBASE_APP_ID`
-  - [ ] `REACT_APP_FUNCTIONS_REGION` (only if not `us-central1`)
-  - [ ] `REACT_APP_STRIPE_PUBLISHABLE_KEY` = **live** key (`pk_live_…`)
-  - [ ] `REACT_APP_EMAILJS_*` (service / template / public key)
-  - [ ] `REACT_APP_OPERATIONS_EMAIL`
-  - [ ] `REACT_APP_APPROVAL_BASE_URL` = production URL
+  - [x ] `REACT_APP_FIREBASE_STORAGE_BUCKET`
+  - [ x] `REACT_APP_FIREBASE_MESSAGING_SENDER_ID`
+  - [ x] `REACT_APP_FIREBASE_APP_ID`
+  - [x ] `REACT_APP_FUNCTIONS_REGION` (only if not `us-central1`)
+  - [ x] `REACT_APP_STRIPE_PUBLISHABLE_KEY` = **live** key (`pk_live_…`)
+  - [ x] `REACT_APP_EMAILJS_*` (service / template / public key)
+  - [ x] `REACT_APP_OPERATIONS_EMAIL`
+  - [ x] `REACT_APP_APPROVAL_BASE_URL` = production URL
         (`https://<domain>/admin/approve-handyman`)
-  - [ ] `REACT_APP_SENTRY_DSN` (see §11)
+  - [ x] `REACT_APP_SENTRY_DSN` (see §11)
 - [ ] ⚠️ `public/index.html` SEO tags (`og:url`, `twitter:url`,
       `canonical`, the two JSON-LD `url` fields) still hardcode
       `eazydone-d06cf.web.app`. Create React App cannot env-substitute
@@ -70,17 +70,16 @@ in `functions/.env.eazydone-d06cf`. Create
 `functions/.env.<company-project-id>` with the company's production
 secrets (gitignored). Never commit them.
 
-- [ ] `STRIPE_SECRET_KEY` = **live** key (`sk_live_…`)
-- [ ] `STRIPE_WEBHOOK_SECRET` = live webhook signing secret — set
+- [ x] `STRIPE_SECRET_KEY` = **live** key (`sk_live_…`)
+- [x ] `STRIPE_WEBHOOK_SECRET` = live webhook signing secret — set
       **after** creating the webhook in §5.
-- [ ] ⚠️ `APPROVAL_SECRET` = a fresh 32+ char random string
+- [x] ⚠️ `APPROVAL_SECRET` = a fresh 32+ char random string
       (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
       Handyman-approval JWT signing fails closed without it.
-- [ ] `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
-- [ ] `TWILIO_TEMPLATE_JOB_CREATED`, `TWILIO_TEMPLATE_JOB_ACCEPTED`,
+- [ x] `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`
+- [ x] `TWILIO_TEMPLATE_JOB_CREATED`, `TWILIO_TEMPLATE_JOB_ACCEPTED`,
       `TWILIO_TEMPLATE_JOB_COMPLETION` (approved production templates)
-- [ ] `WHATSAPP_*` / `GREENAPI_*` if those channels are used
-- [ ] Keep a copy of all secrets in a password manager — they are not
+- [ x] Keep a copy of all secrets in a password manager — they are not
       in git.
 - [ ] (Optional) platform fee: defaults to 10%. To change,
       `firebase functions:config:set platform.fee_percentage="0.10"`.
@@ -90,46 +89,46 @@ secrets (gitignored). Never commit them.
 The dev alias (`dev` → `eazydone-d06cf`) already exists in
 `.firebaserc`. You only need to register the company project.
 
-- [ ] `firebase use --add` → select the company project. Name the
+- [x ] `firebase use --add` → select the company project. Name the
       alias **exactly `prod`** — the `deploy:prod` npm script runs
       `firebase use prod`, so the alias name must match.
-- [ ] You never switch projects by hand: `npm run deploy:dev` and
+- [ x] You never switch projects by hand: `npm run deploy:dev` and
       `npm run deploy:prod` each call `firebase use` for you.
 
 ## 5. Stripe — switch to LIVE mode
 
-- [ ] Complete Stripe **business verification / account activation**.
-- [ ] Generate **live** API keys → `pk_live_…` (frontend),
+- [ x] Complete Stripe **business verification / account activation**.
+- [ x] Generate **live** API keys → `pk_live_…` (frontend),
       `sk_live_…` (functions/.env).
 - [ ] **Stripe Connect**: ensure Connect is enabled in live mode;
       handymen onboard real connected accounts.
-- [ ] ⚠️ Create a **webhook endpoint** in the Stripe Dashboard (live
+- [x ] ⚠️ Create a **webhook endpoint** in the Stripe Dashboard (live
       mode) pointing at:
       `https://<region>-<projectId>.cloudfunctions.net/stripeWebhook`
-  - Events: `payment_intent.succeeded`, `charge.refunded`,
+  - Events: `payment_intent.succeeded`, `charge.refunded`, `payment_intent.amount_capturable_update`,
     `charge.dispute.created`, `account.updated`, `transfer.created`.
   - Copy the **signing secret** → `STRIPE_WEBHOOK_SECRET` in
     `functions/.env.<company-project-id>`.
-- [ ] After deploy, run one **small real transaction** end-to-end
+- [x ] After deploy, run one **small real transaction** end-to-end
       (authorize → capture/release → confirm payout).
 
 ## 6. Twilio WhatsApp — production
 
-- [ ] Complete WhatsApp Business / Meta business verification.
-- [ ] Provision a **production WhatsApp sender** number.
-- [ ] Submit and get **approval** for all message templates
+- [ x] Complete WhatsApp Business / Meta business verification.
+- [x ] Provision a **production WhatsApp sender** number.
+- [ x] Submit and get **approval** for all message templates
       (job created / accepted / completion poll).
-- [ ] Point the Twilio inbound webhook at:
+- [++++++++++++ ] Point the Twilio inbound webhook at (need to set number for dev vs prod):
       `https://<region>-<projectId>.cloudfunctions.net/whatsappWebhook`
 
 ## 7. EmailJS
 
-- [ ] Verify the EmailJS **service** is connected and templates exist
+- [x ] Verify the EmailJS **service** is connected and templates exist
       (handyman acknowledgment, operations notification, approval,
       rejection).
-- [ ] ⚠️ Each template's **"To Email"** field must be `{{to_email}}`,
+- [ x] ⚠️ Each template's **"To Email"** field must be `{{to_email}}`,
       or mail silently goes nowhere.
-- [ ] Free tier is 200 emails/month — consider a paid tier for
+- [ x] Free tier is 200 emails/month — consider a paid tier for
       production volume.
 
 ## 8. Bootstrap the first admin  ⚠️ ORDER MATTERS
@@ -137,18 +136,18 @@ The dev alias (`dev` → `eazydone-d06cf`) already exists in
 The Firestore/Storage rules grant admin **only** via the Firebase Auth
 custom claim — there is no email fallback in the rules.
 
-- [ ] The admin must sign into the deployed app once so their Auth
+- [x ] The admin must sign into the deployed app once so their Auth
       user exists.
-- [ ] Firebase Console (company project) → Project Settings → Service
+- [ x] Firebase Console (company project) → Project Settings → Service
       Accounts → **Generate new private key** → save as
       `service-account-prod.json` in the repo root (gitignored).
-- [ ] Run: `node scripts/grant-admin.js --email <admin-email> --key service-account-prod.json`
-- [ ] **Do this before or together with deploying the rules**, or the
+- [x ] Run: `node scripts/grant-admin.js --email <admin-email> --key service-account-prod.json`
+- [x ] **Do this before or together with deploying the rules**, or the
       admin is locked out of every admin page.
-- [ ] Admin signs out and back in so the claim lands on their token.
-- [ ] Delete `service-account-prod.json` from the repo afterwards
+- [ x] Admin signs out and back in so the claim lands on their token.
+- [ x] Delete `service-account-prod.json` from the repo afterwards
       (keep a copy in a vault).
-- [ ] Update `ADMIN_EMAILS_FALLBACK` in `functions/index.js` if the
+- [x ] Update `ADMIN_EMAILS_FALLBACK` in `functions/index.js` if the
       production admin email differs — or rely solely on custom claims.
 
 ## 9. Deploy
