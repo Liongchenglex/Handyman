@@ -254,6 +254,44 @@ const AdminAccountApproval = () => {
     }
   };
 
+  // Re-approve a previously rejected handyman (appeal flow).
+  // Mirrors handleApprove but operates on the Processed list and clears the
+  // prior rejection metadata so the account reads as a clean approval.
+  // Admin-only: the page is admin-gated and firestore.rules only lets an
+  // admin change verified/status.
+  const handleReapprove = async (handyman) => {
+    if (!window.confirm(`Re-approve ${handyman.name}? They were previously rejected and will become an active handyman.`)) return;
+
+    try {
+      setProcessingId(handyman.id);
+      const handymanRef = doc(db, 'handymen', handyman.id);
+
+      await updateDoc(handymanRef, {
+        verified: true,
+        verifiedAt: new Date().toISOString(),
+        status: 'active',
+        // Clear prior rejection so the card no longer shows the reason.
+        rejectedReason: '',
+        rejectedAt: null,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Update the processed list in place (rejected -> active).
+      setProcessedHandymen(prev => prev.map(h =>
+        h.id === handyman.id
+          ? { ...h, verified: true, verifiedAt: new Date().toISOString(), status: 'active', rejectedReason: '', rejectedAt: null }
+          : h
+      ));
+
+      alert(`${handyman.name} has been re-approved and is now active.`);
+    } catch (error) {
+      console.error('Error re-approving handyman:', error);
+      alert(`Error re-approving handyman: ${error.message}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   // Format date
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -482,6 +520,27 @@ const AdminAccountApproval = () => {
               <>
                 <span className="material-symbols-outlined text-lg">cancel</span>
                 Reject
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Re-approve action for a previously rejected handyman (appeal flow).
+          Shown in the Processed tab regardless of showActions. */}
+      {handyman.status === 'rejected' && (
+        <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={() => handleReapprove(handyman)}
+            disabled={processingId === handyman.id}
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {processingId === handyman.id ? (
+              <LoadingSpinner />
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-lg">restart_alt</span>
+                Re-approve
               </>
             )}
           </button>
