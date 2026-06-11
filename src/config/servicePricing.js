@@ -18,7 +18,7 @@
 
 export const SERVICE_PRICING = {
   'General handyman':  { min: 80,  max: 100 },
-  'Appliance Repair':  { min: 90,  max: 130 },
+  'Appliance Repair':  { min: 10,  max: 20 },  // TEMP: lowered for live Stripe test — revert to { min: 90, max: 130 }
   'Plumbing':          { min: 120, max: 160 },
   'Electrical':        { min: 130, max: 180 },
   'Carpentry':         { min: 150, max: 220 },
