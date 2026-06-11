@@ -15,7 +15,7 @@ Disallow: /404
 Disallow: /error
 
 # Sitemap location
-Sitemap: https://eazydone-d06cf.web.app/sitemap.xml
+Sitemap: https://easydonehandyman.sg/sitemap.xml
 
 # Crawl-delay (optional - be polite to servers)
 Crawl-delay: 1
