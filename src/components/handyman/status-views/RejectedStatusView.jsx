@@ -109,8 +109,8 @@ const RejectedStatusView = ({ userProfile }) => {
           <div className="text-center">
             <p className="text-sm text-gray-600 dark:text-gray-400">
               For any questions, contact us at{' '}
-              <a href="mailto:support@eazydone.com" className="text-primary hover:underline font-medium">
-                support@eazydone.com
+              <a href="mailto:easydonehandyman@gmail.com" className="text-primary hover:underline font-medium">
+                easydonehandyman@gmail.com
               </a>
             </p>
           </div>
