@@ -19,7 +19,13 @@
 
 /* Import Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
+/*
+ * Material Symbols is loaded via a <link rel="stylesheet" ... &display=block>
+ * in public/index.html, NOT here. A second @import without display=block
+ * re-introduced the ligature-text flash on load (icons showing "search",
+ * "work_off", etc. before the font arrived — most visibly when returning
+ * from the Stripe onboarding redirect), so it was removed.
+ */
 
 /* CSS Variables for Design System */
 :root {

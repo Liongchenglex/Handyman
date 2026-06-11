@@ -55,8 +55,15 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
 
-    <!-- Google Material Symbols -->
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <!-- Google Material Symbols.
+         display=block tells the browser to keep the icon glyph area BLANK
+         while the (large, full-axis variable) font downloads, rather than
+         rendering the ligature source text. Without it, on a full page load
+         — e.g. returning from the Stripe onboarding redirect — every icon
+         briefly shows its name ("search", "work_off", ...) until the font
+         arrives. Loaded once here via <link>; the duplicate CSS @import was
+         removed from globals.css. -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" />
 
     <!-- Preconnect for performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
