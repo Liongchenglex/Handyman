@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { signInHandyman } from '../../services/firebase';
 import { callFunction } from '../../services/api/cloudFunctions';
+import { scrollToFirstError } from '../../utils/scrollToFirstError';
 
 /**
  * HandymanAuth Component
@@ -145,6 +146,7 @@ const HandymanAuth = ({
       }
     } else {
       setIsSubmitting(false);
+      scrollToFirstError(validationErrors, ['email', 'password', 'confirmPassword', 'tosAccepted']);
     }
   };
 
@@ -275,7 +277,7 @@ const HandymanAuth = ({
 
               {/* Terms of Service & Privacy Policy Checkbox (Signup only) */}
               {authMode === 'signup' && (
-                <div className="pt-2">
+                <div className="pt-2" data-field="tosAccepted">
                   <label className="flex items-start gap-3 cursor-pointer">
                     <input
                       type="checkbox"

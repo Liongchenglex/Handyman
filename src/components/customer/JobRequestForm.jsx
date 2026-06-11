@@ -6,6 +6,7 @@ import 'react-datepicker/dist/react-datepicker.css';
 import PaymentForm from './PaymentForm';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
+import { scrollToFirstError } from '../../utils/scrollToFirstError';
 
 // Firebase imports
 import { createAnonymousUser } from '../../services/firebase';
@@ -267,6 +268,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setCurrentStep(2);
       // Scroll to top of the page
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      scrollToFirstError(validationErrors, ['name', 'email', 'phone', 'address']);
     }
   };
 
@@ -284,6 +287,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
       setCurrentStep(3);
       // Scroll to top of the page
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      scrollToFirstError(validationErrors, ['category', 'timing', 'time', 'materials', 'siteVisit', 'notes']);
     }
   };
 
@@ -953,7 +958,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
 
           <form onSubmit={handleJobFormSubmit} className="space-y-6">
             {/* Category Selection */}
-            <div className="space-y-4">
+            <div className="space-y-4" data-field="category">
               <h3 className="text-lg font-bold">Select a category</h3>
               <div className="flex flex-wrap gap-3">
                 {serviceTypes.map(service => (
@@ -978,7 +983,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
             </div>
 
             {/* Timing Selection */}
-            <div className="space-y-4">
+            <div className="space-y-4" data-field="timing">
               <h3 className="text-lg font-bold">When do you need the service?</h3>
               <div className="flex flex-wrap gap-3">
                 {timingOptions.map(timing => (
@@ -1015,7 +1020,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
                 </div>
 
                 {/* Time Selection */}
-                <div className="space-y-4">
+                <div className="space-y-4" data-field="time">
                   <label className="text-lg font-bold">Select time</label>
                   <select
                     className="w-full p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 focus:border-primary focus:ring-primary focus:ring-2"
@@ -1036,7 +1041,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
             )}
 
             {/* Materials */}
-            <div className="space-y-4">
+            <div className="space-y-4" data-field="materials">
               <h3 className="text-lg font-bold">Materials </h3>
               <div className="flex flex-wrap gap-3">
                 {materialsOptions.map(option => (
@@ -1057,7 +1062,7 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
             </div>
 
             {/* Site Visit */}
-            <div className="space-y-4">
+            <div className="space-y-4" data-field="siteVisit">
               <h3 className="text-lg font-bold">Site Visit</h3>
               <div className="flex flex-wrap gap-3">
                 {siteVisitOptions.map(option => (

@@ -3,6 +3,7 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import { registerHandyman, uploadImage, uploadFile, updateDocument } from '../../services/firebase';
 import { sendRegistrationEmails } from '../../services/emailService';
+import { scrollToFirstError } from '../../utils/scrollToFirstError';
 
 /**
  * HandymanRegistration Component
@@ -194,6 +195,9 @@ const HandymanRegistration = ({
     if (Object.keys(validationErrors).length === 0) {
       setCurrentStep(2);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      // Jump to the first field in error so the user can see what to fix.
+      scrollToFirstError(validationErrors, ['fullName', 'phone', 'address', 'postalCode']);
     }
   };
 
@@ -213,6 +217,9 @@ const HandymanRegistration = ({
     if (Object.keys(validationErrors).length === 0) {
       setCurrentStep(3);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      // Jump to the first field in error (button groups carry data-field anchors).
+      scrollToFirstError(validationErrors, ['serviceTypes', 'experienceLevel', 'hourlyRate', 'serviceAreas', 'description']);
     }
   };
 
@@ -541,7 +548,7 @@ const HandymanRegistration = ({
 
               <form onSubmit={handleProfessionalSubmit} className="space-y-8">
                 {/* Service Types */}
-                <div>
+                <div data-field="serviceTypes">
                   <h3 className="text-lg font-bold mb-4">Service Types</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Select all services you can provide</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -564,7 +571,7 @@ const HandymanRegistration = ({
                 </div>
 
                 {/* Experience Level */}
-                <div>
+                <div data-field="experienceLevel">
                   <label className="block text-lg font-bold mb-4">Experience Level</label>
                   <div className="space-y-3">
                     {experienceLevels.map(level => (
@@ -611,7 +618,7 @@ const HandymanRegistration = ({
                 </div>
 
                 {/* Service Areas */}
-                <div>
+                <div data-field="serviceAreas">
                   <h3 className="text-lg font-bold mb-4">Service Areas</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Select areas where you can provide services</p>
                   <div className="flex flex-wrap gap-3">
