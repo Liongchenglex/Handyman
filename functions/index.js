@@ -66,6 +66,20 @@ const allowedOrigins = [
   `https://${PROJECT_ID}.firebaseapp.com`,
   'http://localhost:3000',  // Development - React dev server
   'http://localhost:5000',  // Development - Firebase emulator
+  // Production custom domain. The live site is served here (not on the
+  // *.web.app default), so without these every browser Cloud Function call
+  // is CORS-blocked (405). Both the apex and the www host must be listed:
+  // the browser sends the exact Origin the user is on, and there is no
+  // www<->apex normalisation at the CORS layer.
+  'https://easydonehandyman.sg',
+  'https://www.easydonehandyman.sg',
+  // Optional per-deploy extras (comma-separated), e.g. Hosting preview
+  // channels or a future domain — set CORS_ALLOWED_ORIGINS in the function
+  // env to extend without a code change.
+  ...(process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
 ];
 
 const cors = require('cors')({
