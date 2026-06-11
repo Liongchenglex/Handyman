@@ -859,6 +859,93 @@ exports.getAccountStatus = functions.https.onRequest((req, res) => {
 });
 
 /**
+ * POST /syncStripeOnboardingStatus
+ *
+ * Server-authoritative onboarding-completion check + persist.
+ *
+ * The dashboard gate keys off `stripeOnboardingCompleted` on the handyman
+ * doc. That flag must NEVER be set by the client: Stripe redirects to the
+ * onboarding `return_url` even when the user abandons the flow, so trusting
+ * the redirect (or letting the browser write the flag) lets a handyman
+ * bypass onboarding. Firestore rules now forbid the client from writing any
+ * of the stripe* capability fields; only this function (Admin SDK, which
+ * bypasses rules) and the account.updated webhook may set them.
+ *
+ * Auth: the caller's Firebase ID token identifies the handyman. We read the
+ * connected-account id from THEIR server-side doc — never from the request —
+ * so a caller can only ever sync their own account. Returns the resolved
+ * status and whether onboarding is genuinely complete.
+ */
+exports.syncStripeOnboardingStatus = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const uid = decodedToken.uid;
+
+      const handymanRef = admin.firestore().collection('handymen').doc(uid);
+      const handymanDoc = await handymanRef.get();
+      if (!handymanDoc.exists) {
+        return res.status(404).json({ error: 'Handyman profile not found' });
+      }
+
+      const accountId = handymanDoc.data().stripeConnectedAccountId;
+
+      // No connected account yet → definitively not onboarded. Persist false
+      // so the dashboard keeps showing the onboarding prompt.
+      if (!accountId) {
+        await handymanRef.update({
+          stripeOnboardingCompleted: false,
+          stripeAccountStatus: 'pending',
+          updatedAt: new Date().toISOString(),
+        });
+        return res.status(200).json({ success: true, onboardingComplete: false });
+      }
+
+      const account = await stripe.accounts.retrieve(accountId);
+      const onboardingComplete = !!(
+        account.details_submitted &&
+        account.charges_enabled &&
+        account.payouts_enabled &&
+        (account.requirements?.currently_due?.length === 0)
+      );
+
+      await handymanRef.update({
+        stripeOnboardingCompleted: onboardingComplete,
+        stripeAccountStatus: onboardingComplete ? 'complete' : 'pending',
+        stripeDetailsSubmitted: !!account.details_submitted,
+        stripeChargesEnabled: !!account.charges_enabled,
+        stripePayoutsEnabled: !!account.payouts_enabled,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return res.status(200).json({
+        success: true,
+        onboardingComplete,
+        status: {
+          detailsSubmitted: !!account.details_submitted,
+          chargesEnabled: !!account.charges_enabled,
+          payoutsEnabled: !!account.payouts_enabled,
+          requirementsCurrentlyDue: account.requirements?.currently_due || [],
+        },
+      });
+    } catch (error) {
+      console.error('Error syncing Stripe onboarding status:', error);
+      if (error.message && error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: 'Unauthorized', message: error.message });
+      }
+      return res.status(500).json({
+        error: 'Failed to sync onboarding status',
+        message: error.message,
+      });
+    }
+  });
+});
+
+/**
  * Create login link for handyman to access Stripe dashboard
  * POST /createLoginLink
  * Body: { accountId }

@@ -149,11 +149,23 @@ service cloud.firestore {
       // Handyman can create their own profile
       allow create: if isSignedIn() && isOwner(handymanId);
 
-      // Handyman can update their own profile, but NOT the verified/status
-      // fields — those gate access to verified-handyman privileges and
-      // must remain admin-controlled.
+      // Handyman can update their own profile, but NOT:
+      //   - verified / status: gate verified-handyman privileges (admin-only).
+      //   - stripe* capability fields: gate Stripe-payout eligibility and are
+      //     written ONLY by the server (syncStripeOnboardingStatus + the
+      //     account.updated webhook, both Admin SDK, which bypasses rules).
+      //     Locking them here is what makes onboarding-completion tamper-proof:
+      //     a handyman cannot self-set stripeOnboardingCompleted=true to skip
+      //     onboarding. stripeConnectedAccountId stays writable — it's just the
+      //     account reference, set when the Connect account is created, not a
+      //     privilege gate.
       allow update: if isSignedIn() && isOwner(handymanId) &&
-                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['verified', 'status']));
+                      (!request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                        'verified', 'status',
+                        'stripeConnectedAccountId',
+                        'stripeOnboardingCompleted', 'stripeAccountStatus',
+                        'stripeDetailsSubmitted', 'stripeChargesEnabled', 'stripePayoutsEnabled'
+                      ]));
 
       // Admins can update anything, including verified/status. The email
       // approval flow used to allow ANY caller to flip a pending handyman

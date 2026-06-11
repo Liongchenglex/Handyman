@@ -9,7 +9,7 @@ import SuspendedStatusView from '../components/handyman/status-views/SuspendedSt
 import MyJobsView from '../components/handyman/MyJobsView';
 import ProfileView from '../components/handyman/ProfileView';
 import StripeOnboardingPrompt from '../components/handyman/StripeOnboardingPrompt';
-import { updateHandyman } from '../services/firebase/collections';
+import { callFunction } from '../services/api/cloudFunctions';
 
 /**
  * HandymanDashboard Page
@@ -36,31 +36,37 @@ const HandymanDashboard = () => {
     }
   }, [user, isHandyman, loading, navigate]);
 
-  // Handle Stripe onboarding return URL
+  // Handle Stripe onboarding return URL.
+  //
+  // SECURITY: Stripe sends the user to `return_url` whenever they LEAVE the
+  // onboarding flow — including when they abandon it half-way and click
+  // "Return to EasyDoneHandyman". The `?stripe_onboarding=complete` param is
+  // therefore NOT proof of completion, and the client must not be the one to
+  // decide. We call the server function `syncStripeOnboardingStatus`, which
+  // verifies the real account state with Stripe and writes the authoritative
+  // `stripeOnboardingCompleted` flag via the Admin SDK. The client can no
+  // longer write that flag (locked in firestore.rules), so a handyman cannot
+  // bypass onboarding by faking the redirect or editing their own doc. If the
+  // account isn't genuinely complete, the dashboard re-shows the prompt.
   useEffect(() => {
     const handleStripeReturn = async () => {
       const onboardingComplete = searchParams.get('stripe_onboarding');
-      if (onboardingComplete === 'complete' && user) {
-        try {
-          // Update handyman document
-          await updateHandyman(user.uid, {
-            stripeOnboardingCompleted: true,
-            stripeAccountStatus: 'pending',
-            updatedAt: new Date().toISOString()
-          });
+      if (onboardingComplete !== 'complete' || !user) return;
 
-          // Reload the page to refresh AuthContext and remove query param
-          // This ensures the UI updates with the new data
-          window.location.href = '/handyman-dashboard';
-        } catch (error) {
-          console.error('Error updating handyman after Stripe onboarding:', error);
-        }
+      try {
+        await callFunction('syncStripeOnboardingStatus', {}, { requireAuth: true });
+      } catch (error) {
+        // Fail closed: on error we do NOT grant access; the server leaves the
+        // flag unset and the prompt stays. Just clear the query param below.
+        console.error('Error syncing Stripe onboarding status:', error);
+      } finally {
+        // Reload to refresh AuthContext (picks up the server-written flag) and
+        // strip the query param so this effect doesn't re-run.
+        window.location.href = '/handyman-dashboard';
       }
     };
 
-    if (user) {
-      handleStripeReturn();
-    }
+    handleStripeReturn();
   }, [user, searchParams]);
 
   const handleJobSelect = (job) => {

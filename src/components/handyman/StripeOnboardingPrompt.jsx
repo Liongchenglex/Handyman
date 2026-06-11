@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createConnectedAccount, createAccountLink } from '../../services/stripe/stripeApi';
-import { updateHandyman } from '../../services/firebase/collections';
 import { useAuth } from '../../context/AuthContext';
 
 /**
@@ -54,13 +53,10 @@ const StripeOnboardingPrompt = ({ handyman }) => {
         }
 
         accountId = accountResult.accountId;
-
-        // Store account ID in Firestore
-        await updateHandyman(handyman.handymanId, {
-          stripeConnectedAccountId: accountId,
-          stripeAccountStatus: 'pending',
-          updatedAt: new Date().toISOString()
-        });
+        // No client-side Firestore write here: createConnectedAccount already
+        // persists stripeConnectedAccountId + the initial stripe* status fields
+        // server-side (Admin SDK). Those fields are now locked against client
+        // writes in firestore.rules, so writing them here would be denied.
       }
 
       // Step 2: Create account link for onboarding
