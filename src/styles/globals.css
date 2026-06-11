@@ -48,13 +48,31 @@ body {
   line-height: 1.6;
   background-color: var(--background-light);
   color: var(--foreground-light);
+  /*
+   * Pin native form controls (inputs, autofill, scrollbars) to the light
+   * palette. Without this the browser renders them dark when the OS is in
+   * dark mode, which clashes with our light-first layout.
+   */
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: var(--background-dark);
-    color: var(--foreground-dark);
-  }
+/*
+ * Dark mode is CLASS-driven, not OS-driven — see `darkMode: 'class'` in
+ * tailwind.config.js. The body theme must use the SAME trigger as every
+ * Tailwind `dark:` variant, otherwise the two disagree.
+ *
+ * This previously used `@media (prefers-color-scheme: dark)`, which flipped
+ * the body text colour to near-white based purely on the OS setting. But no
+ * `.dark` class is ever applied, so all the Tailwind `dark:` backgrounds
+ * stayed light — leaving light text on light backgrounds (invisible
+ * headings and input values). Gating on `.dark` keeps body in lock-step
+ * with the rest of the app: light everywhere until dark mode is actually
+ * enabled by adding `.dark` to the document.
+ */
+.dark body {
+  background-color: var(--background-dark);
+  color: var(--foreground-dark);
+  color-scheme: dark;
 }
 
 /* Material Symbols Configuration */
