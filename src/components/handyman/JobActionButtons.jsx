@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { sendJobCompletionNotification } from '../../services/whatsappService';
@@ -25,6 +25,23 @@ const JobActionButtons = ({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
+  // Tracks a successful completion so the button locks into its terminal
+  // "Marked as Completed" state immediately, before the parent list refetches.
+  const [justCompleted, setJustCompleted] = useState(false);
+
+  // Synchronous re-entrancy guard. React state updates (setIsProcessing) are
+  // asynchronous, so a rapid double-click can fire two completion writes before
+  // the disabled state re-renders. A ref flips synchronously to block the
+  // duplicate call.
+  const completingRef = useRef(false);
+
+  // The completion action is "done" once the job has moved past 'in_progress'
+  // (either to 'pending_confirmation' awaiting the customer, or 'completed'),
+  // or once we have optimistically marked it complete in this session.
+  const isCompleted =
+    justCompleted ||
+    job.status === 'pending_confirmation' ||
+    job.status === 'completed';
 
   /**
    * Check if the job's scheduled date has arrived.
@@ -60,6 +77,18 @@ const JobActionButtons = ({
   };
 
   const handleMarkCompleted = async () => {
+    // Re-entrancy guard: block a second (rapid) click while a completion is
+    // already in flight, before React re-renders the disabled button.
+    if (completingRef.current || isProcessing) {
+      return;
+    }
+
+    // Idempotency guard: if the job is no longer 'in_progress' it has already
+    // been marked complete — don't submit again.
+    if (isCompleted || job.status !== 'in_progress') {
+      return;
+    }
+
     // Date gate: block completion before the scheduled preferred date
     if (!isJobDateReached()) {
       alert(`This job is scheduled for ${formatPreferredDate()}. You cannot mark it as complete before the appointment date.`);
@@ -73,6 +102,9 @@ const JobActionButtons = ({
         return;
       }
 
+      // Acquire the lock only after the user confirms (so cancelling leaves the
+      // button usable).
+      completingRef.current = true;
       setIsProcessing(true);
 
       try {
@@ -100,6 +132,9 @@ const JobActionButtons = ({
         }
 
         await updateJob(job.id, updateData);
+
+        // Lock the button into its terminal state immediately.
+        setJustCompleted(true);
 
         console.log('Job marked as complete, awaiting customer confirmation');
 
@@ -139,12 +174,19 @@ const JobActionButtons = ({
         alert('Failed to mark job as complete. Please try again.');
       } finally {
         setIsProcessing(false);
+        completingRef.current = false;
       }
     } else {
       // Direct completion flow (for job lists)
+      completingRef.current = true;
+      setIsProcessing(true);
+
       try {
         const { updateJob } = await import('../../services/firebase');
         await updateJob(job.id, { status: 'completed' });
+
+        // Lock the button into its terminal state immediately.
+        setJustCompleted(true);
 
         // Notify parent component to refresh jobs list
         if (onStatusChange) {
@@ -155,6 +197,9 @@ const JobActionButtons = ({
       } catch (error) {
         console.error('Error updating job:', error);
         alert('Failed to update job status. Please try again.');
+      } finally {
+        setIsProcessing(false);
+        completingRef.current = false;
       }
     }
   };
@@ -172,7 +217,7 @@ const JobActionButtons = ({
       <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
         <button
           onClick={handleMarkCompleted}
-          disabled={isProcessing || job.status === 'pending_confirmation' || !dateReached}
+          disabled={isProcessing || isCompleted || !dateReached}
           className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-6 py-4 rounded-xl hover:bg-green-700 transition-colors font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isProcessing ? (
@@ -180,10 +225,10 @@ const JobActionButtons = ({
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
               Marking Complete...
             </>
-          ) : job.status === 'pending_confirmation' ? (
+          ) : isCompleted ? (
             <>
-              <span className="material-symbols-outlined">schedule</span>
-              Awaiting Customer Confirmation
+              <span className="material-symbols-outlined">check_circle</span>
+              Marked as Completed
             </>
           ) : !dateReached ? (
             <>
@@ -212,22 +257,45 @@ const JobActionButtons = ({
   // Compact variant for job lists
   return (
     <div className="flex flex-col sm:flex-row gap-3">
-      {/* Mark Complete button - shown when job is in progress */}
-      {job.status === 'in_progress' && (
+      {/* Mark Complete button - shown while in progress, then locks into a
+          terminal "Marked as Completed" state once the action succeeds. */}
+      {(job.status === 'in_progress' || isCompleted) && (
         <button
           onClick={handleMarkCompleted}
-          disabled={!dateReached}
-          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium ${
-            dateReached
+          disabled={!dateReached || isProcessing || isCompleted}
+          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium disabled:cursor-not-allowed ${
+            isCompleted
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+              : dateReached
               ? 'bg-green-600 text-white hover:bg-green-700'
               : 'bg-gray-300 text-gray-500 cursor-not-allowed'
           }`}
-          title={!dateReached ? `Scheduled for ${formatPreferredDate()}` : 'Mark this job as complete'}
+          title={
+            isCompleted
+              ? 'This job has already been marked as completed'
+              : !dateReached
+              ? `Scheduled for ${formatPreferredDate()}`
+              : 'Mark this job as complete'
+          }
         >
-          <span className="material-symbols-outlined text-sm">
-            {dateReached ? 'check_circle' : 'event_busy'}
-          </span>
-          {dateReached ? 'Mark Complete' : `Scheduled: ${formatPreferredDate()}`}
+          {isProcessing ? (
+            <>
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+              Marking Complete...
+            </>
+          ) : isCompleted ? (
+            <>
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              Marked as Completed
+            </>
+          ) : (
+            <>
+              <span className="material-symbols-outlined text-sm">
+                {dateReached ? 'check_circle' : 'event_busy'}
+              </span>
+              {dateReached ? 'Mark Complete' : `Scheduled: ${formatPreferredDate()}`}
+            </>
+          )}
         </button>
       )}
 

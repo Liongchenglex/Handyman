@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getJobById, acceptJob, updateJobStatus } from '../services/api/jobs';
 import { useAuth } from '../hooks/useAuth';
@@ -21,8 +21,14 @@ const JobDetails = () => {
   const [job, setJob] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAccepting, setIsAccepting] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
   const [error, setError] = useState(null);
+
+  // Synchronous re-entrancy guard for completion. React state updates are async,
+  // so without this a rapid double-click would fire two status updates before
+  // the button re-renders as disabled.
+  const completingRef = useRef(false);
 
   useEffect(() => {
     const loadJob = async () => {
@@ -60,6 +66,14 @@ const JobDetails = () => {
   };
 
   const handleMarkCompleted = async () => {
+    // Block re-entry and stale clicks: ignore if a completion is already in
+    // flight or the job is no longer in progress.
+    if (completingRef.current || isCompleting || job.status !== 'in_progress') {
+      return;
+    }
+    completingRef.current = true;
+    setIsCompleting(true);
+
     try {
       await updateJobStatus(job.id, 'completed');
       setJob((prev) => ({ ...prev, status: 'completed' }));
@@ -67,6 +81,9 @@ const JobDetails = () => {
     } catch (err) {
       console.error('Error updating job status:', err);
       alert('Failed to update job status. Please try again.');
+    } finally {
+      setIsCompleting(false);
+      completingRef.current = false;
     }
   };
 
@@ -257,9 +274,10 @@ const JobDetails = () => {
               {canMarkCompleted && (
                 <button
                   onClick={handleMarkCompleted}
-                  className="w-full inline-flex items-center justify-center min-h-[48px] bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-semibold"
+                  disabled={isCompleting}
+                  className="w-full inline-flex items-center justify-center min-h-[48px] bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Mark as Completed
+                  {isCompleting ? 'Marking as Completed...' : 'Mark as Completed'}
                 </button>
               )}
 

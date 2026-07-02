@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
@@ -27,12 +27,33 @@ const ExpressInterestButton = ({
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  // Tracks a successful submission so the button shows a terminal state
+  // immediately, even before the parent list refreshes or navigation happens.
+  const [expressed, setExpressed] = useState(false);
+
+  // Synchronous re-entrancy guard. React state updates (e.g. setIsLoading) are
+  // asynchronous, so a fast double-click can fire the submit handler twice
+  // before the disabled state re-renders. A ref flips synchronously and blocks
+  // the duplicate call, preventing duplicate Firebase writes.
+  const submittingRef = useRef(false);
+
+  // A job can only be claimed while it is still open ('pending') and unassigned.
+  // If it already has a handymanId / a non-pending status, interest was already
+  // expressed (possibly by this user on a previous click), so the button must
+  // not allow another submission.
+  const alreadyClaimed = expressed || job.status !== 'pending' || !!job.handymanId;
 
   const handleExpressInterest = () => {
+    if (alreadyClaimed) return;
     setShowConfirmModal(true);
   };
 
   const handleConfirmInterest = async () => {
+    // Block re-entry: guards against rapid double-clicks on the confirm button
+    // firing duplicate writes before React re-renders the disabled state.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     setIsLoading(true);
     setShowConfirmModal(false);
 
@@ -49,6 +70,9 @@ const ExpressInterestButton = ({
           email: user.email
         }
       });
+
+      // Mark as expressed so the button locks into its terminal state right away.
+      setExpressed(true);
 
       console.log('Successfully expressed interest in job:', job.id);
 
@@ -97,6 +121,9 @@ const ExpressInterestButton = ({
       console.error('Error expressing interest:', error);
       alert('Failed to express interest. Please try again.');
       setIsLoading(false);
+    } finally {
+      // Release the re-entrancy lock once the attempt settles.
+      submittingRef.current = false;
     }
   };
 
@@ -161,9 +188,10 @@ const ExpressInterestButton = ({
             </button>
             <button
               onClick={handleConfirmInterest}
-              className="flex-1 bg-primary text-black font-bold py-3 px-4 rounded-lg hover:bg-primary/90 transition-colors"
+              disabled={isLoading}
+              className="flex-1 bg-primary text-black font-bold py-3 px-4 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Confirm Interest
+              {isLoading ? 'Processing...' : 'Confirm Interest'}
             </button>
           </div>
         </div>
@@ -175,13 +203,18 @@ const ExpressInterestButton = ({
     <>
       <button
         onClick={handleExpressInterest}
-        disabled={isLoading}
+        disabled={isLoading || alreadyClaimed}
         className={getButtonClasses()}
       >
         {isLoading ? (
           <>
             <LoadingSpinner size="small" />
             Expressing Interest...
+          </>
+        ) : alreadyClaimed ? (
+          <>
+            <span className="material-symbols-outlined">check_circle</span>
+            Interest Expressed
           </>
         ) : (
           <>
