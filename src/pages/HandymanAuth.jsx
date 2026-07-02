@@ -1,7 +1,22 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import HandymanAuth from '../components/handyman/HandymanAuth';
+
+/**
+ * Honor a `?next=<path>` hint after successful handyman auth without
+ * enabling an open-redirect: only same-origin absolute paths pass. We
+ * reject scheme-relative URLs like `//evil.com/x` (which browsers would
+ * happily navigate to) and anything not starting with `/`. Returns the
+ * safe target or null when there's no valid hint.
+ */
+const parseSafeNextPath = (nextParam) => {
+  if (!nextParam) return null;
+  if (typeof nextParam !== 'string') return null;
+  if (!nextParam.startsWith('/')) return null;
+  if (nextParam.startsWith('//')) return null;
+  return nextParam;
+};
 
 /**
  * HandymanAuth Page
@@ -12,19 +27,29 @@ import HandymanAuth from '../components/handyman/HandymanAuth';
  */
 const HandymanAuthPage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, isHandyman, isAdmin, loading, sessionExpired, clearSessionExpired } = useAuth();
 
+  // ?next=<path> lets a caller (e.g. the WhatsApp deep-link on a job
+  // details page) route the handyman back to their intended destination
+  // after login, instead of dropping them on the generic dashboard.
+  // Sanitised to same-origin absolute paths only — see parseSafeNextPath.
+  const nextTarget = parseSafeNextPath(searchParams.get('next'));
+
   // Redirect an already-signed-in user to where they belong:
-  // admins → the admin dashboard, handymen → the handyman dashboard.
-  // Admins have no handyman profile, so they're matched on isAdmin first.
+  // admins → the admin dashboard, handymen → the handyman dashboard
+  // (or the ?next= target when present). Admins have no handyman
+  // profile, so they're matched on isAdmin first; we do NOT honor
+  // ?next= for admins because they might click a handyman-scoped
+  // link and end up somewhere they can't operate.
   useEffect(() => {
     if (loading || !user) return;
     if (isAdmin) {
       navigate('/admin', { replace: true });
     } else if (isHandyman) {
-      navigate('/handyman-dashboard', { replace: true });
+      navigate(nextTarget || '/handyman-dashboard', { replace: true });
     }
-  }, [user, isHandyman, isAdmin, loading, navigate]);
+  }, [user, isHandyman, isAdmin, loading, navigate, nextTarget]);
 
   const handleLoginSuccess = (userData) => {
     // Don't navigate here - let the useEffect handle it once AuthContext updates

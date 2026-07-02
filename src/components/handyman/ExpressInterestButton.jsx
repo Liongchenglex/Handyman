@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -23,8 +23,9 @@ const ExpressInterestButton = ({
   buttonStyle = 'full-width',
   onSuccess
 }) => {
-  const { user } = useAuth();
+  const { user, isHandyman } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [isLoading, setIsLoading] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   // Tracks a successful submission so the button shows a terminal state
@@ -45,6 +46,21 @@ const ExpressInterestButton = ({
 
   const handleExpressInterest = () => {
     if (alreadyClaimed) return;
+
+    // Deep-link case: an unauthenticated visitor (typical WhatsApp
+    // recipient tapping the notification on a device they've never
+    // logged in on) or a signed-in non-handyman (customer with an
+    // anonymous session who was forwarded the link) cannot claim the
+    // job — the Firestore rules gate it on isHandyman() anyway. Send
+    // them to handyman auth with a `next=` hint so they land back on
+    // this exact job after signing in, instead of the generic
+    // dashboard.
+    if (!user || !isHandyman) {
+      const next = encodeURIComponent(`${location.pathname}${location.search}`);
+      navigate(`/handyman-auth?next=${next}`);
+      return;
+    }
+
     setShowConfirmModal(true);
   };
 
