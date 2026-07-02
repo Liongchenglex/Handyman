@@ -66,7 +66,7 @@ const RejectedStatusView = ({ userProfile }) => {
                   you can contact our operations team to appeal this decision.
                 </p>
                 <a
-                  href={`mailto:operations@eazydone.com?subject=Handyman%20Application%20Appeal%20-%20${userProfile.name}&body=Hi%20EazyDone%20Team,%0A%0AI%20would%20like%20to%20appeal%20the%20rejection%20of%20my%20handyman%20application.%0A%0AName:%20${userProfile.name}%0AEmail:%20${userProfile.email}%0A%0AReason%20for%20appeal:%0A[Please%20explain%20why%20you%20believe%20your%20application%20should%20be%20reconsidered]`}
+                  href={`mailto:easydonehandyman@gmail.com?subject=Handyman%20Application%20Appeal%20-%20${userProfile.name}&body=Hi%20EasyDoneHandyman%20Team,%0A%0AI%20would%20like%20to%20appeal%20the%20rejection%20of%20my%20handyman%20application.%0A%0AName:%20${userProfile.name}%0AEmail:%20${userProfile.email}%0A%0AReason%20for%20appeal:%0A[Please%20explain%20why%20you%20believe%20your%20application%20should%20be%20reconsidered]`}
                   className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
                 >
                   <span className="material-symbols-outlined text-sm">email</span>

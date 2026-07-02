@@ -29,7 +29,7 @@ const PendingStatusView = ({ userProfile }) => {
 
           {/* Message */}
           <p className="text-lg text-gray-700 dark:text-gray-300 mb-6">
-            Thank you for registering with EazyDone! Our operations team is currently reviewing your application.
+            Thank you for registering with EasyDoneHandyman! Our operations team is currently reviewing your application.
           </p>
 
           {/* Timeline */}

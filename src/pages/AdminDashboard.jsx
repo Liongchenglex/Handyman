@@ -173,7 +173,7 @@ const AdminDashboard = () => {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900 dark:text-white">Admin Dashboard</h1>
-                <p className="text-sm text-gray-500 dark:text-gray-400">EazyDone Operations</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">EasyDone Operations</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
