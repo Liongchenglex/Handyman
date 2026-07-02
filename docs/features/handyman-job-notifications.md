@@ -195,11 +195,14 @@ before deploying to live).
 
 Content variables:
 - `{{1}}` — Service type (e.g. "Plumbing")
-- `{{2}}` — Service fee (e.g. "$120")
-- `{{3}}` — Preferred timing (e.g. "Today, ASAP" or "Fri 5 Jul, 2pm")
-- `{{4}}` — Postal district (first 2 digits, not full address — see
-  Privacy below)
-- `{{5}}` — Deep link URL (e.g. `https://easydonehandyman.com/job/JOB123`)
+- `{{2}}` — Service fee, digits only (e.g. "120" — the template embeds it after "Fee: $")
+- `{{3}}` — Preferred timing (e.g. "As soon as possible" or "2026-07-05 at 14:00")
+- `{{4}}` — Area label — either "District NN" (first 2 digits of the
+  postal code) or "Singapore" when the postcode can't be parsed. The
+  code sends the full label, not just digits, so the template body
+  should say `Area: {{4}}` — not `Area: District {{4}}`. See Privacy
+  below for why we send district-only.
+- `{{5}}` — Deep link URL (e.g. `https://easydonehandyman.com/job-details/JOB123`)
 
 Fallback text (used when template SID isn't configured, e.g. sandbox):
 
@@ -209,7 +212,7 @@ Fallback text (used when template SID isn't configured, e.g. sandbox):
 Service: {serviceType}
 Fee: ${estimatedBudget}
 When: {timing}
-Area: District {district}
+Area: {areaLabel}
 
 Tap to view and accept:
 {deepLink}
