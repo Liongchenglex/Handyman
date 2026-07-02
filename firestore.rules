@@ -147,6 +147,21 @@ service cloud.firestore {
       allow delete: if isSignedIn() &&
                       isOwner(resource.data.customerId) &&
                       resource.data.status == 'pending';
+
+      // Handyman new-job notification markers.
+      //
+      // One doc per (job, handyman) pair — the idempotency key for the
+      // WhatsApp fan-out (see docs/features/handyman-job-notifications.md).
+      // Written EXCLUSIVELY by Cloud Functions via the Admin SDK, which
+      // bypasses these rules; explicit client denial here prevents any
+      // signed-in user from forging a marker to (a) silence future
+      // notifications for someone else or (b) spoof a "sent" audit trail.
+      // Handymen may read only their own marker so a future UI can show
+      // "You were notified about this job on ...".
+      match /notifications/{handymanId} {
+        allow read: if isSignedIn() && isOwner(handymanId);
+        allow write: if false;
+      }
     }
 
     // Handymen collection
