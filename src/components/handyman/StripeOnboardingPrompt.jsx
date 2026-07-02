@@ -1,19 +1,94 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createConnectedAccount, createAccountLink } from '../../services/stripe/stripeApi';
 import { useAuth } from '../../context/AuthContext';
+
+// Human-readable labels for Stripe's `requirements.currently_due` field
+// codes. The raw codes (e.g. "representative.dob.day") leak Stripe's
+// schema and confuse the handyman — we surface a friendly label instead.
+// Several codes map to the same label on purpose (e.g. first_name and
+// last_name both collapse to "Full name") and are deduped before display.
+const REQUIREMENT_LABELS = {
+  'business_profile.mcc': 'Business category',
+  'business_type': 'Business type',
+  'external_account': 'Bank account details',
+  'tos_acceptance.date': "Accept Stripe's Terms of Service",
+  'tos_acceptance.ip': "Accept Stripe's Terms of Service",
+  'representative.first_name': 'Full name',
+  'representative.last_name': 'Full name',
+  'representative.email': 'Email address',
+  'representative.phone': 'Phone number',
+  'representative.id_number': 'NRIC / ID number',
+  'representative.nationality': 'Nationality',
+  'representative.full_name_aliases': 'Other names (if applicable)',
+};
+
+const humanizeRequirement = (req) => {
+  if (REQUIREMENT_LABELS[req]) return REQUIREMENT_LABELS[req];
+  if (req.startsWith('representative.address.')) return 'Home address';
+  if (req.startsWith('representative.dob.')) return 'Date of birth';
+  if (req.startsWith('representative.verification.document')) return 'Photo ID document';
+  if (req.startsWith('representative.verification.proof_of_liveness')) return 'Identity selfie verification';
+  // Fallback: best-effort humanization of an unknown code so we never
+  // show raw Stripe field paths to the handyman.
+  return req.replace(/_/g, ' ').replace(/\./g, ' → ');
+};
+
+const dedupeRequirementLabels = (items = []) => {
+  const seen = new Set();
+  const labels = [];
+  for (const item of items) {
+    const label = humanizeRequirement(item);
+    if (!seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  return labels;
+};
 
 /**
  * StripeOnboardingPrompt Component
  *
  * Displays when a verified handyman hasn't completed Stripe Connect onboarding
- * Handles the Stripe Express account creation and onboarding flow
+ * Handles the Stripe Express account creation and onboarding flow.
+ *
+ * Also surfaces post-return diagnostics: when the handyman comes back from
+ * Stripe without finishing (the most common failure mode), HandymanDashboard
+ * writes the sync result to sessionStorage under `stripeSyncResult` before
+ * reloading. We pick it up here and show an amber banner listing exactly
+ * what Stripe still needs, plus a "Resume Onboarding" CTA — so the handyman
+ * never silently bounces back to the generic intro with no explanation.
  */
 const StripeOnboardingPrompt = ({ handyman }) => {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [error, setError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
+
+  // Read (and clear) the sync result handoff from HandymanDashboard's
+  // return-URL handler. We clear immediately so a later visit without a
+  // fresh sync doesn't redisplay a stale banner.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('stripeSyncResult');
+      if (raw) {
+        sessionStorage.removeItem('stripeSyncResult');
+        setSyncResult(JSON.parse(raw));
+      }
+    } catch (_) {
+      sessionStorage.removeItem('stripeSyncResult');
+    }
+  }, []);
+
+  const pendingLabels = useMemo(
+    () => dedupeRequirementLabels(syncResult?.status?.requirementsCurrentlyDue),
+    [syncResult]
+  );
+  const hasSyncError = !!syncResult?.error;
+  const showPendingBanner = pendingLabels.length > 0;
+  const isResuming = !!handyman?.stripeConnectedAccountId;
 
   const handleLogout = async () => {
     try {
@@ -130,6 +205,61 @@ const StripeOnboardingPrompt = ({ handyman }) => {
           {/* Content */}
           <div className="p-8">
 
+            {/* Sync-error banner: only shown if syncStripeOnboardingStatus
+                threw on return from Stripe. Previously the handyman just
+                saw the same generic prompt with no clue what went wrong. */}
+            {hasSyncError && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-5 mb-8">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-2xl">
+                    warning
+                  </span>
+                  <div>
+                    <h3 className="font-semibold text-amber-900 dark:text-amber-200 mb-1">
+                      We couldn't verify your Stripe status
+                    </h3>
+                    <p className="text-amber-700 dark:text-amber-300 text-sm">
+                      {syncResult.error}
+                    </p>
+                    <p className="text-amber-700 dark:text-amber-300 text-sm mt-2">
+                      Try the button below to start (or resume) onboarding. If this keeps happening, please contact us.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Pending-requirements banner: Stripe returned a non-empty
+                currently_due list, meaning the handyman exited the flow
+                before submitting everything. Show exactly what's left. */}
+            {showPendingBanner && (
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-5 mb-8">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-2xl">
+                    pending_actions
+                  </span>
+                  <div className="flex-1">
+                    <h3 className="font-semibold text-amber-900 dark:text-amber-200 mb-1">
+                      Stripe still needs a bit more from you
+                    </h3>
+                    <p className="text-amber-700 dark:text-amber-300 text-sm mb-3">
+                      You'll be returned to the same secure Stripe page. Your previous answers are saved — just continue from where you left off.
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 text-amber-900 dark:text-amber-100 text-sm">
+                      {pendingLabels.slice(0, 8).map((label) => (
+                        <li key={label}>{label}</li>
+                      ))}
+                      {pendingLabels.length > 8 && (
+                        <li className="italic">
+                          …and {pendingLabels.length - 8} more
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Verification Success */}
             <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl p-6 mb-8">
               <div className="flex items-start gap-3">
@@ -201,30 +331,35 @@ const StripeOnboardingPrompt = ({ handyman }) => {
               </div>
             </div>
 
-            {/* What to Expect */}
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-6 mb-8">
-              <h3 className="font-semibold text-blue-900 dark:text-blue-200 mb-3">
-                What happens next?
-              </h3>
-              <ol className="space-y-2 text-blue-700 dark:text-blue-300 text-sm">
-                <li className="flex items-start gap-2">
-                  <span className="font-bold">1.</span>
-                  <span>Click "Set Up Payment Account" below</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="font-bold">2.</span>
-                  <span>You'll be redirected to Stripe's secure onboarding</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="font-bold">3.</span>
-                  <span>Provide your bank details and identity verification (5-10 minutes)</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="font-bold">4.</span>
-                  <span>Return to this dashboard and start accepting jobs!</span>
-                </li>
-              </ol>
-            </div>
+            {/* What to Expect — first-time only. Skipped whenever the
+                handyman already has a connected account (the steps are
+                stale — they've done some of them — and the button below
+                reads "Resume Onboarding", not "Set Up Payment Account"). */}
+            {!isResuming && (
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-6 mb-8">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-200 mb-3">
+                  What happens next?
+                </h3>
+                <ol className="space-y-2 text-blue-700 dark:text-blue-300 text-sm">
+                  <li className="flex items-start gap-2">
+                    <span className="font-bold">1.</span>
+                    <span>Click "Set Up Payment Account" below</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-bold">2.</span>
+                    <span>You'll be redirected to Stripe's secure onboarding</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-bold">3.</span>
+                    <span>Provide your bank details and identity verification (5-10 minutes)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="font-bold">4.</span>
+                    <span>Return to this dashboard and start accepting jobs!</span>
+                  </li>
+                </ol>
+              </div>
+            )}
 
             {/* Error Message */}
             {error && (
@@ -256,12 +391,12 @@ const StripeOnboardingPrompt = ({ handyman }) => {
               {isCreatingAccount ? (
                 <>
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-900"></div>
-                  <span>Setting up your account...</span>
+                  <span>{isResuming ? 'Opening Stripe…' : 'Setting up your account...'}</span>
                 </>
               ) : (
                 <>
                   <span className="material-symbols-outlined">account_balance</span>
-                  <span>Set Up Payment Account</span>
+                  <span>{isResuming ? 'Resume Onboarding' : 'Set Up Payment Account'}</span>
                 </>
               )}
             </button>

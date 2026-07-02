@@ -29,6 +29,18 @@ const HandymanDashboard = () => {
   const { user, userProfile, isHandyman, loading } = useAuth();
   const [currentView, setCurrentView] = useState('jobs'); // 'jobs', 'my-jobs', 'profile'
 
+  // Lock the UI to a stable "finalizing" screen the moment we land on the
+  // post-Stripe return URL — initialised from the query param so the very
+  // first paint is the spinner, NOT the onboarding prompt. Without this,
+  // AuthContext is still serving the stale `stripeOnboardingCompleted: false`
+  // (the server-side sync hasn't run yet), so the dashboard router would
+  // briefly mount StripeOnboardingPrompt before the post-sync hard reload —
+  // the "back to the onboarding screen" flicker. Stays true until the reload
+  // in the return-URL effect below replaces the entire page.
+  const [isFinalizingStripe] = useState(
+    () => searchParams.get('stripe_onboarding') === 'complete'
+  );
+
   // Redirect if not authenticated or not a handyman
   useEffect(() => {
     if (!loading && (!user || !isHandyman)) {
@@ -54,11 +66,26 @@ const HandymanDashboard = () => {
       if (onboardingComplete !== 'complete' || !user) return;
 
       try {
-        await callFunction('syncStripeOnboardingStatus', {}, { requireAuth: true });
+        const result = await callFunction('syncStripeOnboardingStatus', {}, { requireAuth: true });
+        // Stash the sync result so StripeOnboardingPrompt can tell the
+        // handyman exactly what Stripe still needs — instead of silently
+        // bouncing them back to the generic prompt with no explanation.
+        // Skipped when fully onboarded since the prompt won't render then.
+        if (result?.onboardingComplete) {
+          sessionStorage.removeItem('stripeSyncResult');
+        } else {
+          sessionStorage.setItem('stripeSyncResult', JSON.stringify(result || {}));
+        }
       } catch (error) {
         // Fail closed: on error we do NOT grant access; the server leaves the
-        // flag unset and the prompt stays. Just clear the query param below.
+        // flag unset and the prompt stays. We DO surface the error to the
+        // prompt so the handyman knows something went wrong rather than
+        // silently looking at the same screen.
         console.error('Error syncing Stripe onboarding status:', error);
+        sessionStorage.setItem(
+          'stripeSyncResult',
+          JSON.stringify({ error: error.message || 'Failed to verify Stripe status. Please try again.' })
+        );
       } finally {
         // Reload to refresh AuthContext (picks up the server-written flag) and
         // strip the query param so this effect doesn't re-run.
@@ -73,6 +100,27 @@ const HandymanDashboard = () => {
     // After expressing interest, switch to My Jobs tab to see the accepted job
     setCurrentView('my-jobs');
   };
+
+  // Stripe return-URL finalizing screen. MUST be checked before any other
+  // routing because AuthContext's userProfile is still the pre-sync snapshot
+  // here (sync runs in the effect above and triggers a hard reload). Without
+  // this guard the dashboard would briefly mount StripeOnboardingPrompt on
+  // top of stale data, producing the "bounces back to onboarding" flicker.
+  if (isFinalizingStripe) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center max-w-md px-6">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            Finalizing your Stripe setup
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400 text-sm">
+            Verifying your account with Stripe and preparing your dashboard. This usually takes a few seconds…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading state while checking authentication
   if (loading || !userProfile) {
