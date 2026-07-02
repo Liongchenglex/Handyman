@@ -123,6 +123,14 @@ service cloud.firestore {
       // clients — those flow only through Cloud Functions / Admin SDK, which
       // bypasses these rules. Admins can update anything (e.g. dispute
       // resolution writes status changes).
+      //
+      // The "claim an unassigned job" branch (last one) requires
+      // isHandyman() — without it, any signed-in user (including a
+      // customer on an anonymous session) could set handymanId to their
+      // own UID and lock a job to themselves. This became a live risk
+      // once job deep-links started going out over WhatsApp, where
+      // messages get forwarded to non-handymen. isHandyman() also
+      // enforces verified == true, so rejected handymen cannot claim.
       allow update: if isSignedIn() && (
         isAdmin() ||
         (
@@ -130,7 +138,7 @@ service cloud.firestore {
           (
             isOwner(resource.data.customerId) ||
             (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
-            (resource.data.handymanId == null && request.resource.data.handymanId == request.auth.uid)
+            (resource.data.handymanId == null && isHandyman() && request.resource.data.handymanId == request.auth.uid)
           )
         )
       );
