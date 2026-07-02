@@ -55,6 +55,14 @@ const {
   isKnownServiceType,
 } = require('./servicePricing');
 
+// Handyman new-job WhatsApp fan-out. The notifier module owns the
+// eligibility query, per-message idempotency and per-handyman rate
+// limiting; the Firestore trigger at the bottom of this file is a thin
+// wrapper that detects the paid-transition and delegates.
+// See docs/features/handyman-job-notifications.md.
+const { runFanOut: runHandymanFanOut } = require('./handymanNotifier');
+const { NOTIFY_ENABLED } = require('./notificationConfig');
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -3006,5 +3014,63 @@ Please confirm if the work has been completed to your satisfaction.
     } catch (error) {
       console.error('❌ Error in auto-trigger completion poll:', error);
       throw error;
+    }
+  });
+
+// ===================================
+// HANDYMAN NEW-JOB NOTIFICATION TRIGGER
+// ===================================
+
+/**
+ * Fan out a WhatsApp message to matching handymen when a job's payment
+ * lands. Fires on ANY write to a job doc; the paid-transition guard
+ * makes it a no-op for every write except the one that flips
+ * paymentStatus to 'succeeded'.
+ *
+ * onWrite (not onCreate) is deliberate: the customer's flow creates
+ * the job doc BEFORE payment is captured, and paymentStatus becomes
+ * 'succeeded' asynchronously via the Stripe webhook — so the trigger
+ * point is a later update, not the initial create.
+ *
+ * Idempotency lives per-(job, handyman) inside handymanNotifier via
+ * the notifications subcollection marker doc. Firestore may retry the
+ * trigger on transient errors; retries safely skip already-claimed
+ * pairs and only send Twilio messages for pairs that never got one.
+ *
+ * See docs/features/handyman-job-notifications.md.
+ */
+exports.onJobPaymentSucceeded = functions.firestore
+  .document('jobs/{jobId}')
+  .onWrite(async (change, context) => {
+    if (!NOTIFY_ENABLED) {
+      // Kill switch flipped in env. No marker writes, no Twilio calls.
+      return null;
+    }
+
+    const after = change.after.exists ? change.after.data() : null;
+    if (!after) return null;                                    // job deleted
+    if (after.paymentStatus !== 'succeeded') return null;       // not paid (yet)
+
+    const before = change.before.exists ? change.before.data() : null;
+    if (before && before.paymentStatus === 'succeeded') return null; // already fired
+
+    const { jobId } = context.params;
+    console.log(`[handyman-notify] trigger job=${jobId} category=${after.serviceType} prevStatus=${before ? before.paymentStatus : 'new'}`);
+
+    try {
+      return await runHandymanFanOut({
+        job: after,
+        jobId,
+        db: admin.firestore(),
+        sendTwilioTemplateMessage,
+        checkRateLimit,
+        logger: console,
+      });
+    } catch (err) {
+      console.error(`[handyman-notify] fan-out failed job=${jobId}:`, err);
+      // Re-throw so Firestore trigger backs off + retries. sendJobNotification
+      // is idempotent per-handyman, so retries won't duplicate messages for
+      // pairs whose marker already exists.
+      throw err;
     }
   });
