@@ -97,3 +97,27 @@ export const getStatusText = (status) => {
 export const formatPhoneForWhatsApp = (phone) => {
   return phone.replace(/[^0-9]/g, '');
 };
+
+/**
+ * Job board "Date Needed" comparator (default board sort).
+ *
+ * Ordering (reassignment spec §7):
+ *   1. ASAP/Immediate jobs first, newest-posted first among them —
+ *      anything that isn't explicitly scheduled counts as ASAP.
+ *   2. Scheduled jobs by soonest preferredDate.
+ *   3. Scheduled jobs missing a date sink to the very end (unknown
+ *      urgency shouldn't outrank a known near date).
+ */
+export const compareByDateNeeded = (a, b) => {
+  const isAsap = (job) => job.preferredTiming !== 'Schedule';
+
+  if (isAsap(a) && isAsap(b)) {
+    return new Date(b.createdAt || b.postedAt || 0) - new Date(a.createdAt || a.postedAt || 0);
+  }
+  if (isAsap(a)) return -1;
+  if (isAsap(b)) return 1;
+
+  const aTime = a.preferredDate ? new Date(a.preferredDate).getTime() : Infinity;
+  const bTime = b.preferredDate ? new Date(b.preferredDate).getTime() : Infinity;
+  return aTime - bTime;
+};
