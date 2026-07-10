@@ -63,6 +63,15 @@ const {
 const { runFanOut: runHandymanFanOut } = require('./handymanNotifier');
 const { NOTIFY_ENABLED } = require('./notificationConfig');
 
+// Job reassignment — cancel-side domain logic (pure validation +
+// update-payload construction). See functions/jobReassignment.js and
+// docs/superpowers/specs/2026-07-10-job-reassignment-design.md.
+const {
+  validateCancelRequest,
+  buildCancelUpdate,
+  CancelError,
+} = require('./jobReassignment');
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -3074,3 +3083,161 @@ exports.onJobPaymentSucceeded = functions.firestore
       throw err;
     }
   });
+
+// ===================================
+// JOB REASSIGNMENT — HANDYMAN CANCEL
+// ===================================
+
+/**
+ * cancelJobAssignment — the assigned handyman cancels a job they can
+ * no longer do. The job returns to the board (status 'pending',
+ * handymanId null) and the fan-out re-notifies eligible handymen,
+ * excluding anyone who previously cancelled this job.
+ *
+ * Escrow note: paymentStatus is untouched. Held funds stay on the
+ * platform account; releaseEscrowSimple always pays the job's CURRENT
+ * handymanId at release time, so a reassigned job pays the replacement
+ * handyman with no Stripe changes.
+ *
+ * Side-effect ordering: everything is awaited BEFORE the response —
+ * Cloud Functions may kill work that runs after res is sent. Failures
+ * of side effects (WhatsApp, fan-out) never roll back the cancel; the
+ * transaction is the source of truth.
+ *
+ * POST body: { jobId: string, reason: CANCEL_REASONS key, note?: string }
+ * See docs/superpowers/specs/2026-07-10-job-reassignment-design.md §5.
+ */
+exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, reason, note } = req.body || {};
+
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+
+      // Caller must be a handyman (profile doc is the source of truth,
+      // same check the login flow uses).
+      const handymanDoc = await admin.firestore()
+        .collection('handymen').doc(decodedToken.uid).get();
+      if (!handymanDoc.exists) {
+        return res.status(403).json({ error: 'Only handymen can cancel job assignments' });
+      }
+
+      // Anti-churn rate limit: 5 cancels per rolling hour per handyman.
+      const rl = await checkRateLimit(`job_cancel_${decodedToken.uid}`, 5, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({
+          error: 'Too many cancellations — please contact support',
+          retryAfterSeconds: rl.retryAfterSeconds,
+        });
+      }
+
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      const nowIso = new Date().toISOString();
+      let jobData;
+      let updatePayload;
+
+      try {
+        await admin.firestore().runTransaction(async (tx) => {
+          const snap = await tx.get(jobRef);
+          const job = snap.exists ? snap.data() : null;
+          // Throws CancelError on any violation — mapped to HTTP below.
+          validateCancelRequest(job, decodedToken.uid, reason, note);
+          jobData = job;
+          updatePayload = buildCancelUpdate(job, decodedToken.uid, { reason, note, nowIso });
+          tx.update(jobRef, updatePayload);
+        });
+      } catch (err) {
+        if (err instanceof CancelError) {
+          const statusByCode = {
+            not_found: 404,
+            not_assigned: 403,
+            wrong_status: 409,
+            completion_poll_sent: 409,
+            bad_reason: 400,
+            note_required: 400,
+          };
+          return res.status(statusByCode[err.code] || 400)
+            .json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+
+      console.log(`🔁 Job ${jobId} cancelled by handyman ${decodedToken.uid} (reason=${reason}, round=${updatePayload.reassignmentCount})`);
+
+      // ---- Side effects: best-effort, awaited, individually caught ----
+
+      // 1. Repeat-canceller signal on the handyman profile (display only).
+      try {
+        await admin.firestore().collection('handymen').doc(decodedToken.uid)
+          .update({ cancellationCount: admin.firestore.FieldValue.increment(1) });
+      } catch (err) {
+        console.error(`⚠️ cancellationCount increment failed for ${decodedToken.uid}:`, err);
+      }
+
+      // 2. Tell the customer we're finding a replacement.
+      if (jobData.customerPhone) {
+        try {
+          const shortId = jobId.slice(-6);
+          const fallback =
+            `Update on Job #${shortId} (${jobData.serviceType}):\n\n` +
+            `Your handyman is no longer available. We're finding you a new one — ` +
+            `no action needed, and your payment stays protected.\n\n` +
+            `Questions? Contact easydonehandyman@gmail.com`;
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(jobData.customerPhone),
+            process.env.TWILIO_TEMPLATE_HANDYMAN_CANCELLED,
+            { '1': jobData.customerName || 'there', '2': shortId, '3': jobData.serviceType || 'your job' },
+            fallback,
+          );
+        } catch (err) {
+          console.error(`⚠️ Customer cancel notice failed for job ${jobId}:`, err);
+        }
+      }
+
+      // 3. Re-notify eligible handymen for the new round, excluding
+      //    everyone who previously cancelled this job.
+      try {
+        await runHandymanFanOut({
+          job: { ...jobData, ...updatePayload, handymanId: null, status: 'pending' },
+          jobId,
+          db: admin.firestore(),
+          sendTwilioTemplateMessage,
+          checkRateLimit,
+          logger: console,
+          round: updatePayload.reassignmentCount,
+          excludeIds: updatePayload.previousHandymanIds,
+        });
+      } catch (err) {
+        console.error(`⚠️ Reassignment fan-out failed for job ${jobId}:`, err);
+      }
+
+      // 4. Audit trail.
+      await writeAuditLog('job_cancelled_by_handyman', decodedToken, {
+        jobId,
+        reason,
+        note: String(note || '').slice(0, 500) || null,
+        reassignmentCount: updatePayload.reassignmentCount,
+      });
+
+      return res.status(200).json({
+        success: true,
+        jobId,
+        reassignmentCount: updatePayload.reassignmentCount,
+      });
+    } catch (error) {
+      console.error('❌ Error in cancelJobAssignment:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to cancel job assignment' });
+    }
+  });
+});
