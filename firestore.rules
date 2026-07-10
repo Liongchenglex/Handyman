@@ -42,12 +42,14 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
-    // Fields on a job document that represent settled financial state.
-    // Clients (customer or handyman) must NEVER mutate these directly —
-    // they are written exclusively by Cloud Functions (Admin SDK) in
-    // response to Stripe events (payment capture, transfer, refund) or
-    // admin actions. Mutating any of them client-side would let a user
-    // forge payment status, hijack a transfer, or fake a refund.
+    // Fields on a job document that represent settled financial state, plus
+    // the reassignment audit trail. Clients (customer or handyman) must
+    // NEVER mutate these directly — they are written exclusively by Cloud
+    // Functions (Admin SDK) in response to Stripe events (payment capture,
+    // transfer, refund), admin actions, or (for the reassignment fields)
+    // the cancelJobAssignment flow. Mutating any of them client-side would
+    // let a user forge payment status, hijack a transfer, fake a refund, or
+    // forge their own reassignment history to dodge the re-claim block below.
     //
     // Notes on what's intentionally NOT here:
     //   - paymentResult / paymentIntentId / paymentCompletedAt are written
@@ -74,7 +76,12 @@ service cloud.firestore {
         'transferReversalId',
         'chargeId',
         'refundId',
-        'refundedAmount'
+        'refundedAmount',
+        'assignmentHistory',
+        'previousHandymanIds',
+        'reassignmentCount',
+        'cancelledLastBy',
+        'lastCancelledAt'
       ];
     }
 
@@ -138,7 +145,15 @@ service cloud.firestore {
           (
             isOwner(resource.data.customerId) ||
             (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
-            (resource.data.handymanId == null && isHandyman() && request.resource.data.handymanId == request.auth.uid)
+            (
+              resource.data.handymanId == null &&
+              isHandyman() &&
+              request.resource.data.handymanId == request.auth.uid &&
+              // A handyman who cancelled this job cannot re-claim it
+              // (reassignment spec §6). previousHandymanIds is written
+              // only by cancelJobAssignment via the Admin SDK.
+              !(request.auth.uid in resource.data.get('previousHandymanIds', []))
+            )
           )
         )
       );
