@@ -1577,8 +1577,12 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
       }
 
       if (!handymanId) {
-        await releaseLock('No handyman assigned to this job');
-        return res.status(400).json({ error: 'No handyman assigned to this job' });
+        const wasCancelled = Array.isArray(jobData.previousHandymanIds) && jobData.previousHandymanIds.length > 0;
+        const msg = wasCancelled
+          ? 'Job has no assigned handyman — it was cancelled and has not been re-claimed'
+          : 'No handyman assigned to this job';
+        await releaseLock(msg);
+        return res.status(400).json({ error: msg });
       }
 
       // Get handyman's Stripe connected account
@@ -1719,6 +1723,22 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         },
         releaseLockedAt: admin.firestore.FieldValue.delete(),
         releaseLockedBy: admin.firestore.FieldValue.delete(),
+        // Close the reassignment audit trail: the paid handyman's round
+        // ends as 'completed'. Never-reassigned jobs get their first and
+        // only entry here (entries are created lazily — see
+        // docs/superpowers/specs/2026-07-10-job-reassignment-design.md §4).
+        assignmentHistory: [
+          ...(Array.isArray(jobData.assignmentHistory) ? jobData.assignmentHistory : []),
+          {
+            handymanId,
+            handymanName: handymanData.name || null,
+            assignedAt: jobData.acceptedAt || null,
+            endedAt: new Date().toISOString(),
+            endReason: 'completed',
+            cancelReason: null,
+            cancelNote: null,
+          },
+        ],
       });
 
       await writeAuditLog('fund_release', decodedToken, {
@@ -1730,6 +1750,8 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         platformFee: platformFeeFromNet,
         stripeFee,
         grossAmount: totalAmount,
+        payeeName: handymanData.name || null,
+        reassignmentCount: jobData.reassignmentCount || 0,
       });
 
       return res.status(200).json({
@@ -1750,6 +1772,8 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
           handymanPayout: handymanPayout,
           platformFee: platformFeeFromNet,
         },
+        payee: { handymanId, name: handymanData.name || null },
+        reassignmentCount: jobData.reassignmentCount || 0,
         message: `Successfully transferred $${handymanPayout.toFixed(2)} to handyman. Platform fee of $${platformFeeFromNet.toFixed(2)} retained. Stripe fee was $${stripeFee.toFixed(2)}.`
       });
 
