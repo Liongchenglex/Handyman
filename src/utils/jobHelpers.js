@@ -118,7 +118,14 @@ export const compareByDateNeeded = (a, b) => {
   const isAsap = (job) => job.preferredTiming !== 'Schedule';
   // Millisecond timestamp for `value`, or `fallback` when the value is
   // missing or fails to parse — comparator must never return NaN.
+  // Handles both ISO strings (preferredDate from the booking form) and
+  // Firestore Timestamp objects (createdAt is written with
+  // serverTimestamp() and arrives from subscriptions as a Timestamp,
+  // which `new Date(...)` cannot parse).
   const timeOr = (value, fallback) => {
+    if (value && typeof value.toMillis === 'function') {
+      return value.toMillis();
+    }
     const t = value ? new Date(value).getTime() : NaN;
     return Number.isNaN(t) ? fallback : t;
   };

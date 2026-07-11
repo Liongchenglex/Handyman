@@ -89,6 +89,40 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(jobSystemFields());
     }
 
+    // System fields a client may never write even at CREATE time.
+    // paymentStatus is deliberately absent from this list because the
+    // booking flow legitimately initializes it — but only ever to
+    // 'pending' (pinned separately in the jobs create rule). Every later
+    // value ('succeeded', 'released', ...) is written exclusively by
+    // Cloud Functions. Without this create-time deny, a customer could
+    // forge previousHandymanIds (locking a handyman out of a job),
+    // fabricate assignmentHistory shown to the admin at fund release,
+    // or create a job with paymentStatus 'succeeded' and trigger the
+    // handyman fan-out for a job that was never paid.
+    function jobCreateDeniedFields() {
+      return [
+        'paymentSucceededAt',
+        'paymentReleasedAt',
+        'paymentReleasedBy',
+        'paymentRefundedAt',
+        'paymentReleaseError',
+        'paymentReleaseFailedAt',
+        'paymentBreakdown',
+        'escrowReleased',
+        'priceAdjustment',
+        'transferId',
+        'transferReversalId',
+        'chargeId',
+        'refundId',
+        'refundedAmount',
+        'assignmentHistory',
+        'previousHandymanIds',
+        'reassignmentCount',
+        'cancelledLastBy',
+        'lastCancelledAt'
+      ];
+    }
+
     // Users collection
     match /users/{userId} {
       // Users can read their own profile
@@ -121,9 +155,14 @@ service cloud.firestore {
       // live jobs collection.
       allow read: if isSignedIn();
 
-      // Customers can create jobs (including anonymous users)
+      // Customers can create jobs (including anonymous users).
+      // System fields cannot be forged at create time (see
+      // jobCreateDeniedFields), and paymentStatus — which the booking
+      // flow does write here — is pinned to its initial 'pending' value.
       allow create: if isSignedIn() &&
-                      request.resource.data.customerId == request.auth.uid;
+                      request.resource.data.customerId == request.auth.uid &&
+                      !request.resource.data.keys().hasAny(jobCreateDeniedFields()) &&
+                      request.resource.data.get('paymentStatus', 'pending') == 'pending';
 
       // Job owner or assigned handyman can update workflow fields. Financial
       // and system fields (see jobSystemFields()) are NEVER writable by

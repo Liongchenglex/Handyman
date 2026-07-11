@@ -48,4 +48,19 @@ describe('compareByDateNeeded', () => {
     expect(jobs[0].preferredDate).toBe('2026-07-12');
     expect(jobs[1].preferredDate).toBe('not-a-real-date');
   });
+
+  test('ASAP jobs with Firestore Timestamp createdAt order newest first', () => {
+    // In production createdAt is written with serverTimestamp() and
+    // arrives as a Firestore Timestamp object, not an ISO string —
+    // new Date(Timestamp) is Invalid Date, so the comparator must use
+    // toMillis() for the tie-break to actually work on live data.
+    const ts = (millis) => ({ toMillis: () => millis, seconds: Math.floor(millis / 1000) });
+    const older = { preferredTiming: 'Immediate', createdAt: ts(1000) };
+    const newer = { preferredTiming: 'Immediate', createdAt: ts(2000) };
+    expect(compareByDateNeeded(older, newer)).toBeGreaterThan(0);
+    expect(compareByDateNeeded(newer, older)).toBeLessThan(0);
+    const jobs = [older, newer];
+    jobs.sort(compareByDateNeeded);
+    expect(jobs[0].createdAt.toMillis()).toBe(2000);
+  });
 });
