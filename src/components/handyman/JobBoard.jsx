@@ -7,6 +7,9 @@ import ExpressInterestButton from './ExpressInterestButton';
 import { getAvailableJobs } from '../../services/api/jobs';
 import { subscribeToCollection } from '../../services/firebase';
 
+// Job sorting utilities
+import { compareByDateNeeded } from '../../utils/jobHelpers';
+
 /**
  * JobBoard Component
  *
@@ -27,7 +30,7 @@ const JobBoard = ({
     budgetRange: '',
     location: '',
     urgency: '',
-    sortBy: 'newest'
+    sortBy: 'date-needed'
   });
 
   // Set up real-time listener for jobs (automatically syncs with Firebase)
@@ -102,6 +105,7 @@ const JobBoard = ({
   ];
 
   const sortOptions = [
+    { label: 'Date Needed', value: 'date-needed' },
     { label: 'Newest First', value: 'newest' },
     { label: 'Highest Budget', value: 'budget-high' },
     { label: 'Lowest Budget', value: 'budget-low' },
@@ -137,6 +141,8 @@ const JobBoard = ({
   // Sort jobs
   const sortedJobs = [...filteredJobs].sort((a, b) => {
     switch (selectedFilters.sortBy) {
+      case 'date-needed':
+        return compareByDateNeeded(a, b);
       case 'budget-high':
         return b.estimatedBudget - a.estimatedBudget;
       case 'budget-low':
@@ -345,7 +351,7 @@ const JobBoard = ({
                   budgetRange: '',
                   location: '',
                   urgency: '',
-                  sortBy: 'newest'
+                  sortBy: 'date-needed'
                 });
               }}
               className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
@@ -397,12 +403,14 @@ const JobBoard = ({
                     </div>
                   </div>
 
-                  {/* Customer Info */}
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="material-symbols-outlined text-gray-400">person</span>
-                    <span className="font-medium text-gray-900 dark:text-white">{job.customerName}</span>
-                    <span className="text-gray-400">•</span>
-                    <span className="text-gray-600 dark:text-gray-400">{job.location || job.address}</span>
+                  {/* Customer Info — wraps instead of overflowing on narrow screens */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3">
+                    <span className="flex items-center gap-1 min-w-0">
+                      <span className="material-symbols-outlined text-gray-400 flex-shrink-0">person</span>
+                      <span className="font-medium text-gray-900 dark:text-white truncate">{job.customerName}</span>
+                    </span>
+                    <span className="text-gray-400 hidden sm:inline">•</span>
+                    <span className="text-gray-600 dark:text-gray-400 break-words min-w-0">{job.location || job.address}</span>
                   </div>
 
                   {/* Job Description */}

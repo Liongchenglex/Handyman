@@ -107,17 +107,30 @@ export const formatPhoneForWhatsApp = (phone) => {
  *   2. Scheduled jobs by soonest preferredDate.
  *   3. Scheduled jobs missing a date sink to the very end (unknown
  *      urgency shouldn't outrank a known near date).
+ *
+ * NaN safety: `new Date(x).getTime()` is NaN for missing/unparseable
+ * values, and `Infinity - Infinity` is also NaN — either would make
+ * Array.prototype.sort behave unpredictably. `timeOr` normalizes any
+ * missing/unparseable value to an explicit fallback so the comparator
+ * always returns a real number.
  */
 export const compareByDateNeeded = (a, b) => {
   const isAsap = (job) => job.preferredTiming !== 'Schedule';
+  // Millisecond timestamp for `value`, or `fallback` when the value is
+  // missing or fails to parse — comparator must never return NaN.
+  const timeOr = (value, fallback) => {
+    const t = value ? new Date(value).getTime() : NaN;
+    return Number.isNaN(t) ? fallback : t;
+  };
 
   if (isAsap(a) && isAsap(b)) {
-    return new Date(b.createdAt || b.postedAt || 0) - new Date(a.createdAt || a.postedAt || 0);
+    return timeOr(b.createdAt || b.postedAt, 0) - timeOr(a.createdAt || a.postedAt, 0);
   }
   if (isAsap(a)) return -1;
   if (isAsap(b)) return 1;
 
-  const aTime = a.preferredDate ? new Date(a.preferredDate).getTime() : Infinity;
-  const bTime = b.preferredDate ? new Date(b.preferredDate).getTime() : Infinity;
+  const aTime = timeOr(a.preferredDate, Infinity);
+  const bTime = timeOr(b.preferredDate, Infinity);
+  if (aTime === bTime) return 0; // covers the both-Infinity (both missing/unparseable) case
   return aTime - bTime;
 };
