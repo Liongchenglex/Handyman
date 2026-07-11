@@ -7,6 +7,62 @@ import { releaseEscrow } from '../services/stripe/stripeApi';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 /**
+ * Reassignment badge + expandable round-by-round history for a job.
+ * Renders nothing for jobs that were never reassigned (the common case)
+ * so the pending-release cards stay clean.
+ */
+const ReassignmentHistory = ({ job }) => {
+  const [expanded, setExpanded] = useState(false);
+  const rounds = Array.isArray(job.assignmentHistory) ? job.assignmentHistory : [];
+  const count = job.reassignmentCount || 0;
+
+  if (count === 0) return null;
+
+  const formatDate = (iso) =>
+    iso ? new Date(iso).toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+
+  const reasonLabels = {
+    schedule_conflict: 'Schedule conflict',
+    job_bigger_than_expected: 'Job bigger than expected',
+    location_too_far: 'Location too far',
+    personal_emergency: 'Personal emergency',
+    other: 'Other',
+  };
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60 transition-colors"
+      >
+        <span className="material-symbols-outlined text-sm">history</span>
+        Reassigned ×{count}
+        <span className="material-symbols-outlined text-sm">{expanded ? 'expand_less' : 'expand_more'}</span>
+      </button>
+
+      {expanded && (
+        <ul className="mt-2 space-y-2 text-xs text-gray-600 dark:text-gray-300 border-l-2 border-amber-300 dark:border-amber-700 pl-3">
+          {rounds.map((r, i) => (
+            <li key={i}>
+              <span className="font-medium text-gray-900 dark:text-white">{r.handymanName || r.handymanId}</span>
+              {' — '}{formatDate(r.assignedAt)} → {formatDate(r.endedAt)}
+              {r.endReason === 'cancelled' ? (
+                <span className="text-red-600 dark:text-red-400">
+                  {' '}· cancelled ({reasonLabels[r.cancelReason] || r.cancelReason || 'no reason'})
+                  {r.cancelNote ? ` — “${r.cancelNote}”` : ''}
+                </span>
+              ) : (
+                <span className="text-green-600 dark:text-green-400"> · completed</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+/**
  * AdminFundRelease Component
  *
  * Admin dashboard for reviewing and approving fund releases
@@ -171,7 +227,10 @@ const AdminFundRelease = () => {
 
   // Handle fund release approval
   const handleApprove = async (job) => {
-    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}\n\nThis will transfer the service fee to the handyman's Stripe account.`)) {
+    const reassignedNote = (job.reassignmentCount || 0) > 0
+      ? `\n⚠️ This job was reassigned ${job.reassignmentCount} time(s) — check the history before releasing.`
+      : '';
+    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}\nReleasing to: ${job.handymanName || 'N/A'}${reassignedNote}\n\nThis will transfer the service fee to the handyman's Stripe account.`)) {
       return;
     }
 
@@ -395,7 +454,15 @@ const AdminFundRelease = () => {
                           </div>
                           <div>
                             <span className="text-gray-500 dark:text-gray-400">Handyman:</span>
-                            <p className="font-medium text-gray-900 dark:text-white">{job.handymanName || 'N/A'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">
+                              Releasing to: {job.handymanName || 'N/A'}
+                              {job.acceptedAt && (
+                                <span className="font-normal text-gray-500 dark:text-gray-400">
+                                  {' '}(assigned {new Date(job.acceptedAt).toLocaleDateString('en-SG')})
+                                </span>
+                              )}
+                            </p>
+                            <ReassignmentHistory job={job} />
                           </div>
                           <div>
                             <span className="text-gray-500 dark:text-gray-400">Amount:</span>
