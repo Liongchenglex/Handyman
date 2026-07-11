@@ -49,13 +49,19 @@ export const cancelJobAssignment = async (jobId, reason, note = '') => {
       body: JSON.stringify({ jobId, reason, note }),
     });
 
-    const result = await response.json();
+    // A gateway/cold-start error page is HTML, not JSON — surface a
+    // human-readable message instead of a JSON.parse SyntaxError.
+    const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
-      return { success: false, error: result.error || 'Cancellation failed', code: result.code };
+      return {
+        success: false,
+        error: result.error || 'Cancellation failed. Please try again.',
+        code: result.code,
+      };
     }
     return { success: true, reassignmentCount: result.reassignmentCount };
   } catch (error) {
     console.error('❌ Error cancelling job assignment:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: 'Cancellation failed. Please check your connection and try again.' };
   }
 };

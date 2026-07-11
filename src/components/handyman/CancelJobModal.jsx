@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { cancelJobAssignment, CANCEL_REASON_OPTIONS } from '../../services/api/jobAssignment';
 
 /**
@@ -11,7 +11,7 @@ import { cancelJobAssignment, CANCEL_REASON_OPTIONS } from '../../services/api/j
  * ExpressInterestButton.jsx.
  *
  * Props:
- *   job         - the job object (needs .id, .serviceType)
+ *   job         - the job object (needs .id)
  *   isOpen      - render toggle
  *   onClose     - called when the user backs out
  *   onCancelled - called after a successful cancel (navigate/refresh)
@@ -23,6 +23,20 @@ const CancelJobModal = ({ job, isOpen, onClose, onCancelled }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Synchronous re-entrancy guard (same pattern as ExpressInterestButton).
   const submittingRef = useRef(false);
+
+  // The parent keeps this component mounted and toggles `isOpen`, so all
+  // form/submission state must reset on every open — otherwise a stale
+  // note, error banner, or (worst) a stuck submittingRef from a previous
+  // job's cancel would leak into the next one.
+  useEffect(() => {
+    if (isOpen) {
+      setReason('');
+      setNote('');
+      setError(null);
+      setIsSubmitting(false);
+      submittingRef.current = false;
+    }
+  }, [isOpen, job.id]);
 
   if (!isOpen) return null;
 
@@ -66,10 +80,11 @@ const CancelJobModal = ({ job, isOpen, onClose, onCancelled }) => {
         </p>
 
         {/* Reason picklist */}
-        <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+        <label htmlFor="cancel-job-reason" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
           Why are you cancelling? <span className="text-red-500">*</span>
         </label>
         <select
+          id="cancel-job-reason"
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
@@ -81,10 +96,11 @@ const CancelJobModal = ({ job, isOpen, onClose, onCancelled }) => {
         </select>
 
         {/* Optional / required note */}
-        <label className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
+        <label htmlFor="cancel-job-note" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
           Details {noteRequired ? <span className="text-red-500">*</span> : <span className="text-gray-400">(optional)</span>}
         </label>
         <textarea
+          id="cancel-job-note"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={3}
