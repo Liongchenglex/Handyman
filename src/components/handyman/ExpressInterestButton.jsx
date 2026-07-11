@@ -44,7 +44,17 @@ const ExpressInterestButton = ({
   // not allow another submission.
   const alreadyClaimed = expressed || job.status !== 'pending' || !!job.handymanId;
 
+  // A handyman who cancelled this job cannot re-claim it. Firestore
+  // rules enforce this server-side; this flag just explains it in the UI
+  // instead of letting the claim fail opaquely.
+  const blockedFromReclaim = !!(
+    user &&
+    Array.isArray(job.previousHandymanIds) &&
+    job.previousHandymanIds.includes(user.uid)
+  );
+
   const handleExpressInterest = () => {
+    if (blockedFromReclaim) return;
     if (alreadyClaimed) return;
 
     // Deep-link case: an unauthenticated visitor (typical WhatsApp
@@ -219,13 +229,18 @@ const ExpressInterestButton = ({
     <>
       <button
         onClick={handleExpressInterest}
-        disabled={isLoading || alreadyClaimed}
+        disabled={isLoading || alreadyClaimed || blockedFromReclaim}
         className={getButtonClasses()}
       >
         {isLoading ? (
           <>
             <LoadingSpinner size="small" />
             Expressing Interest...
+          </>
+        ) : blockedFromReclaim ? (
+          <>
+            <span className="material-symbols-outlined">block</span>
+            You previously cancelled this job
           </>
         ) : alreadyClaimed ? (
           <>
