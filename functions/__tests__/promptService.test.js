@@ -141,4 +141,28 @@ describe('openPrompt', () => {
     // 48h default expiry from the injected clock
     expect(doc.expiresAt).toBe(new Date(1_700_000_000_000 + 48 * 3600 * 1000).toISOString());
   });
+
+  test('stores an optional payload verbatim (null when omitted)', async () => {
+    const db = fakeDb([]);
+    await openPrompt({
+      db,
+      jobId: 'job_aaa111',
+      type: 'schedule_approval',
+      toPhone: '+6591234567',
+      toRole: 'customer',
+      question: 'Approve the new time?',
+      options: { YES: 'approve', NO: 'decline' },
+      payload: { proposedDate: '2026-07-15', proposedTime: '2:00 PM' },
+      nowMs: 1_700_000_000_000,
+    });
+    expect(db.writes.set[0].payload)
+      .toEqual({ proposedDate: '2026-07-15', proposedTime: '2:00 PM' });
+
+    const db2 = fakeDb([]);
+    await openPrompt({
+      db: db2, jobId: 'j', type: 't', toPhone: '91234567', toRole: 'customer',
+      question: 'q', options: { YES: 'x' }, nowMs: 1,
+    });
+    expect(db2.writes.set[0].payload).toBeNull();
+  });
 });

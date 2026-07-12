@@ -111,7 +111,8 @@ function buildDisambiguationList(prompts) {
 /**
  * Record a question we are about to send. Supersedes prior open prompts
  * of the same type on the same job so replies always bind to the latest
- * version of the question.
+ * version of the question. Optional payload (e.g. a schedule proposal) is
+ * stored verbatim for the dispatcher to act on when the prompt is answered.
  */
 async function openPrompt({
   db,
@@ -121,6 +122,7 @@ async function openPrompt({
   toRole,
   question,
   options,
+  payload = null,
   expiresInHours = 48,
   nowMs = Date.now(),
 }) {
@@ -144,6 +146,7 @@ async function openPrompt({
     toRole,
     question,
     options,
+    payload,
     status: 'open',
     createdAt: new Date(nowMs).toISOString(),
     expiresAt: new Date(nowMs + expiresInHours * 3600 * 1000).toISOString(),
