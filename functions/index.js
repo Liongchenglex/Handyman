@@ -2426,6 +2426,62 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
 // ===================================
 
 /**
+ * Apply a customer's completion answer to a job, atomically.
+ *
+ * Extracted from the webhook so BOTH reply paths share one
+ * transaction: the prompt router (post-migration polls carry a prompt
+ * doc that names the job directly) and the legacy phone-lookup path
+ * (polls sent before the prompt migration deployed).
+ *
+ * The transaction re-checks status === 'pending_confirmation' so a
+ * double-tap or a stale prompt can never flip an already-decided job.
+ *
+ * @returns {{outcome: 'confirmed'|'disputed'|'already_processed', jobData?: object, recordedAs?: string}}
+ */
+async function applyCompletionAnswer({ db, jobId, isConfirm }) {
+  const jobRef = db.collection('jobs').doc(jobId);
+  let jobData;
+  try {
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(jobRef);
+      if (!fresh.exists || fresh.data().status !== 'pending_confirmation') {
+        throw new Error('ALREADY_PROCESSED');
+      }
+      jobData = fresh.data();
+      if (isConfirm) {
+        tx.update(jobRef, {
+          status: 'pending_admin_approval',
+          customerConfirmedAt: new Date().toISOString(),
+          confirmedVia: 'whatsapp_reply',
+        });
+      } else {
+        tx.update(jobRef, {
+          status: 'disputed',
+          disputedAt: new Date().toISOString(),
+          disputedVia: 'whatsapp_reply',
+          disputeReason: 'Customer reported issue via WhatsApp reply',
+        });
+      }
+    });
+  } catch (txError) {
+    if (txError.message === 'ALREADY_PROCESSED') {
+      let recordedAs = 'already recorded';
+      try {
+        const snap = await jobRef.get();
+        const s = snap.exists ? snap.data().status : null;
+        if (s === 'pending_admin_approval') recordedAs = '✅ Confirmed';
+        else if (s === 'disputed') recordedAs = '⚠️ Issue Reported';
+      } catch (readErr) {
+        console.error('Could not read job status after ALREADY_PROCESSED:', readErr);
+      }
+      return { outcome: 'already_processed', recordedAs };
+    }
+    throw txError;
+  }
+  return { outcome: isConfirm ? 'confirmed' : 'disputed', jobData };
+}
+
+/**
  * WhatsApp Webhook Handler (Twilio)
  *
  * Handles incoming WhatsApp messages from Twilio.
@@ -2614,62 +2670,26 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     // The transaction protects against a double-tap race where two webhooks for the
     // same button arrive near-simultaneously and both try to process the same job.
     const jobId = pendingJobRef.id;
-    let action;
-    let jobData;
-    try {
-      await admin.firestore().runTransaction(async (tx) => {
-        const fresh = await tx.get(pendingJobRef);
-        if (!fresh.exists || fresh.data().status !== 'pending_confirmation') {
-          throw new Error('ALREADY_PROCESSED');
-        }
+    const answerResult = await applyCompletionAnswer({
+      db: admin.firestore(),
+      jobId,
+      isConfirm,
+    });
 
-        jobData = fresh.data();
-
-        if (isConfirm) {
-          tx.update(pendingJobRef, {
-            status: 'pending_admin_approval',
-            customerConfirmedAt: new Date().toISOString(),
-            confirmedVia: 'whatsapp_reply'
-          });
-          action = 'confirm';
-        } else {
-          tx.update(pendingJobRef, {
-            status: 'disputed',
-            disputedAt: new Date().toISOString(),
-            disputedVia: 'whatsapp_reply',
-            disputeReason: 'Customer reported issue via WhatsApp reply'
-          });
-          action = 'reject';
-        }
+    if (answerResult.outcome === 'already_processed') {
+      await sendTwilioMessage(
+        From,
+        `ℹ️ Your ${isConfirm ? 'confirmation' : 'report'} for Job #${jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+      );
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: 'Job already processed — customer notified'
       });
-    } catch (txError) {
-      if (txError.message === 'ALREADY_PROCESSED') {
-        // The job was already answered between the lookup and the
-        // transaction — typically the customer tapped both buttons
-        // (Confirm then Report, or the reverse) and this is the
-        // second tap. Tell them explicitly that this response did
-        // NOT change the outcome, rather than acknowledging silently.
-        let recordedAs = 'already recorded';
-        try {
-          const snap = await pendingJobRef.get();
-          const s = snap.exists ? snap.data().status : null;
-          if (s === 'pending_admin_approval') recordedAs = '✅ Confirmed';
-          else if (s === 'disputed') recordedAs = '⚠️ Issue Reported';
-        } catch (readErr) {
-          console.error('Could not read job status after ALREADY_PROCESSED:', readErr);
-        }
-        await sendTwilioMessage(
-          From,
-          `ℹ️ Your ${isConfirm ? 'confirmation' : 'report'} for Job #${jobId} did not go through — this job has already been recorded as: ${recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
-        );
-        return res.status(200).json({
-          received: true,
-          processed: false,
-          reason: 'Job already processed — customer notified'
-        });
-      }
-      throw txError;
     }
+
+    const action = answerResult.outcome === 'confirmed' ? 'confirm' : 'reject';
+    const jobData = answerResult.jobData;
 
     if (action === 'confirm') {
       await sendAdminNotificationEmail(jobData, jobId);
