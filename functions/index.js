@@ -95,6 +95,7 @@ const {
 const COMPLETION_PROMPT_OPTIONS = {
   'YES': 'confirm', 'CONFIRM COMPLETE': 'confirm', 'CONFIRM': 'confirm',
   'NO': 'reject', 'REPORT ISSUE': 'reject', 'REPORT': 'reject', 'ISSUE': 'reject',
+  'Y': 'confirm', 'N': 'reject',
 };
 
 // ===================================
@@ -2047,14 +2048,22 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // re-delivery. We use a Firestore transaction on /stripeEvents/{id} so
   // two concurrent deliveries can't both decide they're the "first".
   const eventRef = admin.firestore().collection('stripeEvents').doc(event.id);
+  // For booking-time captures, defer the dedup marker until AFTER the
+  // switch has handled the event successfully. The capture call itself
+  // is idempotency-keyed, so a redelivery re-running it is safe — but
+  // writing the marker up front would let a mid-capture crash get
+  // permanently swallowed as a "duplicate" on Stripe's retry.
+  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated';
   try {
     const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
       if (snap.exists) return false;
-      tx.set(eventRef, {
-        type: event.type,
-        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      if (!deferDedupWrite) {
+        tx.set(eventRef, {
+          type: event.type,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
       return true;
     });
 
@@ -2133,6 +2142,31 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
             console.error(`⚠️ Could not mark capture failure on job ${captureJobId}:`, markErr);
           }
         }
+        break;
+      }
+
+      case 'payment_intent.canceled': {
+        // Last-resort escrow alarm: if a manual-capture authorization is
+        // canceled (including Stripe's automatic ~7-day expiry,
+        // cancellation_reason 'expired'), the job's money is GONE — the
+        // admin must re-collect from the customer. Mark the job and alert.
+        const canceledPI = event.data.object;
+        const canceledJobId = canceledPI.metadata && canceledPI.metadata.jobId;
+        if (!canceledJobId) break;
+        const cancelReason = canceledPI.cancellation_reason || 'unknown';
+        console.error(`❌ PaymentIntent canceled for job ${canceledJobId} (reason: ${cancelReason}) — escrow lost`);
+        try {
+          await admin.firestore().collection('jobs').doc(canceledJobId).update({
+            captureError: `PaymentIntent canceled (${cancelReason}) — authorization no longer collectable`,
+            captureFailedAt: new Date().toISOString(),
+          });
+        } catch (markErr) {
+          console.error(`⚠️ Could not mark cancellation on job ${canceledJobId}:`, markErr);
+        }
+        await sendAdminEmail(
+          `❌ Payment authorization lost — Job #${String(canceledJobId).slice(-6)}`,
+          `<p>The payment authorization for job <strong>${canceledJobId}</strong> was canceled (reason: ${cancelReason}). No funds can be captured — contact the customer to re-collect payment.</p>`
+        );
         break;
       }
 
@@ -2261,6 +2295,20 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
       default:
         // Unhandled event type
         break;
+    }
+
+    // Deferred dedup for capture events: recorded only after the switch
+    // completed, so a crash mid-capture lets Stripe's redelivery retry
+    // the (idempotent) capture instead of being swallowed as a duplicate.
+    if (deferDedupWrite) {
+      try {
+        await eventRef.set({
+          type: event.type,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (dedupWriteErr) {
+        console.error('Deferred dedup write failed (redelivery will re-run an idempotent capture):', dedupWriteErr);
+      }
     }
 
     res.json({ received: true });
@@ -2407,6 +2455,26 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
         }
 
         case 'job_completion': {
+          // Load the job and derive the customer phone from IT — never
+          // from the request body. Without this, any authenticated
+          // caller could bind answer-authority for an arbitrary jobId
+          // to their own phone and forge the completion confirmation
+          // the admin trusts at fund release.
+          let jobSnapshotData = null;
+          if (data.jobId) {
+            const jobSnap = await admin.firestore().collection('jobs').doc(data.jobId).get();
+            if (!jobSnap.exists) {
+              return res.status(404).json({ error: 'Job not found' });
+            }
+            jobSnapshotData = jobSnap.data();
+            const jobPhoneKey = String(jobSnapshotData.customerPhone || '').replace(/\D/g, '');
+            const requestPhoneKey = String(data.customerPhone || '').replace(/\D/g, '');
+            if (!jobPhoneKey || !(jobPhoneKey === requestPhoneKey || jobPhoneKey.endsWith(requestPhoneKey) || requestPhoneKey.endsWith(jobPhoneKey))) {
+              console.warn(`🚫 job_completion phone mismatch: job ${data.jobId} caller ${decodedToken.uid}`);
+              return res.status(403).json({ error: 'Forbidden: phone does not match the job' });
+            }
+          }
+
           const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
           const fallback = `Hello ${data.customerName}! 👋\n\nYour handyman *${data.handymanName}* has marked the following job as complete:\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nPlease confirm if the work has been completed to your satisfaction.\n\n👉 Reply *YES* to confirm completion\n👉 Reply *NO* to report an issue`;
 
@@ -2425,7 +2493,7 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
                 db: admin.firestore(),
                 jobId: data.jobId,
                 type: 'completion_confirmation',
-                toPhone: data.customerPhone,
+                toPhone: jobSnapshotData.customerPhone,
                 toRole: 'customer',
                 question: `Has ${data.handymanName || 'your handyman'} completed the ${data.serviceType || 'job'}?`,
                 options: COMPLETION_PROMPT_OPTIONS,
@@ -2546,7 +2614,15 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     console.log('📥 Webhook body keys:', Object.keys(req.body || {}));
 
     const From = req.body.From;
-    const Body = req.body.Body;
+    const Body = req.body.Body || '';
+
+    // Inbound media (job-site photos etc.) — extracted early so a
+    // media-only message (empty Body) isn't rejected below.
+    const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0;
+    const mediaUrls = [];
+    for (let i = 0; i < numMedia; i++) {
+      if (req.body[`MediaUrl${i}`]) mediaUrls.push(req.body[`MediaUrl${i}`]);
+    }
 
     // Per-phone rate limit on incoming customer replies. Twilio retries
     // on 5xx, so we acknowledge with 200 (don't make Twilio retry) but
@@ -2564,7 +2640,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     // Twilio also sends status callbacks (delivery receipts) that don't have Body.
     // These have a MessageStatus field instead — ignore them gracefully.
-    if (!From || !Body) {
+    if (!From || (!Body && mediaUrls.length === 0)) {
       const status = req.body.MessageStatus || req.body.SmsStatus;
       if (status) {
         // This is a delivery status callback, not an incoming message
@@ -2582,13 +2658,6 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     console.log(`📱 Incoming WhatsApp from ${customerPhone}: "${Body.trim()}"`);
 
     // ------- Prompt-first routing (job lifecycle spec §3 F2) -------
-    // Inbound media (photos of the job site etc.) — captured for F3.
-    const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0;
-    const mediaUrls = [];
-    for (let i = 0; i < numMedia; i++) {
-      if (req.body[`MediaUrl${i}`]) mediaUrls.push(req.body[`MediaUrl${i}`]);
-    }
-
     const senderKey = normalizePhoneKey(From);
     let openPrompts = [];
     try {
@@ -2613,11 +2682,17 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
           // Close the prompt AFTER the job write settles (either way the
           // question is no longer open — 'already_processed' means it was
-          // decided elsewhere).
-          await markAnswered(verdict.prompt.ref, {
-            answer: verdict.answerText,
-            resultingAction: answerResult.outcome,
-          });
+          // decided elsewhere). The job transaction already committed, so
+          // a failure here must not 500 the webhook or skip the admin
+          // email / customer reply below — just log and continue.
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: answerResult.outcome,
+            });
+          } catch (markAnsweredErr) {
+            console.error(`⚠️ markAnswered failed for job ${verdict.prompt.jobId} (prompt stays open):`, markAnsweredErr);
+          }
 
           if (answerResult.outcome === 'already_processed') {
             await sendTwilioMessage(
@@ -2655,8 +2730,12 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
         return res.status(200).json({ received: true, processed: false, reason: 'Multiple prompts — asked to disambiguate' });
       }
 
-      // 'unmatched' with open prompts: fall through to the legacy path
-      // (pre-migration polls), which now ends in F3 instead of a drop.
+      // 'unmatched' with open prompts: the strict matcher could not
+      // attribute this reply — do NOT let the looser legacy regexes
+      // guess (that's how "the job is not complete" gets CONFIRMED).
+      // Straight to F3: store, forward to admin, ack.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+      return res.status(200).json({ received: true, processed: false, reason: 'Unmatched with open prompts — forwarded to admin' });
     }
     // ------- end prompt-first routing -------
 
@@ -3017,6 +3096,11 @@ async function sendAdminEmail(subject, html) {
   }
 }
 
+/** Minimal HTML escape for user-controlled text embedded in admin emails. */
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /**
  * F3 — no silent drops (job lifecycle spec §3). Any inbound WhatsApp
  * message we could not resolve is stored, forwarded to the admin, and
@@ -3064,7 +3148,7 @@ async function forwardUnmatchedInbound({ from, body, mediaUrls, reason }) {
       ${matchedJobId ? `<p><strong>Likely job:</strong> ${matchedJobId} (${matchedService || 'unknown service'})</p>` : '<p><strong>Likely job:</strong> none found</p>'}
       <p><strong>Reason:</strong> ${reason}</p>
       <p><strong>Message:</strong></p>
-      <blockquote style="border-left: 3px solid #ccc; padding-left: 10px;">${String(body || '(no text)').slice(0, 2000)}</blockquote>
+      <blockquote style="border-left: 3px solid #ccc; padding-left: 10px;">${escapeHtml(String(body || '(no text)').slice(0, 2000))}</blockquote>
       ${(mediaUrls && mediaUrls.length) ? `<p><strong>Media:</strong> ${mediaUrls.length} attachment(s) — view in Twilio console</p>` : ''}
     </div>`
   );
