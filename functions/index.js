@@ -72,6 +72,11 @@ const {
   CancelError,
 } = require('./jobReassignment');
 
+// Booking-time escrow capture decision (job lifecycle Scenario 0).
+// See functions/paymentCapture.js and
+// docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
+const { assessCaptureability } = require('./paymentCapture');
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -2046,6 +2051,56 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   try {
     switch (event.type) {
+      case 'payment_intent.amount_capturable_updated': {
+        // Booking-time capture (job lifecycle Scenario 0). The customer's
+        // card confirmation just landed (manual-capture PI is now
+        // 'requires_capture'). Capture immediately so the money moves to
+        // the platform balance — an uncaptured authorization silently
+        // expires after ~7 days, which loses the escrow on any job whose
+        // lifecycle stretches (reschedules, second visits, swaps).
+        //
+        // We deliberately do NOT write paymentStatus here: the capture
+        // makes Stripe emit payment_intent.succeeded, whose handler below
+        // is the single writer of paymentStatus='succeeded' (and thereby
+        // the handyman fan-out trigger).
+        const capturablePI = event.data.object;
+        const verdict = assessCaptureability(capturablePI);
+        if (!verdict.shouldCapture) {
+          console.log(`ℹ️ Skipping booking-time capture for ${capturablePI && capturablePI.id}: ${verdict.reason}`);
+          break;
+        }
+
+        const captureJobId = capturablePI.metadata.jobId;
+        try {
+          // Idempotency key means a webhook redelivery (or a race with the
+          // legacy release-time capture) can never double-capture.
+          await stripe.paymentIntents.capture(capturablePI.id, {}, {
+            idempotencyKey: `capture-${capturablePI.id}`,
+          });
+          console.log(`✅ Captured payment at booking for job ${captureJobId} (${capturablePI.id})`);
+        } catch (captureErr) {
+          const msg = String(captureErr.message || '');
+          if (/already been captured|already captured/i.test(msg)) {
+            // Benign: something else (legacy release path) captured first.
+            console.log(`ℹ️ PaymentIntent ${capturablePI.id} already captured — nothing to do`);
+            break;
+          }
+          // Permanent failures (expired/canceled auth) would fail a Stripe
+          // retry identically, so we do NOT 500. Mark the job so the admin
+          // (and the future Scenario 12 sweep) can see it and act.
+          console.error(`❌ Booking-time capture failed for job ${captureJobId}:`, captureErr);
+          try {
+            await admin.firestore().collection('jobs').doc(captureJobId).update({
+              captureError: msg.slice(0, 500) || 'capture failed',
+              captureFailedAt: new Date().toISOString(),
+            });
+          } catch (markErr) {
+            console.error(`⚠️ Could not mark capture failure on job ${captureJobId}:`, markErr);
+          }
+        }
+        break;
+      }
+
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object;
         const jobId = paymentIntent.metadata?.jobId;
