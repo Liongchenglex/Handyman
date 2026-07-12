@@ -82,7 +82,7 @@ The inbound webhook router resolves every reply **against the sender's open prom
 
 **F5 — Initiation reconciliation.** Several flows depend on a party — usually the handyman — *starting* something (proposing an ASAP visit time, answering a proposal addressed to them). Waiting politely forever is not a plan, so every dependent-initiation step carries the same three-rung ladder:
 
-1. **Deadline** — every expected initiation/answer has an explicit clock (stored on the prompt's `expiresAt`, or on the job for initiations that have no prompt yet, e.g. "ASAP time never proposed").
+1. **Deadline** — every expected initiation/answer has an explicit clock (stored on the prompt's `expiresAt`, or on the job for initiations that have no prompt yet, e.g. "ASAP time still unconfirmed after the customer declined the proposed slot").
 2. **One or two automated nudges** — WhatsApp `prompt_nudge` to the owing party (plus in-app visibility for handymen); nudge counts are bounded, never infinite.
 3. **Admin queue with forcing actions** — after the ladder is exhausted, the job lands in Scenario 12's "Attention needed" queue, where the admin can always resolve it because of the **admin-as-actor principle**: the admin may perform any party's step on their behalf (set a visit time after a phone call, apply a reschedule, force-unassign a handyman and re-release, or offer the customer cancel + refund). Every admin-as-actor write records the actor (`...By`, `via: 'admin'`) so the audit trail never pretends the party did it themselves.
 
@@ -149,6 +149,18 @@ V1 addition on top of what shipped: after a re-claim, the new handyman is prompt
 
 **Flow.**
 ```
+── How a reschedule starts (or doesn't) ──────────────────────────────
+Trigger A: handyman wants a new time
+      → [A] "Propose new time" ──────────────────────────────┐
+Trigger B: customer asks for a change                        │
+      → [WA] free text → F3 → admin inbox + handyman notified│
+      ├─ handyman acts within 24h → proposes [A] ────────────┤
+      └─ handyman silent → [ADM] applies scheduleChange      │
+             admin-as-actor (after phone coordination) — done│
+Nobody proposes and the date passes anyway (silent handyman) │
+      → day after preferredDate: completion poll fires [1]   │
+      → customer replies "never came" → Scenario 7 takes over│
+── Proposal → approval ──────────────────────────────────────▼───────
 Handyman [A] "Propose new time" (new date/time + note)
       → [F] proposeSchedule: open prompt → [WA] customer: Approve / Decline
       ├─ Approve → [F] scheduleChange: preferredDate/Time updated,
@@ -169,20 +181,19 @@ Handyman [A] "Propose new time" (new date/time + note)
 
 **Problem.** ASAP jobs have no `preferredDate`, so the completion poll never auto-fires for them, the date gate is inert, and nothing ever pins down when the visit actually happens.
 
-**Solution.** Reuse Scenario 3's machinery with a different trigger: on accepting an ASAP job, the handyman's job page shows a prominent "Set visit time" action (and the acceptance flow prompts for it immediately). Proposal → customer Approve/Decline prompt → on approve, `scheduleChange` writes the concrete `preferredDate`/`preferredTime` and marks `scheduledFromAsapAt`, which makes the poll and date gate work normally from then on. The customer's acceptance message says "your handyman will confirm the exact visit time shortly", so silence has a face.
+**Solution.** Reuse Scenario 3's machinery, but the initial proposal is **part of the accept step itself**: for ASAP jobs, the Express Interest confirmation modal includes a required date/time picker — the handyman cannot claim the job without proposing a visit time, and claiming submits the claim and the proposal together. That eliminates the "accepted but never proposed" window at the source. On customer approval, `scheduleChange` writes the concrete `preferredDate`/`preferredTime` and marks `scheduledFromAsapAt`, which makes the poll and date gate work normally from then on. The customer's acceptance message names the proposed time and asks for the approval right away.
 
-**Reconciliation when the handyman doesn't initiate (F5) — mandatory here, unlike Scenario 3, because an ASAP job without a fixed time can never complete.** The full ladder:
+**Reconciliation (F5) — now only needed for the post-decline stall** (customer declined the proposed slot and the handyman never re-proposes), since acceptance itself guarantees the first proposal:
 
-| Clock (from acceptance) | Action |
+| Clock (from customer's decline) | Action |
 |---|---|
-| 0h | In-app "Set visit time" prompt on accept + persistent banner on the job |
-| +24h | [WA] `prompt_nudge` to the handyman ("Job #… needs a visit time — the customer is waiting") |
-| +48h | Second nudge + job enters the admin "Attention needed" queue |
-| +72h | Admin forcing actions: set the time admin-as-actor (after calling both parties), force-unassign → re-release (Scenario 2 machinery, handyman's cancellationCount incremented), or offer the customer cancel + refund [9]. Customer gets a "we're on it" notice so they're not in the dark. |
+| 0h | [WA] handyman notified of decline + in-app banner: "Propose another time" |
+| +24h | [WA] `prompt_nudge` to the handyman |
+| +48h | Admin "Attention needed" queue — forcing actions: set the time admin-as-actor (after calling both parties), force-unassign → re-release (Scenario 2 machinery, cancellationCount incremented), or offer the customer cancel + refund [9]. Customer gets a "we're on it" notice. |
 
 **Flow.**
 ```
-ASAP job accepted [A] → handyman prompted: "Set visit time"
+ASAP job: [A] accept modal REQUIRES proposed date/time → claim + proposal submitted together
       → [F] proposeSchedule → [WA] customer: Approve / Decline
       ├─ Approve → [F] scheduleChange: concrete date set (job now behaves as scheduled)
       │       → continues at Scenario 1
@@ -322,7 +333,7 @@ Visit 1 done, more work needed
 | Re-released, never re-claimed | same, with `reassignmentCount > 0`, age > 2d | fan-out nudge | 4d: admin |
 | Completion poll unanswered | prompt `open` > 48h | resend poll once | 5d: admin decides (call customer / release / refund) |
 | Any other open prompt expired | F2 `expiresAt` passed | one nudge template | admin queue |
-| ASAP job, no time fixed | accepted, no `preferredDate`, > 24h | nudge handyman (24h, again 48h) | 72h: admin forcing actions (set time / force-unassign / offer refund) — full ladder in Scenario 4 |
+| ASAP job, no confirmed time | accepted, no `scheduledFromAsapAt`, no open `visit_time` prompt (i.e. proposal declined/expired, none re-opened) > 24h | nudge handyman | 48h: admin forcing actions (set time / force-unassign / offer refund) — ladder in Scenario 4 |
 | Handyman-addressed prompt unanswered | prompt `toRole: 'handyman'` open > 24h | nudge handyman | 48h: admin answers on their behalf or force-unassigns (F5 admin-as-actor) |
 | Customer reschedule request idle | forwarded F3 request, no handyman action | — | 24h: admin applies scheduleChange admin-as-actor |
 | Cancellation requested, refund not executed | `cancellation_requested` > 2d | — | admin (it's already their queue; this re-alerts) |
