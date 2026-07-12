@@ -72,6 +72,14 @@ const {
   CancelError,
 } = require('./jobReassignment');
 
+// Schedule-change domain logic (F4 single writer). See
+// functions/scheduleService.js and the lifecycle spec §3/§4.3-4.4.
+const {
+  ScheduleError,
+  validateScheduleProposal,
+  buildScheduleChangeUpdate,
+} = require('./scheduleService');
+
 // Booking-time escrow capture decision (job lifecycle Scenario 0).
 // See functions/paymentCapture.js and
 // docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
@@ -96,6 +104,14 @@ const COMPLETION_PROMPT_OPTIONS = {
   'YES': 'confirm', 'CONFIRM COMPLETE': 'confirm', 'CONFIRM': 'confirm',
   'NO': 'reject', 'REPORT ISSUE': 'reject', 'REPORT': 'reject', 'ISSUE': 'reject',
   'Y': 'confirm', 'N': 'reject',
+};
+
+// Reply options for schedule-approval prompts (reschedule + ASAP
+// time-fixing). Keys mirror quick-reply button texts plus terse
+// replies; values are the dispatcher actions.
+const SCHEDULE_APPROVAL_OPTIONS = {
+  'YES': 'approve', 'Y': 'approve', 'APPROVE': 'approve', 'OK': 'approve',
+  'NO': 'decline', 'N': 'decline', 'DECLINE': 'decline',
 };
 
 // ===================================
@@ -2590,6 +2606,41 @@ async function applyCompletionAnswer({ db, jobId, isConfirm }) {
 }
 
 /**
+ * Apply a schedule change to a job, atomically (F4 single writer).
+ *
+ * Used by the webhook's schedule_approval dispatch (customer approved
+ * over WhatsApp) and, later, by admin-as-actor tooling (Scenario 12).
+ * The transaction re-checks status so a change can never land on a job
+ * that was cancelled or completed between proposal and approval.
+ *
+ * @returns {{outcome: 'applied'|'wrong_status', job?: object}}
+ */
+async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId }) {
+  const jobRef = db.collection('jobs').doc(jobId);
+  let jobData;
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(jobRef);
+      if (!snap.exists || snap.data().status !== 'in_progress') {
+        throw new Error('WRONG_STATUS');
+      }
+      jobData = snap.data();
+      const update = buildScheduleChangeUpdate(jobData, {
+        newDate, newTime, actor, via, note, promptId,
+        nowIso: new Date().toISOString(),
+      });
+      tx.update(jobRef, update);
+    });
+  } catch (err) {
+    if (err.message === 'WRONG_STATUS') {
+      return { outcome: 'wrong_status' };
+    }
+    throw err;
+  }
+  return { outcome: 'applied', job: jobData };
+}
+
+/**
  * WhatsApp Webhook Handler (Twilio)
  *
  * Handles incoming WhatsApp messages from Twilio.
@@ -3673,6 +3724,121 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         return res.status(401).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Failed to cancel job assignment' });
+    }
+  });
+});
+
+/**
+ * proposeSchedule — the assigned handyman proposes a (new) visit time.
+ *
+ * Two triggers share this endpoint (lifecycle spec Scenarios 3 + 4):
+ * a reschedule of an already-scheduled job, and the mandatory
+ * time-fixing proposal submitted together with an ASAP job's claim.
+ * Either way: validate → WhatsApp the customer → open a
+ * schedule_approval prompt carrying the proposal as payload. The
+ * schedule itself changes ONLY when the customer approves (F4 — the
+ * webhook dispatch calls applyScheduleChange).
+ *
+ * POST body: { jobId, proposedDate, proposedTime, note? }
+ */
+exports.proposeSchedule = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, proposedDate, proposedTime, note } = req.body || {};
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+
+      try {
+        validateScheduleProposal({ date: proposedDate, time: proposedTime });
+      } catch (err) {
+        if (err instanceof ScheduleError) {
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+
+      const rl = await checkRateLimit(`schedule_propose_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many proposals — please slow down', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const jobSnap = await admin.firestore().collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      const job = jobSnap.data();
+      if (job.handymanId !== decodedToken.uid) {
+        return res.status(403).json({ error: 'Only the assigned handyman can propose a time' });
+      }
+      if (job.status !== 'in_progress') {
+        return res.status(409).json({ error: `This job can no longer be rescheduled (status: ${job.status})` });
+      }
+      if (!job.customerPhone) {
+        return res.status(400).json({ error: 'Job has no customer phone on record' });
+      }
+
+      const handymanName = (job.acceptedBy && job.acceptedBy.name) || 'Your handyman';
+      const displayDate = new Date(proposedDate).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+      const isFirstTime = job.preferredTiming !== 'Schedule';
+      const trimmedNote = String(note || '').trim().slice(0, 300);
+
+      // WhatsApp the customer. Business-initiated → template with
+      // freeform fallback (sandbox / pre-approval), existing pattern.
+      const fallback = isFirstTime
+        ? `📅 ${handymanName} proposes to visit on *${displayDate}* at *${proposedTime}* for your ${job.serviceType || 'job'} (Job #${jobId.slice(-6)}).${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to confirm this time\n👉 Reply *NO* to ask for another`
+        : `📅 ${handymanName} proposes a NEW time for your ${job.serviceType || 'job'} (Job #${jobId.slice(-6)}): *${displayDate}* at *${proposedTime}*.${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to approve\n👉 Reply *NO* to keep the original time`;
+
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(job.customerPhone),
+        process.env.TWILIO_TEMPLATE_SCHEDULE_PROPOSAL,
+        { '1': handymanName, '2': displayDate, '3': String(proposedTime), '4': jobId.slice(-6) },
+        fallback,
+      );
+      if (!sendResult.success) {
+        return res.status(502).json({ error: 'Could not reach the customer on WhatsApp — please try again' });
+      }
+
+      // F2: the prompt carries the proposal so the reply dispatcher can
+      // apply exactly what was asked, even if a newer proposal replaces
+      // this one (supersede) before the customer answers.
+      const { promptId } = await openPrompt({
+        db: admin.firestore(),
+        jobId,
+        type: 'schedule_approval',
+        toPhone: job.customerPhone,
+        toRole: 'customer',
+        question: `Approve ${handymanName}'s proposed time: ${displayDate} at ${proposedTime}?`,
+        options: SCHEDULE_APPROVAL_OPTIONS,
+        payload: {
+          proposedDate,
+          proposedTime: String(proposedTime),
+          proposedBy: decodedToken.uid,
+          note: trimmedNote || null,
+          isFirstTime,
+        },
+      });
+
+      await writeAuditLog('schedule_proposed', decodedToken, {
+        jobId, proposedDate, proposedTime: String(proposedTime), promptId, isFirstTime,
+      });
+
+      console.log(`📅 Schedule proposal for job ${jobId} by ${decodedToken.uid}: ${proposedDate} ${proposedTime} (prompt ${promptId})`);
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ Error in proposeSchedule:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to propose schedule' });
     }
   });
 });
