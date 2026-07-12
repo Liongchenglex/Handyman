@@ -88,6 +88,15 @@ const {
   openPrompt,
 } = require('./promptService');
 
+// Reply options for the completion poll — shared by the handyman
+// "Mark Complete" proxy path and the daily auto-poll so both create
+// identical prompts. Keys mirror the quick-reply button texts and the
+// words the legacy regexes accepted.
+const COMPLETION_PROMPT_OPTIONS = {
+  'YES': 'confirm', 'CONFIRM COMPLETE': 'confirm', 'CONFIRM': 'confirm',
+  'NO': 'reject', 'REPORT ISSUE': 'reject', 'REPORT': 'reject', 'ISSUE': 'reject',
+};
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -2407,6 +2416,26 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
             { '1': data.customerName, '2': data.handymanName, '3': data.serviceType, '4': data.jobId },
             fallback
           );
+
+          // F2: record the question so the reply router can bind the
+          // customer's YES/NO to THIS job without phone-lookup guessing.
+          if (result.success && data.jobId) {
+            try {
+              await openPrompt({
+                db: admin.firestore(),
+                jobId: data.jobId,
+                type: 'completion_confirmation',
+                toPhone: data.customerPhone,
+                toRole: 'customer',
+                question: `Has ${data.handymanName || 'your handyman'} completed the ${data.serviceType || 'job'}?`,
+                options: COMPLETION_PROMPT_OPTIONS,
+              });
+            } catch (promptErr) {
+              // Prompt bookkeeping must not fail the send — the legacy
+              // reply path still handles this job by phone lookup.
+              console.error(`⚠️ openPrompt failed for job ${data.jobId} (job_completion):`, promptErr);
+            }
+          }
           break;
         }
 
@@ -3308,6 +3337,21 @@ Please confirm if the work has been completed to your satisfaction.
         if (!sendResult.success) {
           console.error(`❌ Failed to send message for job ${jobId}:`, sendResult.error);
           continue;
+        }
+
+        // F2: record the question for the reply router (see promptService).
+        try {
+          await openPrompt({
+            db: admin.firestore(),
+            jobId,
+            type: 'completion_confirmation',
+            toPhone: job.customerPhone,
+            toRole: 'customer',
+            question: `Has ${handymanName} completed the ${job.serviceType || 'job'}?`,
+            options: COMPLETION_PROMPT_OPTIONS,
+          });
+        } catch (promptErr) {
+          console.error(`⚠️ openPrompt failed for job ${jobId} (auto poll):`, promptErr);
         }
 
         // Mark the poll as sent to prevent duplicates
