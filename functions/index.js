@@ -77,6 +77,17 @@ const {
 // docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
 const { assessCaptureability, isUnexpectedStateError } = require('./paymentCapture');
 
+// Pending-prompt primitive — see functions/promptService.js and
+// docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md §3.
+const {
+  normalizePhoneKey,
+  interpretReply,
+  buildDisambiguationList,
+  findOpenPrompts,
+  markAnswered,
+  openPrompt,
+} = require('./promptService');
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -2541,6 +2552,85 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     console.log(`📱 Incoming WhatsApp from ${customerPhone}: "${Body.trim()}"`);
 
+    // ------- Prompt-first routing (job lifecycle spec §3 F2) -------
+    // Inbound media (photos of the job site etc.) — captured for F3.
+    const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0;
+    const mediaUrls = [];
+    for (let i = 0; i < numMedia; i++) {
+      if (req.body[`MediaUrl${i}`]) mediaUrls.push(req.body[`MediaUrl${i}`]);
+    }
+
+    const senderKey = normalizePhoneKey(From);
+    let openPrompts = [];
+    try {
+      openPrompts = await findOpenPrompts(admin.firestore(), senderKey);
+    } catch (promptLookupErr) {
+      // A missing index or transient error must not kill the webhook —
+      // fall through to the legacy path.
+      console.error('Prompt lookup failed (falling back to legacy):', promptLookupErr);
+    }
+
+    if (openPrompts.length > 0) {
+      const verdict = interpretReply(openPrompts, Body);
+
+      if (verdict.kind === 'answer') {
+        if (verdict.prompt.type === 'completion_confirmation') {
+          const isPromptConfirm = verdict.action === 'confirm';
+          const answerResult = await applyCompletionAnswer({
+            db: admin.firestore(),
+            jobId: verdict.prompt.jobId,
+            isConfirm: isPromptConfirm,
+          });
+
+          // Close the prompt AFTER the job write settles (either way the
+          // question is no longer open — 'already_processed' means it was
+          // decided elsewhere).
+          await markAnswered(verdict.prompt.ref, {
+            answer: verdict.answerText,
+            resultingAction: answerResult.outcome,
+          });
+
+          if (answerResult.outcome === 'already_processed') {
+            await sendTwilioMessage(
+              From,
+              `ℹ️ Your ${isPromptConfirm ? 'confirmation' : 'report'} for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+            );
+            return res.status(200).json({ received: true, processed: false, reason: 'Prompt answer on already-processed job' });
+          }
+
+          if (answerResult.outcome === 'confirmed') {
+            await sendAdminNotificationEmail(answerResult.jobData, verdict.prompt.jobId);
+            await sendTwilioMessage(
+              From,
+              `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you confirmed by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe hope to serve you again! 🔧`
+            );
+            return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval', via: 'prompt' });
+          }
+
+          await sendTwilioMessage(
+            From,
+            `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`
+          );
+          return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
+        }
+
+        // A prompt type this deploy doesn't know how to dispatch —
+        // defensive forward rather than a wrong action.
+        console.warn(`Unknown prompt type '${verdict.prompt.type}' — forwarding to admin`);
+        await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+        return res.status(200).json({ received: true, processed: false, reason: 'Unknown prompt type' });
+      }
+
+      if (verdict.kind === 'disambiguate') {
+        await sendTwilioMessage(From, buildDisambiguationList(openPrompts));
+        return res.status(200).json({ received: true, processed: false, reason: 'Multiple prompts — asked to disambiguate' });
+      }
+
+      // 'unmatched' with open prompts: fall through to the legacy path
+      // (pre-migration polls), which now ends in F3 instead of a drop.
+    }
+    // ------- end prompt-first routing -------
+
     // Process confirmation replies — supports both text replies (YES/NO)
     // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
     // Intent detection. Word-boundary matches so a disambiguation
@@ -2557,9 +2647,9 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     const selectorIndex = selectorMatch ? parseInt(selectorMatch[1], 10) : null;
 
     if (!isConfirm && !isReject) {
-      // Not a confirmation reply — ignore
-      console.log(`ℹ️ Non-confirmation message received: "${Body.trim()}", ignoring`);
-      return res.status(200).json({ received: true, processed: false, reason: 'Not a confirmation reply' });
+      // Not a recognizable reply — F3: store, forward to admin, ack.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
+      return res.status(200).json({ received: true, processed: false, reason: 'Unmatched — forwarded to admin' });
     }
 
     // Try multiple phone formats since customer might have stored different format
@@ -2659,10 +2749,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       }
 
       console.warn('⚠️ No pending job found for customer:', customerPhone);
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
       return res.status(200).json({
         received: true,
         processed: false,
-        reason: 'No pending job found'
+        reason: 'No pending job found — forwarded to admin'
       });
     }
 
@@ -2856,6 +2947,108 @@ function formatPhoneToWhatsApp(phone) {
   }
   cleaned = cleaned.replace(/^0+/, '');
   return `whatsapp:+${cleaned}`;
+}
+
+/**
+ * Send the admin a plain operational email. Generic sibling of
+ * sendAdminNotificationEmail (which is fund-release-specific); used by
+ * the F3 no-silent-drops forwarder and future lifecycle flows.
+ * Same env contract: ADMIN_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.
+ * Never throws — email is best-effort, callers must not fail on it.
+ */
+async function sendAdminEmail(subject, html) {
+  const nodemailer = require('nodemailer');
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = process.env.SMTP_PORT || 587;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+
+  if (!adminEmail || !smtpHost || !smtpUser || !smtpPass) {
+    console.warn('⚠️ Email not configured — admin email skipped:', subject);
+    return { success: false, error: 'Email not configured' };
+  }
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    await transporter.sendMail({
+      from: `"EasyDone System" <${smtpUser}>`,
+      to: adminEmail,
+      subject,
+      html,
+    });
+    return { success: true };
+  } catch (err) {
+    console.error('⚠️ sendAdminEmail failed:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * F3 — no silent drops (job lifecycle spec §3). Any inbound WhatsApp
+ * message we could not resolve is stored, forwarded to the admin, and
+ * (rate-limited) acknowledged to the sender. This is v1's substitute
+ * for chat-level admin transparency, and the metric for whether a real
+ * chat channel is ever needed.
+ */
+async function forwardUnmatchedInbound({ from, body, mediaUrls, reason }) {
+  const phoneKey = normalizePhoneKey(from);
+
+  // Best-guess job attribution: the sender's most recent job.
+  let matchedJobId = null;
+  let matchedService = null;
+  try {
+    const phoneFormats = [phoneKey, `+${phoneKey}`, phoneKey.startsWith('65') ? phoneKey.substring(2) : phoneKey];
+    for (const p of phoneFormats) {
+      const snap = await admin.firestore().collection('jobs')
+        .where('customerPhone', '==', p)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        matchedJobId = snap.docs[0].id;
+        matchedService = snap.docs[0].data().serviceType || null;
+        break;
+      }
+    }
+  } catch (lookupErr) {
+    console.warn('Inbound job attribution failed (storing anyway):', lookupErr.message);
+  }
+
+  await admin.firestore().collection('inboundMessages').add({
+    fromPhone: phoneKey,
+    body: String(body || '').slice(0, 2000),
+    mediaUrls: mediaUrls || [],
+    reason, // 'no_open_prompt' | 'unmatched_reply' | 'selector_out_of_range'
+    matchedJobId,
+    receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await sendAdminEmail(
+    `📨 Unhandled WhatsApp message${matchedJobId ? ` — Job #${matchedJobId.slice(-6)}` : ''}`,
+    `<div style="font-family: Arial, sans-serif; max-width: 600px;">
+      <p><strong>From:</strong> ${phoneKey}</p>
+      ${matchedJobId ? `<p><strong>Likely job:</strong> ${matchedJobId} (${matchedService || 'unknown service'})</p>` : '<p><strong>Likely job:</strong> none found</p>'}
+      <p><strong>Reason:</strong> ${reason}</p>
+      <p><strong>Message:</strong></p>
+      <blockquote style="border-left: 3px solid #ccc; padding-left: 10px;">${String(body || '(no text)').slice(0, 2000)}</blockquote>
+      ${(mediaUrls && mediaUrls.length) ? `<p><strong>Media:</strong> ${mediaUrls.length} attachment(s) — view in Twilio console</p>` : ''}
+    </div>`
+  );
+
+  // Ack the sender at most once per 12h so they aren't ghosted, without
+  // ack-looping against autoresponders.
+  const rl = await checkRateLimit(`whatsapp_ack_${phoneKey}`, 1, 43200);
+  if (rl.allowed) {
+    await sendTwilioMessage(
+      from,
+      `Thanks for your message — our team has received it and will get back to you if needed.\n\nFor urgent matters, contact easydonehandyman@gmail.com.`
+    );
+  }
 }
 
 /**
