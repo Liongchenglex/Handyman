@@ -197,8 +197,12 @@ const ExpressInterestButton = ({
     }
   };
 
-  // Confirmation Modal Component
-  const ConfirmationModal = () => (
+  // Confirmation modal. Rendered via a plain function call, NOT as a
+  // <Component/>: a nested component function gets a new identity every
+  // parent render, which makes React remount the whole modal subtree on
+  // each keystroke — the controlled date/time inputs inside would lose
+  // focus after every character typed.
+  const renderConfirmationModal = () => (
     showConfirmModal && (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-md w-full p-6">
@@ -315,7 +319,7 @@ const ExpressInterestButton = ({
       </button>
 
       {/* Confirmation Modal */}
-      <ConfirmationModal />
+      {renderConfirmationModal()}
     </>
   );
 };
