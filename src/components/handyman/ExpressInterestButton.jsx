@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { sendJobAcceptanceNotification } from '../../services/whatsappService';
+import { proposeSchedule } from '../../services/api/jobSchedule';
 
 /**
  * ExpressInterestButton Component
@@ -37,6 +38,13 @@ const ExpressInterestButton = ({
   // before the disabled state re-renders. A ref flips synchronously and blocks
   // the duplicate call, preventing duplicate Firebase writes.
   const submittingRef = useRef(false);
+
+  // ASAP jobs must carry a proposed visit time WITH the claim
+  // (lifecycle spec Scenario 4): the accept modal requires it, so an
+  // accepted ASAP job can never sit timeless.
+  const isAsapJob = job.preferredTiming !== 'Schedule';
+  const [proposedDate, setProposedDate] = useState('');
+  const [proposedTime, setProposedTime] = useState('');
 
   // A job can only be claimed while it is still open ('pending') and unassigned.
   // If it already has a handymanId / a non-pending status, interest was already
@@ -79,6 +87,13 @@ const ExpressInterestButton = ({
     // firing duplicate writes before React re-renders the disabled state.
     if (submittingRef.current) return;
     submittingRef.current = true;
+
+    // ASAP claim requires a proposed visit time (Scenario 4).
+    if (isAsapJob && (!proposedDate || !proposedTime.trim())) {
+      alert('Please pick a proposed visit date and time first.');
+      submittingRef.current = false;
+      return;
+    }
 
     setIsLoading(true);
     setShowConfirmModal(false);
@@ -126,6 +141,21 @@ const ExpressInterestButton = ({
         } catch (whatsappError) {
           console.error('Error sending WhatsApp notification:', whatsappError);
           // Don't block the flow if WhatsApp fails
+        }
+      }
+
+      // Scenario 4: submit the visit-time proposal the modal required.
+      // Server-side it messages the customer and opens the approval
+      // prompt. A failure here never un-claims the job — the job page's
+      // "Set visit time" button is the retry path.
+      if (isAsapJob) {
+        try {
+          const proposalResult = await proposeSchedule(job.id, proposedDate, proposedTime.trim(), '');
+          if (!proposalResult.success) {
+            console.error('❌ Visit-time proposal failed (retry from job page):', proposalResult.error);
+          }
+        } catch (proposalErr) {
+          console.error('❌ Visit-time proposal failed (retry from job page):', proposalErr);
         }
       }
 
@@ -199,6 +229,35 @@ const ExpressInterestButton = ({
               </ul>
             </div>
 
+            {isAsapJob && (
+              <div className="mb-4">
+                <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+                  This is an ASAP job — propose your visit time <span className="text-red-500">*</span>
+                </p>
+                <label htmlFor="asap-date" className="sr-only">Visit date</label>
+                <input
+                  id="asap-date"
+                  type="date"
+                  value={proposedDate}
+                  onChange={(e) => setProposedDate(e.target.value)}
+                  className="w-full mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
+                />
+                <label htmlFor="asap-time" className="sr-only">Visit time</label>
+                <input
+                  id="asap-time"
+                  type="text"
+                  maxLength={20}
+                  placeholder="Time, e.g. 2:00 PM"
+                  value={proposedTime}
+                  onChange={(e) => setProposedTime(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  The customer will be asked to approve this time on WhatsApp.
+                </p>
+              </div>
+            )}
+
             <p className="text-sm text-gray-600 dark:text-gray-400">
               By expressing interest, you commit to providing professional service if selected by the customer.
             </p>
@@ -214,7 +273,7 @@ const ExpressInterestButton = ({
             </button>
             <button
               onClick={handleConfirmInterest}
-              disabled={isLoading}
+              disabled={isLoading || (isAsapJob && (!proposedDate || !proposedTime.trim()))}
               className="flex-1 bg-primary text-black font-bold py-3 px-4 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? 'Processing...' : 'Confirm Interest'}
