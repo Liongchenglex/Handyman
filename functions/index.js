@@ -2769,6 +2769,106 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
         }
 
+        if (verdict.prompt.type === 'schedule_approval') {
+          const proposal = verdict.prompt.payload || {};
+          const jobShortId = String(verdict.prompt.jobId).slice(-6);
+
+          if (verdict.action === 'approve') {
+            const changeResult = await applyScheduleChange({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              newDate: proposal.proposedDate,
+              newTime: proposal.proposedTime,
+              actor: senderKey,
+              via: 'whatsapp_reply',
+              note: proposal.note,
+              promptId: verdict.prompt.id,
+            });
+
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: changeResult.outcome,
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+
+            if (changeResult.outcome === 'wrong_status') {
+              await sendTwilioMessage(
+                From,
+                `ℹ️ This job's schedule can no longer be changed (Job #${jobShortId}). If something looks wrong, contact easydonehandyman@gmail.com.`
+              );
+              return res.status(200).json({ received: true, processed: false, reason: 'Schedule approval on non-in_progress job' });
+            }
+
+            // Confirm to the customer...
+            const displayDate = new Date(proposal.proposedDate).toLocaleDateString('en-SG', {
+              weekday: 'long', day: 'numeric', month: 'long',
+            });
+            await sendTwilioMessage(
+              From,
+              `✅ Confirmed! Your visit for Job #${jobShortId} is set for *${displayDate}* at *${proposal.proposedTime}*.\n\nSee you then! 🔧`
+            );
+
+            // ...and tell the handyman their proposal was accepted.
+            try {
+              const job = changeResult.job;
+              if (job && job.handymanId) {
+                const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
+                const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+                if (hmPhone) {
+                  await sendTwilioMessage(
+                    formatPhoneToWhatsApp(hmPhone),
+                    `✅ Customer confirmed: Job #${jobShortId} is set for ${displayDate} at ${proposal.proposedTime}.`
+                  );
+                }
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Handyman schedule-confirmation notice failed:', notifyErr);
+            }
+
+            return res.status(200).json({ received: true, processed: true, action: 'schedule_applied', via: 'prompt' });
+          }
+
+          // Decline: schedule unchanged; handyman must re-propose (or the
+          // F5 ladder / Scenario 12 sweep escalates the stall later).
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: 'declined',
+            });
+          } catch (markErr) {
+            console.error('⚠️ markAnswered failed (continuing):', markErr);
+          }
+
+          await sendTwilioMessage(
+            From,
+            proposal.isFirstTime
+              ? `👍 No problem — your handyman will propose another time for Job #${jobShortId}.`
+              : `👍 No problem — the original time for Job #${jobShortId} stays. Your handyman may propose another option.`
+          );
+
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+            const hmId = jobSnap.exists ? jobSnap.data().handymanId : null;
+            if (hmId) {
+              const hmSnap = await admin.firestore().collection('handymen').doc(hmId).get();
+              const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+              if (hmPhone) {
+                await sendTwilioMessage(
+                  formatPhoneToWhatsApp(hmPhone),
+                  `ℹ️ The customer declined your proposed time for Job #${jobShortId}. Please propose another time from the job page.`
+                );
+              }
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ Handyman decline notice failed:', notifyErr);
+          }
+
+          return res.status(200).json({ received: true, processed: true, action: 'schedule_declined', via: 'prompt' });
+        }
+
         // A prompt type this deploy doesn't know how to dispatch —
         // defensive forward rather than a wrong action.
         console.warn(`Unknown prompt type '${verdict.prompt.type}' — forwarding to admin`);
