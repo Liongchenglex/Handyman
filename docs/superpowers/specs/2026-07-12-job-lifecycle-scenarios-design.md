@@ -16,6 +16,8 @@ The WhatsApp job-threads feature (masked relay group chat) is **archived for v1*
 
 Stripe mechanics behind the rule: an *uncaptured authorization* can always be voided free but **expires ~7 days after booking**; *captured* funds sit in the platform balance indefinitely — releasable to the handyman any time, refundable to the customer any time (platform absorbs Stripe's ~3.4% + S$0.50 fee); *released* funds require a transfer reversal and are treated as final. Because every scenario below can stretch a job past 7 days, v1 must **capture at booking** (Scenario 0). Consequently every flow below must keep the job in a pre-release state until genuinely settled, and stuck jobs (Scenario 12) must end in an explicit admin decision — release or refund — never rot.
 
+**Corollary — escrow is a pot, not a promise to a person.** Captured funds sit in the platform balance with no handyman attribution; the payee is resolved only at the instant of admin release, from the job's *current* `handymanId`. Therefore "unassigning" or "reassigning" escrow when a handyman cancels or is replaced is a **no-op by construction** — there is nothing to unbind or rebind, and no scenario below moves money when people change. Money moves in exactly three places: capture at booking (in), admin release (out to handyman), admin refund (out to customer). §2b tabulates the escrow effect of every scenario.
+
 ## 2. Scenario catalog at a glance
 
 | # | Scenario | Status today |
@@ -35,6 +37,26 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 | 12 | Stuck-state timeouts | New |
 
 **Non-goals for v1** (admin resolves manually via existing dispute/refund tools): partial completion / partial payment, property-damage incidents, refund-after-release, editing job details other than schedule before acceptance, free-form chat.
+
+## 2b. Escrow effect per scenario
+
+Baseline: from Scenario 0 onward, money is captured at booking and **held** in the platform balance for the job's whole life. "Held" below always means: fully refundable, payee not yet determined, admin release is the only exit toward a handyman.
+
+| # | Scenario | Escrow effect |
+|---|----------|---------------|
+| 0 | Capture at booking | Customer's card charged → **held**. If the auth is lost before capture (expiry/cancel), nothing was collected — admin alerted to re-collect. |
+| 1 | Happy flow | Held throughout → **released** to the current handyman at the admin click (point of no return). |
+| 2 | Handyman cancels | **Held, untouched.** No unassignment exists — escrow was never bound to the handyman. The replacement handyman is paid at release purely because `handymanId` points at them then. |
+| 3 | Reschedule | Held, unaffected — only schedule metadata changes. |
+| 4 | ASAP time-fixing | Held, unaffected. |
+| 5 | Running late | Held, unaffected. |
+| 6 | Swap after inspection | Held, untouched through the swap; the finishing handyman is the payee at release. |
+| 7 | Handyman no-show | Held while resolving. Reschedule/new-handyman keep it held; the cancel branch ends in an admin **refund**. |
+| 8 | Customer no-show | Held while resolving. Any compensation to the handyman for a wasted trip would be a partial release — admin-mediated, **out of scope v1** (see §6.3 penalty decision). |
+| 9 | Customer cancellation | Held → admin **refund** (full or minus processing fee per §6.1 policy). An assigned handyman never had a claim on the pot, so no clawback is ever needed. |
+| 10 | Price adjustment | Original pot held, unaffected. The approved **delta is a second pot** (payment link charge into the platform balance) governed by the same rule: held until admin release, refundable before it. |
+| 11 | Second visit | Held, unaffected until final completion → normal release. |
+| 12 | Stuck states | Held — which is exactly why every stuck path must terminate in an explicit admin decision (**release or refund**); a stuck job is customer money sitting in our balance. |
 
 ## 3. Foundations (cross-cutting, built once)
 
@@ -57,6 +79,14 @@ The inbound webhook router resolves every reply **against the sender's open prom
 **F3 — No silent drops.** Any inbound message (or media) that doesn't match an open prompt or a recognized intent is stored in `inboundMessages/{id}` (sender, body, media refs, best-guess job) and forwarded to the admin via the existing email transport. This is the v1 substitute for chat transparency — and the metric that tells us if threads are ever actually needed.
 
 **F4 — Single writer for the schedule.** After booking, `preferredDate`/`preferredTime` are changed ONLY by a `scheduleChange` Cloud Function (used by Scenarios 3, 4, 6, 7, 8, 11). It atomically updates the date, clears `completionPollSentAt` (so the poll re-arms for the new date), records the change in a `scheduleHistory[]` array (who, from→to, reason, promptId), and notifies both parties. This keeps the completion poll and the Mark-Complete date gate honest — today an unrecorded reschedule would poll the customer about a job that hasn't happened.
+
+**F5 — Initiation reconciliation.** Several flows depend on a party — usually the handyman — *starting* something (proposing an ASAP visit time, answering a proposal addressed to them). Waiting politely forever is not a plan, so every dependent-initiation step carries the same three-rung ladder:
+
+1. **Deadline** — every expected initiation/answer has an explicit clock (stored on the prompt's `expiresAt`, or on the job for initiations that have no prompt yet, e.g. "ASAP time never proposed").
+2. **One or two automated nudges** — WhatsApp `prompt_nudge` to the owing party (plus in-app visibility for handymen); nudge counts are bounded, never infinite.
+3. **Admin queue with forcing actions** — after the ladder is exhausted, the job lands in Scenario 12's "Attention needed" queue, where the admin can always resolve it because of the **admin-as-actor principle**: the admin may perform any party's step on their behalf (set a visit time after a phone call, apply a reschedule, force-unassign a handyman and re-release, or offer the customer cancel + refund). Every admin-as-actor write records the actor (`...By`, `via: 'admin'`) so the audit trail never pretends the party did it themselves.
+
+The sweep engine for all of this is Scenario 12 — F5 is the policy, 12 is the machinery.
 
 **Template pack** (all Utility; submit early; freeform fallback until approved, matching existing pattern): `reschedule_proposal`, `visit_time_proposal` (ASAP), `second_visit_proposal`, `running_late_notice`, `no_show_choice`, `customer_cancel_confirm`, `refund_processed`, `prompt_nudge`.
 
@@ -129,13 +159,26 @@ Handyman [A] "Propose new time" (new date/time + note)
       └─ No reply 48h → [WA] nudge once → still nothing → admin queue [12]
 ```
 
+**Reconciliation when the handyman doesn't initiate (F5).** A reschedule is inherently voluntary — nobody *must* propose one — so non-initiation matters in two specific cases:
+- **The customer asked for a change** (arrives as free text via F3): the admin sees it in the inbound queue and, if the handyman doesn't act on a forwarded request within 24h, applies the change directly via admin-as-actor `scheduleChange` (typically after a phone call) — approval prompts are skipped, actor recorded as `via: 'admin'`.
+- **A proposal is addressed TO the handyman** (roles-flipped reschedules from Scenarios 7/8): same ladder as customers get — 24h nudge, 48h admin queue; the admin can accept/decline on the handyman's behalf or force-unassign (Scenario 2 machinery) if the handyman has gone dark.
+
 ---
 
 ### Scenario 4 — ASAP job: fixing the visit time after acceptance
 
 **Problem.** ASAP jobs have no `preferredDate`, so the completion poll never auto-fires for them, the date gate is inert, and nothing ever pins down when the visit actually happens.
 
-**Solution.** Reuse Scenario 3's machinery with a different trigger: on accepting an ASAP job, the handyman's job page shows a prominent "Set visit time" action (and the acceptance flow prompts for it immediately). Proposal → customer Approve/Decline prompt → on approve, `scheduleChange` writes the concrete `preferredDate`/`preferredTime` and marks `scheduledFromAsapAt`, which makes the poll and date gate work normally from then on. If no time is set within 24h of acceptance → nudge the handyman in-app/WA → admin queue (Scenario 12).
+**Solution.** Reuse Scenario 3's machinery with a different trigger: on accepting an ASAP job, the handyman's job page shows a prominent "Set visit time" action (and the acceptance flow prompts for it immediately). Proposal → customer Approve/Decline prompt → on approve, `scheduleChange` writes the concrete `preferredDate`/`preferredTime` and marks `scheduledFromAsapAt`, which makes the poll and date gate work normally from then on. The customer's acceptance message says "your handyman will confirm the exact visit time shortly", so silence has a face.
+
+**Reconciliation when the handyman doesn't initiate (F5) — mandatory here, unlike Scenario 3, because an ASAP job without a fixed time can never complete.** The full ladder:
+
+| Clock (from acceptance) | Action |
+|---|---|
+| 0h | In-app "Set visit time" prompt on accept + persistent banner on the job |
+| +24h | [WA] `prompt_nudge` to the handyman ("Job #… needs a visit time — the customer is waiting") |
+| +48h | Second nudge + job enters the admin "Attention needed" queue |
+| +72h | Admin forcing actions: set the time admin-as-actor (after calling both parties), force-unassign → re-release (Scenario 2 machinery, handyman's cancellationCount incremented), or offer the customer cancel + refund [9]. Customer gets a "we're on it" notice so they're not in the dark. |
 
 **Flow.**
 ```
@@ -144,7 +187,7 @@ ASAP job accepted [A] → handyman prompted: "Set visit time"
       ├─ Approve → [F] scheduleChange: concrete date set (job now behaves as scheduled)
       │       → continues at Scenario 1
       ├─ Decline → handyman proposes another slot (max 3 open rounds, then admin)
-      └─ No proposal in 24h → nudge handyman → admin queue [12]
+      └─ No proposal → F5 ladder above (24h nudge → 48h admin queue → 72h forcing action)
 ```
 
 ---
@@ -279,15 +322,18 @@ Visit 1 done, more work needed
 | Re-released, never re-claimed | same, with `reassignmentCount > 0`, age > 2d | fan-out nudge | 4d: admin |
 | Completion poll unanswered | prompt `open` > 48h | resend poll once | 5d: admin decides (call customer / release / refund) |
 | Any other open prompt expired | F2 `expiresAt` passed | one nudge template | admin queue |
-| ASAP job, no time fixed | accepted, no `preferredDate`, > 24h | nudge handyman | 3d: admin |
+| ASAP job, no time fixed | accepted, no `preferredDate`, > 24h | nudge handyman (24h, again 48h) | 72h: admin forcing actions (set time / force-unassign / offer refund) — full ladder in Scenario 4 |
+| Handyman-addressed prompt unanswered | prompt `toRole: 'handyman'` open > 24h | nudge handyman | 48h: admin answers on their behalf or force-unassigns (F5 admin-as-actor) |
+| Customer reschedule request idle | forwarded F3 request, no handyman action | — | 24h: admin applies scheduleChange admin-as-actor |
 | Cancellation requested, refund not executed | `cancellation_requested` > 2d | — | admin (it's already their queue; this re-alerts) |
 
 **Flow.**
 ```
 [F] nightly sweep → stuck job detected
-      → first pass: [WA] nudge the waiting party (once per stuck state)
+      → nudge the owing party per the F5 ladder (bounded: one or two per stuck state)
       → still stuck at threshold → admin "Attention needed" queue + email
-      → [ADM] resolves: release / refund / force re-release / mark resolved
+      → [ADM] resolves: release / refund / force re-release / apply step
+         admin-as-actor / mark resolved
 ```
 
 ## 5. What this does NOT change
