@@ -51,6 +51,11 @@ service cloud.firestore {
     // let a user forge payment status, hijack a transfer, fake a refund, or
     // forge their own reassignment history to dodge the re-claim block below.
     //
+    // Schedule fields are also included: they are single-writer via the
+    // applyScheduleChange Cloud Function (F4). An unrecorded client-side
+    // reschedule would desync the completion poll and the date gate that
+    // depend on the recorded schedule state.
+    //
     // Notes on what's intentionally NOT here:
     //   - paymentResult / paymentIntentId / paymentCompletedAt are written
     //     by the customer's client during the create→confirm flow. Cross-
@@ -81,7 +86,12 @@ service cloud.firestore {
         'previousHandymanIds',
         'reassignmentCount',
         'cancelledLastBy',
-        'lastCancelledAt'
+        'lastCancelledAt',
+        'preferredDate',
+        'preferredTime',
+        'preferredTiming',
+        'scheduleHistory',
+        'scheduledFromAsapAt'
       ];
     }
 
@@ -119,7 +129,9 @@ service cloud.firestore {
         'previousHandymanIds',
         'reassignmentCount',
         'cancelledLastBy',
-        'lastCancelledAt'
+        'lastCancelledAt',
+        'scheduleHistory',
+        'scheduledFromAsapAt'
       ];
     }
 
