@@ -42,6 +42,27 @@ describe('validateScheduleProposal', () => {
     }
   });
 
+  test('rejects non-zero-padded dates instead of parsing them in local time', () => {
+    // Bare new Date('2026-7-12') parses in LOCAL time (V8) — under SGT
+    // that shifts the day and wrongly rejected "today" as date_past.
+    // Strict YYYY-MM-DD is what <input type="date"> submits; anything
+    // else is bad_date regardless of the server's timezone.
+    try { validateScheduleProposal({ date: '2026-7-12', time: '2 PM', nowMs: NOW_MS }); } catch (e) {
+      expect(e.code).toBe('bad_date');
+    }
+    expect.assertions(1);
+  });
+
+  test('rejects impossible calendar dates instead of rolling them over', () => {
+    // new Date('2026-02-30') silently becomes Mar 2 — must be bad_date.
+    for (const impossible of ['2026-02-30', '2026-04-31', '2026-13-01', '2026-00-10']) {
+      try { validateScheduleProposal({ date: impossible, time: '2 PM', nowMs: NOW_MS }); } catch (e) {
+        expect(e.code).toBe('bad_date');
+      }
+    }
+    expect.assertions(4);
+  });
+
   test('rejects past dates', () => {
     try { validateScheduleProposal({ date: '2026-07-10', time: '2 PM', nowMs: NOW_MS }); } catch (e) {
       expect(e.code).toBe('date_past');
