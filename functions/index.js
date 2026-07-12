@@ -2773,6 +2773,26 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           const proposal = verdict.prompt.payload || {};
           const jobShortId = String(verdict.prompt.jobId).slice(-6);
 
+          // Defensive: a prompt without a usable proposal (legacy doc,
+          // manual creation) must never crash the webhook — an
+          // undefined field value makes the Firestore update throw,
+          // 500s the handler, strands the prompt open, and puts Twilio
+          // into a retry loop. Close it out and hand the reply to the
+          // admin instead.
+          if (!proposal.proposedDate || !proposal.proposedTime) {
+            console.error(`⚠️ schedule_approval prompt ${verdict.prompt.id} has no usable payload — closing and forwarding`);
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: 'invalid_payload',
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'Schedule prompt without payload — forwarded to admin' });
+          }
+
           if (verdict.action === 'approve') {
             const changeResult = await applyScheduleChange({
               db: admin.firestore(),
