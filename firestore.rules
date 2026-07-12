@@ -216,6 +216,22 @@ service cloud.firestore {
         allow read: if isSignedIn() && isOwner(handymanId);
         allow write: if false;
       }
+
+      // Pending prompts — one doc per outstanding WhatsApp question
+      // (completion poll, reschedule approval, ...). Written EXCLUSIVELY
+      // by Cloud Functions (Admin SDK bypasses rules). Parties answer
+      // over WhatsApp, never through the app, so clients get no access;
+      // admins may read for support/debugging.
+      match /prompts/{promptId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    // Collection-group access to prompts across all jobs (admin tooling).
+    match /{path=**}/prompts/{promptId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Handymen collection
@@ -354,6 +370,13 @@ service cloud.firestore {
     // purged for compliance, do it via the GCP console with a
     // documented retention policy.
     match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Unmatched inbound WhatsApp messages (F3 no-silent-drops). Written
+    // only by Cloud Functions; admin reads for the support inbox.
+    match /inboundMessages/{messageId} {
       allow read: if isAdmin();
       allow write: if false;
     }
