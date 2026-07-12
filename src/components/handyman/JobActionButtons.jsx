@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { sendJobCompletionNotification } from '../../services/whatsappService';
 import CancelJobModal from './CancelJobModal';
+import ProposeTimeModal from './ProposeTimeModal';
 
 /**
  * JobActionButtons Component
@@ -30,6 +31,7 @@ const JobActionButtons = ({
   // "Marked as Completed" state immediately, before the parent list refetches.
   const [justCompleted, setJustCompleted] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showProposeModal, setShowProposeModal] = useState(false);
 
   // Synchronous re-entrancy guard. React state updates (setIsProcessing) are
   // asynchronous, so a rapid double-click can fire two completion writes before
@@ -48,6 +50,16 @@ const JobActionButtons = ({
   // Cancel is available in the same window the server enforces:
   // assigned job still in progress, completion poll not yet sent.
   const canCancel = job.status === 'in_progress' && !job.completionPollSentAt && !isCompleted;
+
+  // Same window as cancel: an in-progress job whose completion poll
+  // hasn't gone out yet can have its time re-proposed (F4/Scenario 3).
+  const canPropose = canCancel;
+
+  const handleProposed = () => {
+    setShowProposeModal(false);
+    alert('Proposal sent! The customer has been asked to approve the new time on WhatsApp.');
+    if (onStatusChange) onStatusChange();
+  };
 
   const handleCancelled = () => {
     setShowCancelModal(false);
@@ -267,6 +279,23 @@ const JobActionButtons = ({
             : 'Mark this job as complete to notify the customer'}
         </p>
 
+        {canPropose && (
+          <button
+            onClick={() => setShowProposeModal(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-6 py-3 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined">event</span>
+            {job.preferredTiming === 'Schedule' ? 'Propose new time' : 'Set visit time'}
+          </button>
+        )}
+
+        <ProposeTimeModal
+          job={job}
+          isOpen={showProposeModal}
+          onClose={() => setShowProposeModal(false)}
+          onProposed={handleProposed}
+        />
+
         {canCancel && (
           <button
             onClick={() => setShowCancelModal(true)}
@@ -342,6 +371,23 @@ const JobActionButtons = ({
           View Job Details
         </button>
       )}
+
+      {canPropose && (
+        <button
+          onClick={() => setShowProposeModal(true)}
+          className="flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
+        >
+          <span className="material-symbols-outlined text-sm">event</span>
+          {job.preferredTiming === 'Schedule' ? 'New time' : 'Set time'}
+        </button>
+      )}
+
+      <ProposeTimeModal
+        job={job}
+        isOpen={showProposeModal}
+        onClose={() => setShowProposeModal(false)}
+        onProposed={handleProposed}
+      />
 
       {canCancel && (
         <button
