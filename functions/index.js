@@ -75,7 +75,7 @@ const {
 // Booking-time escrow capture decision (job lifecycle Scenario 0).
 // See functions/paymentCapture.js and
 // docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
-const { assessCaptureability } = require('./paymentCapture');
+const { assessCaptureability, isUnexpectedStateError } = require('./paymentCapture');
 
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
@@ -2079,11 +2079,26 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
           });
           console.log(`✅ Captured payment at booking for job ${captureJobId} (${capturablePI.id})`);
         } catch (captureErr) {
-          const msg = String(captureErr.message || '');
-          if (/already been captured|already captured/i.test(msg)) {
-            // Benign: something else (legacy release path) captured first.
-            console.log(`ℹ️ PaymentIntent ${capturablePI.id} already captured — nothing to do`);
-            break;
+          let msg = String(captureErr.message || '');
+          if (isUnexpectedStateError(captureErr)) {
+            // 'payment_intent_unexpected_state' covers two opposite
+            // situations: someone else already captured (benign race with
+            // the legacy release-time capture) OR the authorization
+            // expired/was canceled (real failure). Only the PI's current
+            // status can tell them apart.
+            let currentStatus = 'unknown';
+            try {
+              const currentPI = await stripe.paymentIntents.retrieve(capturablePI.id);
+              currentStatus = currentPI.status;
+            } catch (lookupErr) {
+              console.error(`⚠️ Could not re-fetch PI ${capturablePI.id} after capture error:`, lookupErr);
+            }
+            if (currentStatus === 'succeeded') {
+              // Benign: something else captured first.
+              console.log(`ℹ️ PaymentIntent ${capturablePI.id} already captured — nothing to do`);
+              break;
+            }
+            msg = `Capture failed — PaymentIntent status is '${currentStatus}' (not requires_capture): ${msg}`;
           }
           // Permanent failures (expired/canceled auth) would fail a Stripe
           // retry identically, so we do NOT 500. Mark the job so the admin

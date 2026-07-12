@@ -43,4 +43,24 @@ function assessCaptureability(paymentIntent) {
   return { shouldCapture: true, reason: 'capture' };
 }
 
-module.exports = { assessCaptureability };
+/**
+ * Is this capture error Stripe telling us the PI wasn't in
+ * 'requires_capture'? That single error code covers BOTH the benign
+ * case (another path already captured it — a race with the legacy
+ * release-time capture) and the bad case (the authorization expired or
+ * was canceled). Callers must retrieve the PI's current status to tell
+ * them apart: 'succeeded' → benign, anything else → real failure.
+ *
+ * The message regex is a fallback for SDK versions/errors that don't
+ * carry the code — never rely on prose alone for the happy call.
+ *
+ * @param {object|null} err - error thrown by stripe.paymentIntents.capture
+ * @returns {boolean}
+ */
+function isUnexpectedStateError(err) {
+  if (!err) return false;
+  if (err.code === 'payment_intent_unexpected_state') return true;
+  return /already been captured|already captured/i.test(String(err.message || ''));
+}
+
+module.exports = { assessCaptureability, isUnexpectedStateError };

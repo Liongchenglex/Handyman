@@ -1,4 +1,4 @@
-const { assessCaptureability } = require('../paymentCapture');
+const { assessCaptureability, isUnexpectedStateError } = require('../paymentCapture');
 
 const capturablePI = () => ({
   id: 'pi_123',
@@ -35,5 +35,26 @@ describe('assessCaptureability', () => {
   test('rejects a PI with nothing capturable', () => {
     expect(assessCaptureability({ ...capturablePI(), amount_capturable: 0 }))
       .toEqual({ shouldCapture: false, reason: 'nothing_capturable' });
+  });
+});
+
+describe('isUnexpectedStateError', () => {
+  test("matches Stripe's real error code (the reliable signal)", () => {
+    // Real shape: StripeInvalidRequestError with prose that does NOT
+    // contain the word "already" — code is the only dependable field.
+    expect(isUnexpectedStateError({
+      code: 'payment_intent_unexpected_state',
+      message: 'This PaymentIntent could not be captured because it has a status of succeeded. Only a PaymentIntent with one of the following statuses may be captured: requires_capture.',
+    })).toBe(true);
+  });
+
+  test('falls back to message matching for codeless errors', () => {
+    expect(isUnexpectedStateError({ message: 'Charge has already been captured.' })).toBe(true);
+  });
+
+  test('does not match unrelated errors or null', () => {
+    expect(isUnexpectedStateError({ code: 'card_declined', message: 'Your card was declined.' })).toBe(false);
+    expect(isUnexpectedStateError({ message: 'rate limit' })).toBe(false);
+    expect(isUnexpectedStateError(null)).toBe(false);
   });
 });
