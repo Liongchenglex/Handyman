@@ -2830,6 +2830,14 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
               return res.status(200).json({ received: true, processed: false, reason: 'Schedule approval on non-in_progress job' });
             }
 
+            // A settled schedule kills any outstanding pick link (F6:
+            // a stale link must never resurrect a settled schedule).
+            try {
+              await revokeActiveLinks({ db: admin.firestore(), jobId: verdict.prompt.jobId });
+            } catch (revokeErr) {
+              console.error('⚠️ Link revocation after schedule approval failed (continuing):', revokeErr);
+            }
+
             // Confirm to the customer...
             const displayDate = new Date(proposal.proposedDate).toLocaleDateString('en-SG', {
               weekday: 'long', day: 'numeric', month: 'long',
@@ -2870,12 +2878,35 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             console.error('⚠️ markAnswered failed (continuing):', markErr);
           }
 
-          await sendTwilioMessage(
-            From,
-            proposal.isFirstTime
-              ? `👍 No problem — your handyman will propose another time for Job #${jobShortId}.`
-              : `👍 No problem — the original time for Job #${jobShortId} stays. Your handyman may propose another option.`
-          );
+          // Decline → the customer picks their own time (F6). The reply
+          // rides the free 24h session window (they just messaged us),
+          // so a freeform message with the link needs no template.
+          // Failure to issue/send falls back to the old copy — the
+          // Scenario 12 sweep still catches the stall.
+          let declineLinkSent = false;
+          try {
+            const { token } = await issueScheduleLink({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              customerPhone: verdict.prompt.toPhone,
+              createdBy: 'system_decline',
+            });
+            await sendTwilioMessage(
+              From,
+              `👍 No problem — pick a time that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`
+            );
+            declineLinkSent = true;
+          } catch (linkErr) {
+            console.error('⚠️ Decline→link auto-send failed (falling back to old copy):', linkErr);
+          }
+          if (!declineLinkSent) {
+            await sendTwilioMessage(
+              From,
+              proposal.isFirstTime
+                ? `👍 No problem — your handyman will propose another time for Job #${jobShortId}.`
+                : `👍 No problem — the original time for Job #${jobShortId} stays. Your handyman may propose another option.`
+            );
+          }
 
           try {
             const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
@@ -2886,7 +2917,9 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
               if (hmPhone) {
                 await sendTwilioMessage(
                   formatPhoneToWhatsApp(hmPhone),
-                  `ℹ️ The customer declined your proposed time for Job #${jobShortId}. Please propose another time from the job page.`
+                  declineLinkSent
+                    ? `ℹ️ The customer declined your proposed time for Job #${jobShortId}. They've been sent a link to pick a time — you'll be asked to approve their pick.`
+                    : `ℹ️ The customer declined your proposed time for Job #${jobShortId}. Please propose another time from the job page.`
                 );
               }
             }
@@ -4206,6 +4239,81 @@ exports.submitSchedulePick = functions.https.onRequest(async (req, res) => {
     } catch (error) {
       console.error('❌ Error in submitSchedulePick:', error);
       return res.status(500).json({ error: 'Something went wrong — please try again' });
+    }
+  });
+});
+
+/**
+ * sendScheduleLink — admin-only (F6, Scenario 3 Trigger B).
+ *
+ * The customer asked for a schedule change in free text (F3 inbox);
+ * the admin sends them a pick-time link from the Active-jobs table.
+ * Business-initiated → template with freeform fallback.
+ *
+ * POST body: { jobId }
+ */
+exports.sendScheduleLink = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const rl = await checkRateLimit(`schedule_link_send_${decodedToken.uid}`, 20, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many link sends — please slow down', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const { jobId } = req.body || {};
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+      const jobSnap = await admin.firestore().collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      const job = jobSnap.data();
+      if (job.status !== 'in_progress') {
+        return res.status(409).json({ error: `This job can no longer be rescheduled (status: ${job.status})` });
+      }
+      if (!job.customerPhone) {
+        return res.status(400).json({ error: 'Job has no customer phone on record' });
+      }
+
+      const { token } = await issueScheduleLink({
+        db: admin.firestore(),
+        jobId,
+        customerPhone: job.customerPhone,
+        createdBy: decodedToken.uid,
+      });
+      const jobShortId = String(jobId).slice(-6);
+      const linkUrl = `${APP_URL}/pick-time?t=${token}`;
+
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(job.customerPhone),
+        process.env.TWILIO_TEMPLATE_SCHEDULE_LINK,
+        { '1': jobShortId, '2': linkUrl },
+        `📅 Need a different visit time for your ${job.serviceType || 'job'} (Job #${jobShortId})?\n\nPick a time that works for you here (valid 72 hours):\n${linkUrl}`
+      );
+      if (!sendResult.success) {
+        return res.status(502).json({ error: 'Could not reach the customer on WhatsApp — please try again' });
+      }
+
+      await writeAuditLog('schedule_link_sent', decodedToken, { jobId });
+      console.log(`🔗 Schedule link sent for job ${jobId} by admin ${decodedToken.uid}`);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in sendScheduleLink:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to send schedule link' });
     }
   });
 });
