@@ -91,7 +91,8 @@ service cloud.firestore {
         'preferredTime',
         'preferredTiming',
         'scheduleHistory',
-        'scheduledFromAsapAt'
+        'scheduledFromAsapAt',
+        'attentionNeeded'
       ];
     }
 
@@ -131,7 +132,8 @@ service cloud.firestore {
         'cancelledLastBy',
         'lastCancelledAt',
         'scheduleHistory',
-        'scheduledFromAsapAt'
+        'scheduledFromAsapAt',
+        'attentionNeeded'
       ];
     }
 
@@ -391,6 +393,15 @@ service cloud.firestore {
     match /inboundMessages/{messageId} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // F6 schedule links (lifecycle spec §3): the token hash in the doc
+    // id IS the credential — no client, not even an admin's browser,
+    // may read or write these. All access goes through the
+    // getScheduleLinkContext / submitSchedulePick / sendScheduleLink
+    // Cloud Functions (Admin SDK bypasses rules).
+    match /scheduleLinks/{tokenHash} {
+      allow read, write: if false;
     }
   }
 }
