@@ -3,6 +3,8 @@ import { collection, query, where, orderBy, limit, getDocs } from 'firebase/fire
 import { db } from '../../services/firebase/config';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { sendScheduleLink } from '../../services/api/scheduleLink';
+import { resolveAttention, adminUnassignJob, adminRefundJob } from '../../services/api/adminQueue';
+import AdminSetTimeModal from './AdminSetTimeModal';
 
 /**
  * ActiveJobsTable — admin view of every in_progress job (lifecycle
@@ -27,16 +29,15 @@ const ActiveJobsTable = () => {
     setLoading(true);
     setLoadError('');
     try {
-      const q = query(
-        collection(db, 'jobs'),
-        where('status', '==', 'in_progress'),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-      );
-      const snap = await getDocs(q);
-      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      // Attention-flagged rows first, then newest first (query order kept).
-      rows.sort((a, b) => (b.attentionNeeded ? 1 : 0) - (a.attentionNeeded ? 1 : 0));
+      const jobsCol = collection(db, 'jobs');
+      const [inProgressSnap, attentionSnap] = await Promise.all([
+        getDocs(query(jobsCol, where('status', '==', 'in_progress'), orderBy('createdAt', 'desc'), limit(50))),
+        getDocs(query(jobsCol, where('needsAttention', '==', true), limit(50))),
+      ]);
+      const byId = new Map();
+      [...inProgressSnap.docs, ...attentionSnap.docs].forEach((d) => byId.set(d.id, { id: d.id, ...d.data() }));
+      const rows = [...byId.values()];
+      rows.sort((a, b) => (b.needsAttention ? 1 : 0) - (a.needsAttention ? 1 : 0));
       setJobs(rows);
     } catch (err) {
       console.error('Error loading active jobs:', err);
@@ -47,6 +48,46 @@ const ActiveJobsTable = () => {
   }, []);
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  const [setTimeJob, setSetTimeJob] = useState(null); // job whose set-time modal is open
+  const [actionState, setActionState] = useState({}); // { [jobId]: 'busy' | <error string> }
+
+  const runAction = async (jobId, fn) => {
+    setActionState((s) => ({ ...s, [jobId]: 'busy' }));
+    const result = await fn();
+    if (result.success) {
+      setActionState((s) => ({ ...s, [jobId]: undefined }));
+      fetchJobs();
+    } else {
+      setActionState((s) => ({ ...s, [jobId]: result.error || 'Failed' }));
+    }
+  };
+
+  const handleResolve = (job) => {
+    if (!window.confirm(`Clear the attention flag on Job #${job.id.slice(-6)}?`)) return;
+    runAction(job.id, () => resolveAttention(job.id));
+  };
+
+  const handleUnassign = (job) => {
+    const note = window.prompt(
+      `Force-unassign ${(job.acceptedBy && job.acceptedBy.name) || 'the handyman'} from Job #${job.id.slice(-6)}?\n\nThe job re-releases to the board and they cannot re-claim it. Optional note:`
+    );
+    if (note === null) return; // cancelled
+    runAction(job.id, () => adminUnassignJob(job.id, note));
+  };
+
+  const handleRefund = (job) => {
+    if (!window.confirm(
+      `Refund Job #${job.id.slice(-6)} (S$${job.estimatedBudget || '?'}) to the customer and cancel the job?\n\nThis cannot be undone.`
+    )) return;
+    runAction(job.id, async () => {
+      const refund = await adminRefundJob(job.paymentIntentId);
+      if (!refund.success) return refund;
+      // Close the job + clear attention; if this half fails the row shows
+      // the error and 'Mark resolved' is the retry path.
+      return resolveAttention(job.id, { markCancelled: true });
+    });
+  };
 
   const handleSendLink = async (job) => {
     const confirmed = window.confirm(
@@ -80,12 +121,13 @@ const ActiveJobsTable = () => {
       {loading && <div className="flex justify-center py-8"><LoadingSpinner /></div>}
       {!loading && loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
       {!loading && !loadError && jobs.length === 0 && (
-        <p className="text-sm text-gray-500 dark:text-gray-400">No jobs are currently in progress.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">No active or flagged jobs.</p>
       )}
 
       <div className="space-y-3">
         {jobs.map((job) => {
           const state = sendState[job.id];
+          const busy = actionState[job.id] === 'busy';
           return (
             <div
               key={job.id}
@@ -100,7 +142,8 @@ const ActiveJobsTable = () => {
                   #{job.id.slice(-6)} · {job.serviceType || 'Job'}
                   {job.attentionNeeded && (
                     <span className="ml-2 inline-block text-xs font-bold text-red-700 dark:text-red-300 uppercase">
-                      Needs attention · {job.attentionNeeded.type === 'schedule_deadlock' ? 'schedule deadlock' : job.attentionNeeded.type}
+                      Needs attention · {String(job.attentionNeeded.type || '').replace(/_/g, ' ')}
+                      {job.attentionNeeded.at ? ` · since ${new Date(job.attentionNeeded.at).toLocaleDateString('en-SG')}` : ''}
                     </span>
                   )}
                 </p>
@@ -109,27 +152,75 @@ const ActiveJobsTable = () => {
                   Handyman: {(job.acceptedBy && job.acceptedBy.name) || '—'}
                 </p>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Schedule: {scheduleLabel(job)}
+                  {job.status !== 'in_progress' ? `Status: ${job.status} · ` : ''}Schedule: {scheduleLabel(job)}
                   {Array.isArray(job.scheduleHistory) && job.scheduleHistory.length > 0 &&
                     ` · ${job.scheduleHistory.length} change${job.scheduleHistory.length > 1 ? 's' : ''}`}
                 </p>
               </div>
-              <div className="mt-3 md:mt-0 shrink-0">
-                <button
-                  onClick={() => handleSendLink(job)}
-                  disabled={state === 'sending' || state === 'sent' || !job.customerPhone}
-                  className="w-full md:w-auto bg-primary text-black text-sm font-bold py-2 px-4 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Link sent ✓' : 'Send reschedule link'}
-                </button>
+              <div className="mt-3 md:mt-0 shrink-0 flex flex-col gap-2 md:items-end">
+                <div className="flex flex-wrap gap-2">
+                  {job.status === 'in_progress' && (
+                    <>
+                      <button
+                        onClick={() => handleSendLink(job)}
+                        disabled={state === 'sending' || state === 'sent' || !job.customerPhone}
+                        className="bg-primary text-black text-sm font-bold py-2 px-3 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Link sent ✓' : 'Send reschedule link'}
+                      </button>
+                      <button
+                        onClick={() => setSetTimeJob(job)}
+                        disabled={busy}
+                        className="bg-blue-600 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                      >
+                        Set time
+                      </button>
+                      <button
+                        onClick={() => handleUnassign(job)}
+                        disabled={busy || !job.handymanId}
+                        className="bg-orange-600 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50"
+                      >
+                        Force unassign
+                      </button>
+                    </>
+                  )}
+                  {job.paymentIntentId && job.paymentStatus === 'succeeded' && (
+                    <button
+                      onClick={() => handleRefund(job)}
+                      disabled={busy}
+                      className="bg-red-600 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      Refund
+                    </button>
+                  )}
+                  {job.needsAttention && (
+                    <button
+                      onClick={() => handleResolve(job)}
+                      disabled={busy}
+                      className="bg-gray-600 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50"
+                    >
+                      Mark resolved
+                    </button>
+                  )}
+                </div>
+                {typeof actionState[job.id] === 'string' && actionState[job.id] !== 'busy' && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{actionState[job.id]}</p>
+                )}
                 {state && state !== 'sending' && state !== 'sent' && (
-                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">{state}</p>
+                  <p className="text-xs text-red-600 dark:text-red-400">{state}</p>
                 )}
               </div>
             </div>
           );
         })}
       </div>
+
+      <AdminSetTimeModal
+        job={setTimeJob}
+        isOpen={!!setTimeJob}
+        onClose={() => setSetTimeJob(null)}
+        onApplied={() => { setSetTimeJob(null); fetchJobs(); }}
+      />
     </div>
   );
 };
