@@ -4424,10 +4424,15 @@ exports.sendScheduleLink = functions.https.onRequest(async (req, res) => {
       const jobShortId = String(jobId).slice(-6);
       const linkUrl = `${APP_URL}/pick-time?t=${token}`;
 
+      // Template var {{2}} is the RAW TOKEN, not the full URL: the Meta
+      // template hardcodes the domain (`.../pick-time?t={{2}}`) because
+      // Meta rejects templates whose variable is an entire URL. The
+      // freeform fallback has no such constraint and carries the full
+      // link built from APP_URL.
       const sendResult = await sendTwilioTemplateMessage(
         formatPhoneToWhatsApp(job.customerPhone),
         process.env.TWILIO_TEMPLATE_SCHEDULE_LINK,
-        { '1': jobShortId, '2': linkUrl },
+        { '1': jobShortId, '2': token },
         `📅 Need a different visit time for your ${job.serviceType || 'job'} (Job #${jobShortId})?\n\nPick a time that works for you here (valid 72 hours):\n${linkUrl}`
       );
       if (!sendResult.success) {

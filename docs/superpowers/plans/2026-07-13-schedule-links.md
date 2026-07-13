@@ -1414,7 +1414,7 @@ git show HEAD:firestore.rules | grep -c "scheduleLinks"   # expect ≥1
 
 ## Owner ops (user-run, after merge/deploy)
 
-1. **Meta/Twilio template `schedule_link`** (Utility): body e.g. `Need a different visit time for Job #{{1}}? Pick a time that works for you here (valid 72 hours): {{2}}` → set `TWILIO_TEMPLATE_SCHEDULE_LINK` in `functions/.env`. Freeform fallback covers sandbox until approval.
+1. **Meta/Twilio template `schedule_link`** (Utility, en): body `📅 Need a different visit time for your job (Job #{{1}})?\n\nPick a time that works for you here (valid for 72 hours):\nhttps://www.easydonehandyman.sg/pick-time?t={{2}}` — the domain is HARDCODED in the template (Meta rejects variable-only URLs) and `{{2}}` is the RAW TOKEN (the code passes the token, not the full URL). Samples: `{{1}}` = `AB12CD`, `{{2}}` = `4fz8K_x2mN0aQ7rLw9pT3g`. Set the Content SID as `TWILIO_TEMPLATE_SCHEDULE_LINK` in the PROD env file (`functions/.env.handyman-sg-3b418`, whose `APP_URL` matches the template domain). Dev keeps the var unset → freeform fallback with the full dev URL; submit a `schedule_link_dev` twin (dev domain) only if out-of-window dev sends become a need.
 2. **`APP_URL` in `functions/.env`** must be the real customer-facing origin (`https://easydonehandyman.sg`) — the decline auto-send and admin send both build `${APP_URL}/pick-time?t=...`.
 3. Deploy order: functions + rules together (`firebase deploy --only functions,firestore:rules` with the global binary), then hosting for the new page.
 
@@ -1442,5 +1442,6 @@ Setup: two test bookings from a WhatsApp-reachable customer phone — **Job A** 
 13. **Rules:** in the browser console as an admin, `getDoc(doc(db,'scheduleLinks','x'))` → permission denied.
 14. **Expiry:** manually set a link doc's `expiresAt` into the past → page shows "expired", doc flips to `expired` on next open.
 15. **Escrow untouched:** after all of the above, the job's `paymentStatus` and Stripe records are unchanged; nothing was released or refunded.
+16. **Template rendering (after Meta approval):** with `TWILIO_TEMPLATE_SCHEDULE_LINK` set in prod, repeat step 10 → the customer receives the APPROVED template (not freeform) with a single, working link `https://www.easydonehandyman.sg/pick-time?t=<token>` — no doubled URL (confirms `{{2}}` = raw token wiring).
 
 **Known not-covered until Stage 4 (don't file as bugs):** silent stalls have no automated escalation yet — a customer who ignores the link for 72h, or a handyman who never answers the pick, just times out quietly (prompt/link expire; no nudge, no admin email). Only an explicit handyman NO (deadlock) alerts the admin today. Scenario 12's sweep adds the nudge→queue ladders.
