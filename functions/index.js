@@ -2930,6 +2930,138 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           return res.status(200).json({ received: true, processed: true, action: 'schedule_declined', via: 'prompt' });
         }
 
+        if (verdict.prompt.type === 'schedule_pick_approval') {
+          const pick = verdict.prompt.payload || {};
+          const jobShortId = String(verdict.prompt.jobId).slice(-6);
+
+          // Same invalid-payload guard as schedule_approval: never let a
+          // legacy/malformed prompt 500 the webhook into a Twilio retry
+          // loop with a stranded open prompt.
+          if (!pick.pickedDate || !pick.pickedTime) {
+            console.error(`⚠️ schedule_pick_approval prompt ${verdict.prompt.id} has no usable payload — closing and forwarding`);
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: 'invalid_payload',
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'Pick prompt without payload — forwarded to admin' });
+          }
+
+          const displayDate = new Date(pick.pickedDate).toLocaleDateString('en-SG', {
+            weekday: 'long', day: 'numeric', month: 'long',
+          });
+
+          if (verdict.action === 'approve') {
+            const changeResult = await applyScheduleChange({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              newDate: pick.pickedDate,
+              newTime: pick.pickedTime,
+              actor: pick.pickedBy || 'customer',
+              via: 'customer_link',
+              note: pick.note,
+              promptId: verdict.prompt.id,
+            });
+
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: changeResult.outcome,
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+
+            if (changeResult.outcome === 'wrong_status') {
+              await sendTwilioMessage(
+                From,
+                `ℹ️ This job's schedule can no longer be changed (Job #${jobShortId}). If something looks wrong, contact easydonehandyman@gmail.com.`
+              );
+              return res.status(200).json({ received: true, processed: false, reason: 'Pick approval on non-in_progress job' });
+            }
+
+            try {
+              await revokeActiveLinks({ db: admin.firestore(), jobId: verdict.prompt.jobId });
+            } catch (revokeErr) {
+              console.error('⚠️ Link revocation after pick approval failed (continuing):', revokeErr);
+            }
+
+            await sendTwilioMessage(
+              From,
+              `✅ Confirmed: Job #${jobShortId} is set for *${displayDate}* at *${pick.pickedTime}*. See you then! 🔧`
+            );
+
+            // Tell the customer their picked time is locked in.
+            try {
+              const job = changeResult.job;
+              if (job && job.customerPhone) {
+                await sendTwilioMessage(
+                  formatPhoneToWhatsApp(job.customerPhone),
+                  `✅ Confirmed! Your visit for Job #${jobShortId} is set for *${displayDate}* at *${pick.pickedTime}* — the time you picked. See you then! 🔧`
+                );
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Customer pick-confirmation notice failed:', notifyErr);
+            }
+
+            return res.status(200).json({ received: true, processed: true, action: 'schedule_pick_applied', via: 'prompt' });
+          }
+
+          // Decline → schedule deadlock: the ping-pong cap. Straight to
+          // the admin queue, no third automated round (spec Scenario 4).
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: 'declined_deadlock',
+            });
+          } catch (markErr) {
+            console.error('⚠️ markAnswered failed (continuing):', markErr);
+          }
+
+          try {
+            await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update({
+              attentionNeeded: {
+                type: 'schedule_deadlock',
+                at: new Date().toISOString(),
+                promptId: verdict.prompt.id,
+              },
+            });
+          } catch (flagErr) {
+            console.error('⚠️ attentionNeeded flag write failed (continuing):', flagErr);
+          }
+
+          await sendAdminEmail(
+            `🔴 Schedule deadlock — Job #${jobShortId}`,
+            `<p>The handyman declined the customer's picked time (<strong>${escapeHtml(displayDate)} at ${escapeHtml(String(pick.pickedTime))}</strong>).</p>
+             <p>Job: ${escapeHtml(String(verdict.prompt.jobId))}</p>
+             <p>Per the lifecycle spec this is the ping-pong cap — please call both parties and set the time from the admin dashboard (or force-unassign / offer a refund).</p>`
+          );
+
+          await sendTwilioMessage(
+            From,
+            `ℹ️ Noted — you declined the customer's picked time for Job #${jobShortId}. Our team will step in to arrange the schedule with both of you.`
+          );
+
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+            const custPhone = jobSnap.exists ? jobSnap.data().customerPhone : null;
+            if (custPhone) {
+              await sendTwilioMessage(
+                formatPhoneToWhatsApp(custPhone),
+                `ℹ️ Your handyman couldn't make the time you picked for Job #${jobShortId}. We're arranging it — you'll hear from us shortly.`
+              );
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ Customer deadlock notice failed:', notifyErr);
+          }
+
+          return res.status(200).json({ received: true, processed: true, action: 'schedule_deadlock', via: 'prompt' });
+        }
+
         // A prompt type this deploy doesn't know how to dispatch —
         // defensive forward rather than a wrong action.
         console.warn(`Unknown prompt type '${verdict.prompt.type}' — forwarding to admin`);
