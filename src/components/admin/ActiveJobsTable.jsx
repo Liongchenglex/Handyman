@@ -1,0 +1,137 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { db } from '../../services/firebase/config';
+import LoadingSpinner from '../common/LoadingSpinner';
+import { sendScheduleLink } from '../../services/api/scheduleLink';
+
+/**
+ * ActiveJobsTable — admin view of every in_progress job (lifecycle
+ * spec Scenario 3 Trigger B + Scenario 12's future attention queue).
+ *
+ * The admin's one action here (v1) is "Send reschedule link": when a
+ * customer asks for a time change in free text (F3 inbox), the admin
+ * sends them the F6 pick-time link from the matching row. Rows flagged
+ * attentionNeeded (schedule deadlock) sort first and are highlighted.
+ *
+ * Mobile-friendly: stacked cards on small screens, table-like rows on
+ * md+, matching the dashboard's Tailwind idiom.
+ */
+const ActiveJobsTable = () => {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  // per-job send state: { [jobId]: 'sending' | 'sent' | <error string> }
+  const [sendState, setSendState] = useState({});
+
+  const fetchJobs = useCallback(async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const q = query(
+        collection(db, 'jobs'),
+        where('status', '==', 'in_progress'),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const snap = await getDocs(q);
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      // Attention-flagged rows first, then newest first (query order kept).
+      rows.sort((a, b) => (b.attentionNeeded ? 1 : 0) - (a.attentionNeeded ? 1 : 0));
+      setJobs(rows);
+    } catch (err) {
+      console.error('Error loading active jobs:', err);
+      setLoadError('Could not load active jobs. Please refresh.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  const handleSendLink = async (job) => {
+    const confirmed = window.confirm(
+      `Send ${job.customerName || 'the customer'} a WhatsApp link to pick a new visit time for Job #${job.id.slice(-6)}?\n\nThis replaces any earlier link for this job.`
+    );
+    if (!confirmed) return;
+    setSendState((s) => ({ ...s, [job.id]: 'sending' }));
+    const result = await sendScheduleLink(job.id);
+    setSendState((s) => ({ ...s, [job.id]: result.success ? 'sent' : (result.error || 'Failed') }));
+  };
+
+  const scheduleLabel = (job) => {
+    if (job.preferredTiming === 'Schedule' && job.preferredDate) {
+      return `${new Date(job.preferredDate).toLocaleDateString('en-SG')} ${job.preferredTime || ''}`.trim();
+    }
+    return 'ASAP — time not fixed';
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mt-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white">Active jobs</h2>
+        <button
+          onClick={fetchJobs}
+          className="text-sm font-medium text-primary underline"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {loading && <div className="flex justify-center py-8"><LoadingSpinner /></div>}
+      {!loading && loadError && <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>}
+      {!loading && !loadError && jobs.length === 0 && (
+        <p className="text-sm text-gray-500 dark:text-gray-400">No jobs are currently in progress.</p>
+      )}
+
+      <div className="space-y-3">
+        {jobs.map((job) => {
+          const state = sendState[job.id];
+          return (
+            <div
+              key={job.id}
+              className={`rounded-xl border p-4 md:flex md:items-center md:justify-between md:gap-4 ${
+                job.attentionNeeded
+                  ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
+                  : 'border-gray-200 dark:border-gray-700'
+              }`}
+            >
+              <div className="min-w-0">
+                <p className="font-medium text-gray-900 dark:text-white truncate">
+                  #{job.id.slice(-6)} · {job.serviceType || 'Job'}
+                  {job.attentionNeeded && (
+                    <span className="ml-2 inline-block text-xs font-bold text-red-700 dark:text-red-300 uppercase">
+                      Needs attention · {job.attentionNeeded.type === 'schedule_deadlock' ? 'schedule deadlock' : job.attentionNeeded.type}
+                    </span>
+                  )}
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                  Customer: {job.customerName || '—'} ({job.customerPhone || 'no phone'}) ·
+                  Handyman: {(job.acceptedBy && job.acceptedBy.name) || '—'}
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Schedule: {scheduleLabel(job)}
+                  {Array.isArray(job.scheduleHistory) && job.scheduleHistory.length > 0 &&
+                    ` · ${job.scheduleHistory.length} change${job.scheduleHistory.length > 1 ? 's' : ''}`}
+                </p>
+              </div>
+              <div className="mt-3 md:mt-0 shrink-0">
+                <button
+                  onClick={() => handleSendLink(job)}
+                  disabled={state === 'sending' || state === 'sent' || !job.customerPhone}
+                  className="w-full md:w-auto bg-primary text-black text-sm font-bold py-2 px-4 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {state === 'sending' ? 'Sending…' : state === 'sent' ? 'Link sent ✓' : 'Send reschedule link'}
+                </button>
+                {state && state !== 'sending' && state !== 'sent' && (
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">{state}</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+export default ActiveJobsTable;

@@ -5,6 +5,7 @@ import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { projectConfig } from '../config/firebaseProject';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import ActiveJobsTable from '../components/admin/ActiveJobsTable';
 
 /**
  * AdminDashboard Component
@@ -380,6 +381,10 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
+
+        {/* Active jobs — Scenario 3 Trigger B: send the customer a
+            pick-time link when they ask for a schedule change. */}
+        <ActiveJobsTable />
       </main>
     </div>
   );
