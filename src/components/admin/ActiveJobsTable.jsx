@@ -76,17 +76,31 @@ const ActiveJobsTable = () => {
     runAction(job.id, () => adminUnassignJob(job.id, note));
   };
 
-  const handleRefund = (job) => {
+  const handleRefund = async (job) => {
     if (!window.confirm(
       `Refund Job #${job.id.slice(-6)} (S$${job.estimatedBudget || '?'}) to the customer and cancel the job?\n\nThis cannot be undone.`
     )) return;
-    runAction(job.id, async () => {
-      const refund = await adminRefundJob(job.paymentIntentId);
-      if (!refund.success) return refund;
-      // Close the job + clear attention; if this half fails the row shows
-      // the error and 'Mark resolved' is the retry path.
-      return resolveAttention(job.id, { markCancelled: true });
-    });
+    setActionState((s) => ({ ...s, [job.id]: 'busy' }));
+    const refund = await adminRefundJob(job.paymentIntentId);
+    if (!refund.success) {
+      setActionState((s) => ({ ...s, [job.id]: refund.error || 'Refund failed' }));
+      return;
+    }
+    // Money is refunded from here on — the job MUST end up cancelled.
+    // A failure on this second write gets its own recovery button below
+    // ('Finish cancelling'); plain 'Mark resolved' would leave a refunded
+    // job open with no trace.
+    const closed = await resolveAttention(job.id, { markCancelled: true });
+    if (!closed.success) {
+      setActionState((s) => ({ ...s, [job.id]: 'refund_orphaned' }));
+      return;
+    }
+    setActionState((s) => ({ ...s, [job.id]: undefined }));
+    fetchJobs();
+  };
+
+  const handleFinishCancelling = (job) => {
+    runAction(job.id, () => resolveAttention(job.id, { markCancelled: true }));
   };
 
   const handleSendLink = async (job) => {
@@ -128,6 +142,7 @@ const ActiveJobsTable = () => {
         {jobs.map((job) => {
           const state = sendState[job.id];
           const busy = actionState[job.id] === 'busy';
+          const refundOrphaned = actionState[job.id] === 'refund_orphaned';
           return (
             <div
               key={job.id}
@@ -184,13 +199,21 @@ const ActiveJobsTable = () => {
                       </button>
                     </>
                   )}
-                  {job.paymentIntentId && job.paymentStatus === 'succeeded' && (
+                  {job.paymentIntentId && job.paymentStatus === 'succeeded' && !refundOrphaned && (
                     <button
                       onClick={() => handleRefund(job)}
                       disabled={busy}
                       className="bg-red-600 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                     >
                       Refund
+                    </button>
+                  )}
+                  {refundOrphaned && (
+                    <button
+                      onClick={() => handleFinishCancelling(job)}
+                      className="bg-red-700 text-white text-sm font-bold py-2 px-3 rounded-lg hover:bg-red-800 transition-colors"
+                    >
+                      Finish cancelling
                     </button>
                   )}
                   {job.needsAttention && (
@@ -203,8 +226,13 @@ const ActiveJobsTable = () => {
                     </button>
                   )}
                 </div>
-                {typeof actionState[job.id] === 'string' && actionState[job.id] !== 'busy' && (
+                {typeof actionState[job.id] === 'string' && actionState[job.id] !== 'busy' && actionState[job.id] !== 'refund_orphaned' && (
                   <p className="text-xs text-red-600 dark:text-red-400">{actionState[job.id]}</p>
+                )}
+                {refundOrphaned && (
+                  <p className="text-xs text-red-600 dark:text-red-400">
+                    Refunded, but the job could not be closed — tap "Finish cancelling".
+                  </p>
                 )}
                 {state && state !== 'sending' && state !== 'sent' && (
                   <p className="text-xs text-red-600 dark:text-red-400">{state}</p>
