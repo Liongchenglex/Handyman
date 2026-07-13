@@ -12,6 +12,26 @@ import { projectConfig } from '../../config/firebaseProject';
 
 const FUNCTIONS_BASE_URL = projectConfig.functionsBaseUrl;
 
+/** Mirrors the server's MAX_HORIZON_DAYS in functions/scheduleService.js. */
+const MAX_HORIZON_DAYS = 90;
+
+/**
+ * min/max values for proposal <input type="date"> fields, in the
+ * handyman's local calendar. The server re-validates at UTC-day
+ * granularity (local SGT "today" is never behind UTC "today"), so
+ * these bounds only exist to stop obviously-invalid picks before
+ * the claim/proposal round-trip.
+ *
+ * @returns {{min: string, max: string}} yyyy-mm-dd strings
+ */
+export const getProposalDateBounds = () => {
+  const toInputValue = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  const max = new Date(now.getTime() + MAX_HORIZON_DAYS * 24 * 3600 * 1000);
+  return { min: toInputValue(now), max: toInputValue(max) };
+};
+
 /**
  * Propose a (new) visit time for a job the current handyman owns.
  *

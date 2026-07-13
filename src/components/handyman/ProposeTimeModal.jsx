@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { proposeSchedule } from '../../services/api/jobSchedule';
+import { proposeSchedule, getProposalDateBounds } from '../../services/api/jobSchedule';
 
 /**
  * ProposeTimeModal
@@ -56,6 +56,9 @@ const ProposeTimeModal = ({ job, isOpen, onClose, onProposed }) => {
 
   const hasCurrent = job.preferredTiming === 'Schedule' && job.preferredDate;
 
+  // Date-picker bounds (today … +90d) matching the server's validation.
+  const dateBounds = getProposalDateBounds();
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-md w-full p-6">
@@ -80,6 +83,8 @@ const ProposeTimeModal = ({ job, isOpen, onClose, onProposed }) => {
         <input
           id="propose-date"
           type="date"
+          min={dateBounds.min}
+          max={dateBounds.max}
           value={date}
           onChange={(e) => setDate(e.target.value)}
           className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"

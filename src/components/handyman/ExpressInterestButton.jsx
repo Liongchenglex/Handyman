@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { sendJobAcceptanceNotification } from '../../services/whatsappService';
-import { proposeSchedule } from '../../services/api/jobSchedule';
+import { proposeSchedule, getProposalDateBounds } from '../../services/api/jobSchedule';
 
 /**
  * ExpressInterestButton Component
@@ -45,6 +45,8 @@ const ExpressInterestButton = ({
   const isAsapJob = job.preferredTiming !== 'Schedule';
   const [proposedDate, setProposedDate] = useState('');
   const [proposedTime, setProposedTime] = useState('');
+  // Date-picker bounds (today … +90d) matching the server's validation.
+  const dateBounds = getProposalDateBounds();
 
   // A job can only be claimed while it is still open ('pending') and unassigned.
   // If it already has a handymanId / a non-pending status, interest was already
@@ -148,18 +150,28 @@ const ExpressInterestButton = ({
       // Server-side it messages the customer and opens the approval
       // prompt. A failure here never un-claims the job — the job page's
       // "Set visit time" button is the retry path.
+      let proposalSent = true;
       if (isAsapJob) {
         try {
           const proposalResult = await proposeSchedule(job.id, proposedDate, proposedTime.trim(), '');
-          if (!proposalResult.success) {
+          proposalSent = !!proposalResult.success;
+          if (!proposalSent) {
             console.error('❌ Visit-time proposal failed (retry from job page):', proposalResult.error);
           }
         } catch (proposalErr) {
+          proposalSent = false;
           console.error('❌ Visit-time proposal failed (retry from job page):', proposalErr);
         }
       }
 
-      alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
+      // The handyman must know when the job is theirs but the customer
+      // was never asked about the time — otherwise the job sits in the
+      // exact "accepted but timeless" state Scenario 4 exists to prevent.
+      if (proposalSent) {
+        alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
+      } else {
+        alert(`Job ${job.id} is assigned to you, but we could not send your proposed visit time to the customer. Please tap "Set visit time" on the job page to send it again.`);
+      }
 
       // Execute callbacks (board/card cleanup) before navigating away.
       if (onJobSelect) {
@@ -242,6 +254,8 @@ const ExpressInterestButton = ({
                 <input
                   id="asap-date"
                   type="date"
+                  min={dateBounds.min}
+                  max={dateBounds.max}
                   value={proposedDate}
                   onChange={(e) => setProposedDate(e.target.value)}
                   className="w-full mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
