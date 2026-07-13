@@ -11,6 +11,7 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import LoadingSpinner from './components/common/LoadingSpinner';
 import ProtectedRoute from './components/common/ProtectedRoute';
 import HomePage from './pages/HomePage';
+import PickTime from './pages/PickTime';
 
 // Route-level code splitting: each chunk loads on first navigation, keeping
 // the initial bundle small. HomePage is eagerly imported because it's the
@@ -56,6 +57,7 @@ function AppContent() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/request-job" element={<CustomerJobRequest />} />
+            <Route path="/pick-time" element={<PickTime />} />
             <Route path="/help" element={<HelpContact />} />
             <Route path="/contact" element={<HelpContact />} />
             <Route path="/handyman-auth" element={<HandymanAuthPage />} />
