@@ -1418,13 +1418,29 @@ git show HEAD:firestore.rules | grep -c "scheduleLinks"   # expect ≥1
 2. **`APP_URL` in `functions/.env`** must be the real customer-facing origin (`https://easydonehandyman.sg`) — the decline auto-send and admin send both build `${APP_URL}/pick-time?t=...`.
 3. Deploy order: functions + rules together (`firebase deploy --only functions,firestore:rules` with the global binary), then hosting for the new page.
 
-## E2E checklist (user-run)
+## Combined E2E walkthrough — Scenarios 3 + 4 in one run (user-run)
 
-1. **Decline → link:** propose a time from the handyman job page → reply NO as the customer → receive the pick-time link → open it (context loads, current schedule shown) → pick a date/time → handyman receives "customer picked … Approve/Decline".
-2. **Pick approved:** handyman replies YES → job's `preferredDate/Time` updated, `scheduleHistory` entry has `via: 'customer_link'`, link doc `status: 'used'`, customer gets the confirmation.
-3. **Pick declined (deadlock):** handyman replies NO → job doc gains `attentionNeeded.type === 'schedule_deadlock'`, admin email arrives, AdminDashboard row highlights red, customer gets "we're arranging it".
-4. **Single-use:** open the same link again → "already been used"; submit again via curl → 410.
-5. **Supersede:** admin sends a link, then sends another → first link's doc is `revoked`, first URL shows "used or replaced".
-6. **Admin path:** AdminDashboard → Active jobs → Send reschedule link → customer receives template/fallback with working URL.
-7. **Rules:** in the browser console as an admin, `getDoc(doc(db,'scheduleLinks','x'))` → permission denied.
-8. **Expiry:** manually set a link doc's `expiresAt` into the past → page shows "expired", doc flips to `expired` on next open.
+Setup: two test bookings from a WhatsApp-reachable customer phone — **Job A** with ASAP timing (Scenario 4) and **Job B** with a scheduled date (Scenario 3) — plus a verified test handyman (with a WhatsApp-reachable phone in `handymen/{id}.phone`) and an admin login. Steps 4–7 exercise the shared decline→pick machinery once via Job A; step 10 re-enters it from Scenario 3's admin path, so nothing is tested twice.
+
+**Part 1 — Scenario 4: ASAP job (Job A)**
+1. **Accept requires a time:** on the job board, Express Interest on Job A → the modal shows the required date/time picker; Confirm stays disabled until both are filled; the date input is bounded today…+90 days.
+2. **Claim + proposal together:** confirm → job assigned; the customer receives the acceptance message AND the proposal ("proposes to visit on … Reply YES/NO"); the handyman's success alert names the proposal. A `schedule_approval` prompt is open on the job.
+3. **Approve path:** customer replies YES → `preferredDate/Time` written, `preferredTiming` becomes `Schedule`, `scheduledFromAsapAt` stamped, `scheduleHistory` entry `via: 'whatsapp_reply'`, both parties get confirmations.
+4. **Decline → auto-link:** from the job page tap "Propose new time" and send a second proposal, then reply NO as the customer → customer receives the pick-time link (in-session freeform, no template needed); handyman gets "they've been sent a link to pick a time".
+5. **Customer picks:** open the link → context loads (service, handyman first name, current schedule); pick a date/time + note → success screen ("will confirm your picked time"). Link doc flips to `used` with `pickedDate/pickedTime`; any open `schedule_approval` prompt is superseded.
+6. **Handyman approves the pick:** handyman receives "The customer picked … Reply YES/NO"; reply YES → schedule applied, `scheduleHistory` entry `via: 'customer_link'`, active links revoked, BOTH parties get confirmations.
+7. **Deadlock (run on a fresh decline round):** repeat steps 4–5, then the handyman replies NO → job gains `attentionNeeded.type === 'schedule_deadlock'`, admin email arrives, the AdminDashboard Active-jobs row turns red "Needs attention", handyman gets "our team will step in", customer gets "we're arranging it". Confirm NO further automated proposal round starts (ping-pong cap).
+
+**Part 2 — Scenario 3: scheduled job (Job B)**
+8. **Handyman-initiated reschedule:** job page → "Propose new time" (date bounded, note optional) → customer receives the proposal → reply YES → schedule updated, `completionPollSentAt` cleared, both confirmed.
+9. **Trigger B, customer asks in free text:** as the customer, send "can we change the time?" → it lands in `inboundMessages` + the F3 admin email (no auto-reply beyond the rate-limited ack).
+10. **Admin sends the link:** AdminDashboard → Active jobs → find Job B → "Send reschedule link" (confirm dialog) → customer receives the `schedule_link` template (or freeform fallback pre-approval) with a working URL → pick → handyman approves → applied. If the handyman had an open proposal at pick time, verify it shows as `superseded`.
+
+**Part 3 — Link security (any job)**
+11. **Single-use:** re-open a used link → "already been used"; re-submit via curl → 410.
+12. **Supersede:** admin sends a link, then sends another → first link doc `revoked`, first URL shows "used or replaced".
+13. **Rules:** in the browser console as an admin, `getDoc(doc(db,'scheduleLinks','x'))` → permission denied.
+14. **Expiry:** manually set a link doc's `expiresAt` into the past → page shows "expired", doc flips to `expired` on next open.
+15. **Escrow untouched:** after all of the above, the job's `paymentStatus` and Stripe records are unchanged; nothing was released or refunded.
+
+**Known not-covered until Stage 4 (don't file as bugs):** silent stalls have no automated escalation yet — a customer who ignores the link for 72h, or a handyman who never answers the pick, just times out quietly (prompt/link expire; no nudge, no admin email). Only an explicit handyman NO (deadlock) alerts the admin today. Scenario 12's sweep adds the nudge→queue ladders.
