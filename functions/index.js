@@ -3843,14 +3843,39 @@ exports.stuckStateSweep = functions.pubsub
     const db = admin.firestore();
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
-    const escalations = []; // {jobId, type, detail} for the digest
+    const escalations = []; // {jobId, type, detail, customerName, handymanName, ageDays} for the digest
     const counts = { nudged: 0, escalated: 0, renewedLinks: 0, fanouts: 0 };
+
+    // Types describing a persistent job state escalate ONCE — after the
+    // admin resolves, the sweep must not re-flag the same stall the next
+    // morning (prompt/link types are naturally once-only: escalation
+    // mutates their doc out of the query).
+    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled'];
 
     const escalate = async (jobId, type, detail, promptId = null) => {
       try {
-        await db.collection('jobs').doc(jobId)
-          .update(buildAttentionUpdate(type, { detail, promptId, nowIso }));
-        escalations.push({ jobId, type, detail });
+        const jobRef = db.collection('jobs').doc(jobId);
+        const snap = await jobRef.get();
+        if (!snap.exists) return;
+        const job = snap.data();
+        const marks = job.sweepNudges || {};
+        if (ONCE_ONLY_TYPES.includes(type) && marks[`${type}_escalated`]) return;
+        const update = buildAttentionUpdate(type, { detail, promptId, nowIso });
+        if (ONCE_ONLY_TYPES.includes(type)) {
+          update[`sweepNudges.${type}_escalated`] = nowIso;
+        }
+        await jobRef.update(update);
+        escalations.push({
+          jobId,
+          type,
+          detail,
+          customerName: job.customerName || '—',
+          handymanName: (job.acceptedBy && job.acceptedBy.name) || '—',
+          ageDays: (() => {
+            const created = job.createdAt && (typeof job.createdAt.toMillis === 'function' ? job.createdAt.toMillis() : Date.parse(job.createdAt));
+            return Number.isFinite(created) ? Math.round((nowMs - created) / 86400000) : null;
+          })(),
+        });
         counts.escalated++;
       } catch (err) {
         console.error(`⚠️ Sweep escalation write failed for job ${jobId} (${type}):`, err);
@@ -3910,16 +3935,22 @@ exports.stuckStateSweep = functions.pubsub
         .where('expiresAt', '<=', nowIso)
         .limit(100)
         .get();
+      if (snap.size === 100) console.warn('⚠️ Sweep link query hit the 100 cap — rerun tomorrow covers the rest');
       for (const doc of snap.docs) {
         const link = doc.data();
         const verdict = evaluateLink(link, nowMs);
         const jobShortId = String(link.jobId || '').slice(-6);
         if (verdict === 'renew') {
           try {
-            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
-            // Job must still be schedulable; otherwise just drop the link.
             const jobSnap = await db.collection('jobs').doc(link.jobId).get();
-            if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') continue;
+            if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') {
+              // Job no longer schedulable — just retire the link.
+              await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+              continue;
+            }
+            // No manual pre-expire: issueScheduleLink revokes prior actives,
+            // so a crash before this point leaves the old link queryable and
+            // tomorrow's run retries the renewal.
             const { token } = await issueScheduleLink({
               db, jobId: link.jobId, customerPhone: link.customerPhone, createdBy: 'system_nudge',
             });
@@ -3950,6 +3981,7 @@ exports.stuckStateSweep = functions.pubsub
     try {
       const inProgress = await db.collection('jobs')
         .where('status', '==', 'in_progress').limit(300).get();
+      if (inProgress.size === 300) console.warn('⚠️ Sweep in_progress query hit the 300 cap — rerun tomorrow covers the rest');
       for (const doc of inProgress.docs) {
         const job = doc.data();
         if (job.preferredTiming === 'Schedule' || job.scheduledFromAsapAt) continue;
@@ -3967,9 +3999,11 @@ exports.stuckStateSweep = functions.pubsub
             const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
             const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
             if (hmPhone) {
-              await sendTwilioMessage(
+              await sendTwilioTemplateMessage(
                 formatPhoneToWhatsApp(hmPhone),
-                `⏰ Job #${doc.id.slice(-6)} still has no confirmed visit time. Please tap "Set visit time" on the job page so the customer can approve it.`
+                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+                { '1': 'Set the visit time from the job page so the customer can approve it', '2': doc.id.slice(-6) },
+                `⏰ Job #${doc.id.slice(-6)} still has no confirmed visit time. Please tap "Set visit time" on the job page so the customer can approve it.`,
               );
             }
             await doc.ref.update({ 'sweepNudges.asap_no_time': nowIso });
@@ -3988,6 +4022,7 @@ exports.stuckStateSweep = functions.pubsub
     try {
       const pending = await db.collection('jobs')
         .where('status', '==', 'pending').limit(300).get();
+      if (pending.size === 300) console.warn('⚠️ Sweep pending query hit the 300 cap — rerun tomorrow covers the rest');
       for (const doc of pending.docs) {
         const job = doc.data();
         const { verdict, kind } = evaluateUnclaimedJob(job, nowMs);
@@ -4020,12 +4055,12 @@ exports.stuckStateSweep = functions.pubsub
     // ---- One digest email per run (free SMTP; deadlocks already email immediately) ----
     if (escalations.length > 0) {
       const rows = escalations.map((e) =>
-        `<tr><td>${escapeHtml(String(e.jobId).slice(-6))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.detail || '')}</td></tr>`
+        `<tr><td>${escapeHtml(String(e.jobId).slice(-6))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.customerName)} / ${escapeHtml(e.handymanName)}</td><td>${e.ageDays === null ? '—' : `${e.ageDays}d`}</td><td>${escapeHtml(e.detail || '')}</td></tr>`
       ).join('');
       await sendAdminEmail(
         `⚠️ Attention needed: ${escalations.length} stuck job${escalations.length > 1 ? 's' : ''}`,
         `<p>The daily sweep escalated ${escalations.length} job(s) to the attention queue:</p>
-         <table border="1" cellpadding="6"><tr><th>Job</th><th>Type</th><th>Why</th></tr>${rows}</table>
+         <table border="1" cellpadding="6"><tr><th>Job</th><th>Type</th><th>Customer / Handyman</th><th>Age</th><th>Why</th></tr>${rows}</table>
          <p>Resolve them from the admin dashboard's Active jobs section.</p>`
       );
     }
