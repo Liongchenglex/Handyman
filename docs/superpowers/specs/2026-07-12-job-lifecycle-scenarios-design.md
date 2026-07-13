@@ -25,8 +25,8 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 | 0 | Capture escrow at booking | **Bug/gap** — capture only happens at fund release; auth expires at ~7 days; fan-out trigger likely never fires |
 | 1 | Happy flow (done on schedule) | Built |
 | 2 | Handyman cancels → re-release | Built (2026-07-11) |
-| 3 | Reschedule | New |
-| 4 | ASAP job: fixing the visit time | New (also fixes ASAP poll/date-gate blind spot) |
+| 3 | Reschedule | Handyman-proposal direction built (2026-07-13); customer-pick direction (F6 links) documented, not built |
+| 4 | ASAP job: fixing the visit time | Accept-with-proposal built (2026-07-13); decline→link flow documented, not built (also fixes ASAP poll/date-gate blind spot) |
 | 5 | Same-day "running late" notice | New |
 | 6 | Handyman swap after inspection (late lifecycle) | Partial — cancel blocked once completion poll sent |
 | 7 | Handyman no-show | New |
@@ -66,7 +66,7 @@ Baseline: from Scenario 0 onward, money is captured at booking and **held** in t
 
 ```
 jobs/{jobId}/prompts/{promptId}
-  type: reschedule_approval | visit_time_approval | second_visit_approval |
+  type: schedule_approval | schedule_pick_approval | second_visit_approval |
         completion_confirmation | cancel_confirmation | no_show_choice | ...
   toPhone (E.164), toRole: customer | handyman
   question (rendered text), options: { "1": <action>, "YES": <action>, ... }
@@ -88,7 +88,22 @@ The inbound webhook router resolves every reply **against the sender's open prom
 
 The sweep engine for all of this is Scenario 12 — F5 is the policy, 12 is the machinery.
 
-**Template pack** (all Utility; submit early; freeform fallback until approved, matching existing pattern): `reschedule_proposal`, `visit_time_proposal` (ASAP), `second_visit_proposal`, `running_late_notice`, `no_show_choice`, `customer_cancel_confirm`, `refund_processed`, `prompt_nudge`.
+**F6 — Secure schedule links (customer deep-link picker).** Customers have no accounts, so when *they* need to choose a visit time (Scenario 3 Trigger B, or after declining a handyman's proposal), we send a one-time, job-scoped URL to a new public `/pick-time` page instead of making them dictate times over free text. The link itself is the credential; its design assumes URLs leak:
+
+```
+scheduleLinks/{tokenHash}            // SHA-256 of the token — raw token is never stored
+  jobId, customerPhone
+  purpose: 'pick_time'
+  status: active | used | revoked | expired
+  createdAt, expiresAt (72h), createdBy ('system_decline' | admin uid), usedAt
+```
+
+- **Token**: 128-bit crypto-random, delivered as `https://<app>/pick-time?t=<token>`. Firestore holds only the hash, so a DB read leak yields no usable links; a leaked URL is scoped to one job, one action (picking a time), 72 hours.
+- **Server-mediated only**: the page calls two rate-limited Cloud Function endpoints — one validates the token (hash exists, `active`, unexpired, job still `in_progress`) and returns minimal context (job title, current schedule, handyman first name); one submits the pick (validated with the same `validateScheduleProposal` rules: strict date, min today, max +90d, bounded time string). Firestore rules deny ALL client access to `scheduleLinks`; the token grants nothing beyond these two endpoints.
+- **Single-use and revocable**: submitting consumes the link in the same transaction that opens the follow-up prompt. Issuing a new link revokes prior active ones for the job, and applying any `scheduleChange` (F4) revokes open links — a stale link can never resurrect a settled schedule.
+- **The pick never applies directly** — it opens a roles-flipped `schedule_pick_approval` prompt to the handyman (see Scenario 3). Links move no money (§2b holds).
+
+**Template pack** (all Utility; submit early; freeform fallback until approved, matching existing pattern): `schedule_proposal` (shared by Scenario 3 reschedules and Scenario 4 ASAP time-fixing — shipped, env `TWILIO_TEMPLATE_SCHEDULE_PROPOSAL`), `schedule_link` (carries the F6 URL — required because admin-triggered sends can fall outside the 24h session window), `second_visit_proposal`, `running_late_notice`, `no_show_choice`, `customer_cancel_confirm`, `refund_processed`, `prompt_nudge`.
 
 ## 4. Scenarios
 
@@ -143,37 +158,55 @@ V1 addition on top of what shipped: after a re-claim, the new handyman is prompt
 
 ### Scenario 3 — Reschedule (either direction, customer approves)
 
-**Trigger.** Handyman needs a different time (initiates in-app), or customer asks (arrives as free text → F3 → admin can initiate on their behalf; a customer-initiated in-WA flow is v2).
+**Trigger.** Handyman needs a different time (initiates in-app), or customer asks (arrives as free text → F3 → admin sends the customer an F6 schedule link so they pick the time themselves; auto-detecting reschedule intent from free text is v2).
 
-**Solution.** Handyman taps "Propose new time" on the job (date+time picker + optional note) → `proposeSchedule` [F] opens a `reschedule_approval` prompt and sends the customer a quick-reply template ("Ah Seng proposes Tue 15 Jul, 2pm — Approve / Decline"). Approve → F4 `scheduleChange` applies it, both parties get confirmations. Decline → handyman notified with the option to keep the original slot or cancel (Scenario 2). Prompt expires in 48h → nudge → admin (Scenario 12). A new proposal supersedes an open one.
+**Solution — handyman-initiated (Trigger A).** Handyman taps "Propose new time" on the job (date+time picker + optional note) → `proposeSchedule` [F] opens a `schedule_approval` prompt and sends the customer a quick-reply template ("Ah Seng proposes Tue 15 Jul, 2pm — Approve / Decline"). Approve → F4 `scheduleChange` applies it, both parties get confirmations. **Decline → the customer is immediately sent an F6 schedule link** ("No problem — pick a time that works for you: <link>"; rides the free 24h session window since the customer just replied) and the handyman is notified ("Customer declined; they've been asked to pick a time"). Prompt expires in 48h → nudge → admin (Scenario 12). A new proposal supersedes an open one and revokes any active link.
+
+**Solution — customer-initiated (Trigger B).** Free text lands in F3 (admin inbox) as today. The admin, from the AdminDashboard **Active-jobs table** (new: lists `in_progress` jobs with customer, handyman, current schedule, and schedule state), clicks **"Send reschedule link"** → admin-authed endpoint issues an F6 token (revoking prior ones) and sends the customer the `schedule_link` template. Admin stays the bottleneck for v1 by design.
+
+**Customer pick → handyman approves (both triggers converge here).** The customer's pick on `/pick-time` does NOT apply directly — it opens a roles-flipped `schedule_pick_approval` prompt to the **handyman** ([WA] "Customer picked Tue 15 Jul, 2pm — Approve / Decline"; the job page also shows the pending pick read-only). Approve → F4 `scheduleChange` (history records `via: 'customer_link'`) → both parties confirmed. **Handyman declines → straight to the admin "Attention needed" queue — no third automated round, ever.** The bounded worst case is: handyman proposal → customer decline → customer pick → handyman decision → done or admin.
 
 **Flow.**
 ```
 ── How a reschedule starts (or doesn't) ──────────────────────────────
 Trigger A: handyman wants a new time
-      → [A] "Propose new time" ──────────────────────────────┐
-Trigger B: customer asks for a change                        │
-      → [WA] free text → F3 → admin inbox + handyman notified│
-      ├─ handyman acts within 24h → proposes [A] ────────────┤
-      └─ handyman silent → [ADM] applies scheduleChange      │
-             admin-as-actor (after phone coordination) — done│
-Nobody proposes and the date passes anyway (silent handyman) │
-      → day after preferredDate: completion poll fires [1]   │
-      → customer replies "never came" → Scenario 7 takes over│
-── Proposal → approval ──────────────────────────────────────▼───────
+      → [A] "Propose new time" → proposal→approval below
+Trigger B: customer asks for a change
+      → [WA] free text → F3 → admin inbox
+      → [ADM] Active-jobs table: "Send reschedule link"
+      → [F] issue F6 token → [WA] customer: schedule_link template
+      → customer pick→approval below
+Nobody moves and the date passes anyway (silent handyman)
+      → day after preferredDate: completion poll fires [1]
+      → customer replies "never came" → Scenario 7 takes over
+── Proposal → approval (handyman proposed) ──────────────────────────
 Handyman [A] "Propose new time" (new date/time + note)
       → [F] proposeSchedule: open prompt → [WA] customer: Approve / Decline
       ├─ Approve → [F] scheduleChange: preferredDate/Time updated,
       │       completionPollSentAt cleared, scheduleHistory appended
       │       → [WA] both parties: "New time confirmed: Tue 15 Jul, 2pm"
       │       → continues at Scenario 1 on the new date
-      ├─ Decline → [WA] handyman: "Customer declined" → keep original or cancel [2]
+      ├─ Decline → [F] issue F6 link → [WA] customer: "Pick a time: <link>"
+      │       + [WA] handyman: "Customer declined; they're picking a time"
+      │       → customer pick→approval below
       └─ No reply 48h → [WA] nudge once → still nothing → admin queue [12]
+── Customer pick → approval (roles flipped) ─────────────────────────
+Customer opens /pick-time (token validated server-side)
+      → picks date/time (+ note) → [F] submitSchedulePick:
+        link consumed + schedule_pick_approval prompt opened (transaction)
+      → [WA] handyman: "Customer picked Tue 15 Jul, 2pm — Approve / Decline"
+      ├─ Approve → [F] scheduleChange (via 'customer_link')
+      │       → [WA] both parties confirmed → Scenario 1 on the new date
+      ├─ Decline → admin queue [12] (schedule deadlock — no third round)
+      │       → [WA] customer: "We're arranging it — you'll hear from us"
+      ├─ No reply → 24h nudge → 48h admin queue [12]
+      └─ Link unused 72h → expires → nudge once → admin queue [12]
 ```
 
-**Reconciliation when the handyman doesn't initiate (F5).** A reschedule is inherently voluntary — nobody *must* propose one — so non-initiation matters in two specific cases:
-- **The customer asked for a change** (arrives as free text via F3): the admin sees it in the inbound queue and, if the handyman doesn't act on a forwarded request within 24h, applies the change directly via admin-as-actor `scheduleChange` (typically after a phone call) — approval prompts are skipped, actor recorded as `via: 'admin'`.
-- **A proposal is addressed TO the handyman** (roles-flipped reschedules from Scenarios 7/8): same ladder as customers get — 24h nudge, 48h admin queue; the admin can accept/decline on the handyman's behalf or force-unassign (Scenario 2 machinery) if the handyman has gone dark.
+**Reconciliation when nobody initiates (F5).** A reschedule is inherently voluntary — nobody *must* propose one — so non-initiation matters in three specific cases:
+- **The customer asked for a change** (free text via F3): the admin sends the F6 link (Trigger B above). If the customer never uses it, the 72h expiry → nudge → admin queue ladder catches it.
+- **A pick or proposal is addressed TO the handyman** (`schedule_pick_approval` here; roles-flipped reschedules from Scenarios 7/8): 24h nudge, 48h admin queue; the admin can accept/decline on the handyman's behalf or force-unassign (Scenario 2 machinery) if the handyman has gone dark.
+- **Schedule deadlock** (handyman declined the customer's pick): lands in the admin queue immediately — this is the ping-pong cap. Admin forcing actions as in Scenario 4's ladder.
 
 ---
 
@@ -183,13 +216,17 @@ Handyman [A] "Propose new time" (new date/time + note)
 
 **Solution.** Reuse Scenario 3's machinery, but the initial proposal is **part of the accept step itself**: for ASAP jobs, the Express Interest confirmation modal includes a required date/time picker — the handyman cannot claim the job without proposing a visit time, and claiming submits the claim and the proposal together. That eliminates the "accepted but never proposed" window at the source. On customer approval, `scheduleChange` writes the concrete `preferredDate`/`preferredTime` and marks `scheduledFromAsapAt`, which makes the poll and date gate work normally from then on. The customer's acceptance message names the proposed time and asks for the approval right away.
 
-**Reconciliation (F5) — now only needed for the post-decline stall** (customer declined the proposed slot and the handyman never re-proposes), since acceptance itself guarantees the first proposal:
+**Decline flow (shared with Scenario 3).** Customer declines the proposed slot → the customer is immediately sent an F6 schedule link to pick their own time, and the pick goes back to the handyman as a `schedule_pick_approval` prompt — Scenario 3's "customer pick → approval" branch verbatim. This replaces the old "handyman re-proposes, max 3 rounds" loop: the sequence is bounded at one handyman proposal → one customer pick → handyman decision → done or admin.
 
-| Clock (from customer's decline) | Action |
+**How the admin steps in (F5).** Exactly three doors, all landing in the same "Attention needed" queue (Scenario 12 + Active-jobs table flag + F3 email):
+
+| Door | When |
 |---|---|
-| 0h | [WA] handyman notified of decline + in-app banner: "Propose another time" |
-| +24h | [WA] `prompt_nudge` to the handyman |
-| +48h | Admin "Attention needed" queue — forcing actions: set the time admin-as-actor (after calling both parties), force-unassign → re-release (Scenario 2 machinery, cancellationCount incremented), or offer the customer cancel + refund [9]. Customer gets a "we're on it" notice. |
+| Schedule deadlock | Handyman declines the customer's pick — **immediate**, no further automated rounds |
+| Link ignored | Customer declined but never used the link — 72h expiry → one nudge → queue |
+| Handyman silent | No reply to the customer's pick — 24h `prompt_nudge` → 48h queue |
+
+Forcing actions (all admin-as-actor, recorded `via: 'admin'` in `scheduleHistory`): set the time directly after phoning both parties; force-unassign → re-release (Scenario 2 machinery, cancellationCount incremented); or offer the customer cancel + refund [9]. The customer gets a "we're arranging it" notice when a job enters the queue.
 
 **Flow.**
 ```
@@ -197,8 +234,11 @@ ASAP job: [A] accept modal REQUIRES proposed date/time → claim + proposal subm
       → [F] proposeSchedule → [WA] customer: Approve / Decline
       ├─ Approve → [F] scheduleChange: concrete date set (job now behaves as scheduled)
       │       → continues at Scenario 1
-      ├─ Decline → handyman proposes another slot (max 3 open rounds, then admin)
-      └─ No proposal → F5 ladder above (24h nudge → 48h admin queue → 72h forcing action)
+      ├─ Decline → [F] issue F6 link → [WA] customer picks own time
+      │       → [WA] handyman: Approve / Decline (Scenario 3 pick→approval branch)
+      │       ├─ Approve → [F] scheduleChange → Scenario 1
+      │       └─ Decline / silent / link unused → admin doors above
+      └─ No reply 48h → nudge → admin queue [12]
 ```
 
 ---
@@ -333,9 +373,10 @@ Visit 1 done, more work needed
 | Re-released, never re-claimed | same, with `reassignmentCount > 0`, age > 2d | fan-out nudge | 4d: admin |
 | Completion poll unanswered | prompt `open` > 48h | resend poll once | 5d: admin decides (call customer / release / refund) |
 | Any other open prompt expired | F2 `expiresAt` passed | one nudge template | admin queue |
-| ASAP job, no confirmed time | accepted, no `scheduledFromAsapAt`, no open `visit_time` prompt (i.e. proposal declined/expired, none re-opened) > 24h | nudge handyman | 48h: admin forcing actions (set time / force-unassign / offer refund) — ladder in Scenario 4 |
-| Handyman-addressed prompt unanswered | prompt `toRole: 'handyman'` open > 24h | nudge handyman | 48h: admin answers on their behalf or force-unassigns (F5 admin-as-actor) |
-| Customer reschedule request idle | forwarded F3 request, no handyman action | — | 24h: admin applies scheduleChange admin-as-actor |
+| ASAP job, no confirmed time | accepted, no `scheduledFromAsapAt`, no open `schedule_approval`/`schedule_pick_approval` prompt and no active F6 link > 24h | nudge handyman | 48h: admin forcing actions (set time / force-unassign / offer refund) — doors in Scenario 4 |
+| Handyman-addressed prompt unanswered | prompt `toRole: 'handyman'` open > 24h (incl. `schedule_pick_approval`) | nudge handyman | 48h: admin answers on their behalf or force-unassigns (F5 admin-as-actor) |
+| Schedule link unused | F6 link `active`, `expiresAt` passed | mark `expired`, one nudge to customer | admin queue (send a fresh link, set time admin-as-actor, or call) |
+| Schedule deadlock | handyman answered `schedule_pick_approval` with Decline | — (not a sweep — flagged immediately at decline time) | admin forcing actions per Scenario 4; customer gets "we're arranging it" notice |
 | Cancellation requested, refund not executed | `cancellation_requested` > 2d | — | admin (it's already their queue; this re-alerts) |
 
 **Flow.**
@@ -352,7 +393,7 @@ Visit 1 done, more work needed
 - Fund release remains admin-only; no flow here moves money to a handyman automatically (golden rule).
 - The dispute path (customer replies NO to the poll) is untouched.
 - Job board, fan-out, reassignment mechanics stay as shipped; Scenarios 3/4/6 compose with them.
-- No customer accounts/logins are introduced; WhatsApp remains the customer's only interface.
+- No customer accounts/logins are introduced; the customer's interfaces are WhatsApp plus token-gated, single-use F6 deep-link pages (no session, no stored credentials).
 
 ## 6. Open owner decisions (to settle at plan time)
 
@@ -365,8 +406,9 @@ Visit 1 done, more work needed
 
 1. **Scenario 0** (capture at booking) — smallest change, fixes a live financial bug and probably the fan-out trigger; ship independently and first.
 2. **F2 + F3** (pending prompts + no-silent-drops) — the router foundation; migrate the completion poll onto it.
-3. **Scenarios 3 + 4 + F4** (reschedule + ASAP time-fixing + schedule single-writer) — one machinery, two triggers; highest frequency.
-4. **Scenario 12** (stuck sweeps + admin attention queue) — the net under everything above.
+3. **Scenarios 3 + 4 + F4** (reschedule + ASAP time-fixing + schedule single-writer) — one machinery, two triggers; highest frequency. *Shipped 2026-07-13 (handyman-proposal direction).*
+3b. **F6 + revised decline flows** (schedule links, `/pick-time` page, `schedule_pick_approval`, decline→link auto-send, AdminDashboard Active-jobs table with "Send reschedule link") — documented 2026-07-13, not yet planned; natural companion to stage 4 since both feed the attention queue.
+4. **Scenario 12** (stuck sweeps + admin attention queue) — the net under everything above; now also sweeps F6 link expiry and surfaces schedule deadlocks.
 5. **Scenarios 7 + 8 + 5** (no-shows + running late) — reporting + choice prompts reusing 3/4.
 6. **Scenario 9** (customer cancel + refund request).
 7. **Scenarios 10 + 11** (price adjustment integration + second visits), alongside the existing price-adjustment spec.
