@@ -367,6 +367,8 @@ Visit 1 done, more work needed
 
 **Solution.** One scheduled function (daily, alongside `autoTriggerCompletionPoll`) sweeps for jobs stuck in any wait state, applies **one automated nudge**, then escalates to an admin "Attention needed" queue (a new section on the existing admin dashboard + the existing email transport). Since captured money now sits in the platform balance, every stuck job ends in an explicit admin decision: release, refund, reassign, or contact.
 
+> **V1 machinery is fixed in `2026-07-13-stuck-state-sweep-design.md`** (owner decisions 2026-07-13): concrete thresholds, nudge markers, digest email, queue actions (mark resolved / set time admin-as-actor / force-unassign / refund), and the inert auto-poll fix. Where the table below and that doc disagree on timings, **that doc governs**. The "Cancellation requested" row is deferred out of v1.
+
 | Stuck state | Detection | Nudge | Escalate |
 |---|---|---|---|
 | Paid, never accepted | `status='pending'`, no handyman, age > 3d | re-run fan-out (new marker round, exclusions respected) | 7d: admin + offer customer cancel/refund [9] |
