@@ -80,6 +80,14 @@ const {
   buildScheduleChangeUpdate,
 } = require('./scheduleService');
 
+// Secure schedule links (F6) — token hashing + link issuance/revocation.
+// See functions/scheduleLinkService.js.
+const {
+  hashLinkToken,
+  issueScheduleLink,
+  revokeActiveLinks,
+} = require('./scheduleLinkService');
+
 // Booking-time escrow capture decision (job lifecycle Scenario 0).
 // See functions/paymentCapture.js and
 // docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
@@ -3959,6 +3967,245 @@ exports.proposeSchedule = functions.https.onRequest(async (req, res) => {
         return res.status(401).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Failed to propose schedule' });
+    }
+  });
+});
+
+/**
+ * Rate-limit key for unauthenticated link endpoints. Behind Google's
+ * front end X-Forwarded-For's first hop is the client.
+ */
+function linkRequestIpKey(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return (xff || req.ip || 'unknown').replace(/[^0-9a-fA-F.:]/g, '').slice(0, 45) || 'unknown';
+}
+
+/**
+ * Resolve a raw link token to a live link + its job, mapping every
+ * failure to a precise HTTP status. Lazily marks overdue links expired.
+ *
+ * @returns {{ ok: true, linkRef, link, jobRef, job }
+ *         | { ok: false, status: number, error: string, code: string }}
+ */
+async function resolveScheduleLink(db, token) {
+  if (!token || typeof token !== 'string') {
+    return { ok: false, status: 400, error: 'Missing link token', code: 'bad_token' };
+  }
+  const linkRef = db.collection('scheduleLinks').doc(hashLinkToken(token));
+  const linkSnap = await linkRef.get();
+  if (!linkSnap.exists) {
+    return { ok: false, status: 404, error: 'This link is not valid', code: 'not_found' };
+  }
+  const link = linkSnap.data();
+  if (link.status !== 'active') {
+    return { ok: false, status: 410, error: 'This link has already been used or replaced', code: `link_${link.status}` };
+  }
+  if (new Date(link.expiresAt).getTime() < Date.now()) {
+    try {
+      await linkRef.update({ status: 'expired' });
+    } catch (expireErr) {
+      console.error('⚠️ Lazy link-expiry write failed (continuing):', expireErr);
+    }
+    return { ok: false, status: 410, error: 'This link has expired', code: 'link_expired' };
+  }
+  const jobRef = db.collection('jobs').doc(link.jobId);
+  const jobSnap = await jobRef.get();
+  if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') {
+    return { ok: false, status: 409, error: 'This job can no longer be rescheduled', code: 'job_not_active' };
+  }
+  return { ok: true, linkRef, link, jobRef, job: jobSnap.data() };
+}
+
+/**
+ * getScheduleLinkContext — public, token-gated (F6).
+ *
+ * The /pick-time page calls this on load. The token is the ONLY
+ * credential; the response is deliberately minimal (no customer PII —
+ * the customer already knows who they are; no handyman phone).
+ *
+ * POST body: { token }
+ */
+exports.getScheduleLinkContext = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const rl = await checkRateLimit(`schedule_link_ctx_${linkRequestIpKey(req)}`, 30, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests — please try again later' });
+      }
+
+      const resolved = await resolveScheduleLink(admin.firestore(), (req.body || {}).token);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+      }
+
+      const { link, job } = resolved;
+      return res.status(200).json({
+        success: true,
+        job: {
+          shortId: String(link.jobId).slice(-6),
+          serviceType: job.serviceType || 'job',
+          preferredDate: job.preferredDate || null,
+          preferredTime: job.preferredTime || null,
+          preferredTiming: job.preferredTiming || null,
+          handymanName: (job.acceptedBy && job.acceptedBy.name) || 'Your handyman',
+        },
+      });
+    } catch (error) {
+      console.error('❌ Error in getScheduleLinkContext:', error);
+      return res.status(500).json({ error: 'Something went wrong — please try again' });
+    }
+  });
+});
+
+/**
+ * submitSchedulePick — public, token-gated (F6).
+ *
+ * Consumes the link (single-use, transactional) and opens the
+ * roles-flipped schedule_pick_approval prompt to the handyman. The
+ * schedule itself changes ONLY when the handyman approves (F4).
+ * Once the link is consumed the customer's part is DONE — failures
+ * after that point (no handyman phone, Twilio down, prompt write
+ * failure) fall back to the F3 admin email and still return success,
+ * because the admin queue is the designed recovery door.
+ *
+ * POST body: { token, date, time, note? }
+ */
+exports.submitSchedulePick = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const rl = await checkRateLimit(`schedule_link_pick_${linkRequestIpKey(req)}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests — please try again later' });
+      }
+
+      const { token, date, time, note } = req.body || {};
+      try {
+        validateScheduleProposal({ date, time });
+      } catch (err) {
+        if (err instanceof ScheduleError) {
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+
+      const db = admin.firestore();
+      const resolved = await resolveScheduleLink(db, token);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+      }
+      const { linkRef, link } = resolved;
+      const jobId = link.jobId;
+      const trimmedNote = String(note || '').trim().slice(0, 300);
+
+      // Consume the link transactionally: re-check active + job status so
+      // two racing submits (or a submit racing a scheduleChange) can't
+      // both go through.
+      let job;
+      try {
+        await db.runTransaction(async (tx) => {
+          const lSnap = await tx.get(linkRef);
+          if (!lSnap.exists || lSnap.data().status !== 'active') {
+            throw new Error('LINK_GONE');
+          }
+          const jSnap = await tx.get(db.collection('jobs').doc(jobId));
+          if (!jSnap.exists || jSnap.data().status !== 'in_progress') {
+            throw new Error('WRONG_STATUS');
+          }
+          job = jSnap.data();
+          tx.update(linkRef, {
+            status: 'used',
+            usedAt: new Date().toISOString(),
+            pickedDate: date,
+            pickedTime: String(time),
+          });
+        });
+      } catch (txErr) {
+        if (txErr.message === 'LINK_GONE') {
+          return res.status(410).json({ error: 'This link has already been used or replaced', code: 'link_used' });
+        }
+        if (txErr.message === 'WRONG_STATUS') {
+          return res.status(409).json({ error: 'This job can no longer be rescheduled', code: 'job_not_active' });
+        }
+        throw txErr;
+      }
+
+      // The customer's counter-pick supersedes any open handyman
+      // proposal — they have effectively declined it by picking.
+      try {
+        const openApprovals = await db.collection('jobs').doc(jobId).collection('prompts')
+          .where('type', '==', 'schedule_approval')
+          .where('status', '==', 'open')
+          .get();
+        await Promise.all(openApprovals.docs.map((d) => d.ref.update({
+          status: 'superseded',
+          supersededAt: new Date().toISOString(),
+        })));
+      } catch (supersedeErr) {
+        console.error('⚠️ Superseding open schedule_approval prompts failed (continuing):', supersedeErr);
+      }
+
+      const jobShortId = String(jobId).slice(-6);
+      const displayDate = new Date(date).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+
+      // Roles-flipped approval: WhatsApp the handyman, then open the
+      // prompt (same send-then-open order as proposeSchedule).
+      let handedToHandyman = false;
+      try {
+        const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (hmPhone) {
+          await sendTwilioMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            `📅 The customer picked a visit time for Job #${jobShortId}: *${displayDate}* at *${time}*.${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to approve\n👉 Reply *NO* if you can't make it (our team will step in)`
+          );
+          await openPrompt({
+            db,
+            jobId,
+            type: 'schedule_pick_approval',
+            toPhone: hmPhone,
+            toRole: 'handyman',
+            question: `Approve the customer's picked time: ${displayDate} at ${time}?`,
+            options: SCHEDULE_APPROVAL_OPTIONS,
+            payload: {
+              pickedDate: date,
+              pickedTime: String(time),
+              pickedBy: normalizePhoneKey(link.customerPhone),
+              note: trimmedNote || null,
+              linkTokenHash: hashLinkToken(token),
+            },
+          });
+          handedToHandyman = true;
+        }
+      } catch (handymanErr) {
+        console.error('⚠️ Handing pick to handyman failed (admin fallback):', handymanErr);
+      }
+
+      if (!handedToHandyman) {
+        // F3 door: the pick is recorded on the used link; the admin
+        // finishes the job (set time admin-as-actor after a call).
+        await sendAdminEmail(
+          `⚠️ Schedule pick needs manual handling — Job #${jobShortId}`,
+          `<p>The customer picked <strong>${escapeHtml(displayDate)} at ${escapeHtml(String(time))}</strong> via a schedule link, but the handyman could not be reached on WhatsApp (no phone on record or send failure).</p>
+           <p>Job: ${escapeHtml(jobId)}<br/>Note: ${escapeHtml(trimmedNote || '—')}</p>
+           <p>Please confirm with both parties and set the time from the admin dashboard.</p>`
+        );
+      }
+
+      console.log(`📅 Schedule pick for job ${jobId}: ${date} ${time} (handedToHandyman=${handedToHandyman})`);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in submitSchedulePick:', error);
+      return res.status(500).json({ error: 'Something went wrong — please try again' });
     }
   });
 });
