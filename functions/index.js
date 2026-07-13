@@ -4718,3 +4718,246 @@ exports.sendScheduleLink = functions.https.onRequest(async (req, res) => {
     }
   });
 });
+
+/**
+ * resolveAttention — admin clears a job's attention flag (Scenario 12
+ * queue). With markCancelled it also closes the job after a refund
+ * (the queue's refund button calls the existing refundPayment endpoint
+ * first, then this with markCancelled: true).
+ */
+exports.resolveAttention = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const { jobId, markCancelled } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      const snap = await jobRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Job not found' });
+
+      const update = {
+        needsAttention: admin.firestore.FieldValue.delete(),
+        attentionNeeded: admin.firestore.FieldValue.delete(),
+      };
+      if (markCancelled === true) {
+        update.status = 'cancelled';
+        update.cancelledAt = new Date().toISOString();
+        update.cancelledVia = 'admin_queue';
+      }
+      await jobRef.update(update);
+      await writeAuditLog('attention_resolved', decodedToken, {
+        jobId, markCancelled: markCancelled === true,
+        priorAttentionType: (snap.data().attentionNeeded && snap.data().attentionNeeded.type) || null,
+      });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in resolveAttention:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to resolve attention' });
+    }
+  });
+});
+
+/**
+ * adminSetSchedule — F5 admin-as-actor "set the time after phoning both
+ * parties". Applies through the F4 single writer (via 'admin'), then
+ * closes every competing channel: open schedule prompts superseded,
+ * active links revoked, attention cleared. Both parties notified.
+ */
+exports.adminSetSchedule = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const { jobId, newDate, newTime, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      try {
+        validateScheduleProposal({ date: newDate, time: newTime });
+      } catch (err) {
+        if (err instanceof ScheduleError) return res.status(400).json({ error: err.message, code: err.code });
+        throw err;
+      }
+
+      const changeResult = await applyScheduleChange({
+        db: admin.firestore(), jobId,
+        newDate, newTime: String(newTime),
+        actor: decodedToken.uid, via: 'admin',
+        note: String(note || '').trim() || null, promptId: null,
+      });
+      if (changeResult.outcome === 'wrong_status') {
+        return res.status(409).json({ error: 'This job can no longer be rescheduled' });
+      }
+
+      // Close competing channels — a settled schedule kills open asks.
+      try {
+        const openPrompts = await admin.firestore()
+          .collection('jobs').doc(jobId).collection('prompts')
+          .where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs
+          .filter((d) => ['schedule_approval', 'schedule_pick_approval'].includes(d.data().type))
+          .map((d) => d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+        await revokeActiveLinks({ db: admin.firestore(), jobId });
+        await admin.firestore().collection('jobs').doc(jobId).update({
+          needsAttention: admin.firestore.FieldValue.delete(),
+          attentionNeeded: admin.firestore.FieldValue.delete(),
+        });
+      } catch (cleanupErr) {
+        console.error('⚠️ adminSetSchedule cleanup failed (continuing):', cleanupErr);
+      }
+
+      const job = changeResult.job;
+      const jobShortId = String(jobId).slice(-6);
+      const displayDate = new Date(newDate).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+      try {
+        if (job.customerPhone) {
+          await sendTwilioMessage(
+            formatPhoneToWhatsApp(job.customerPhone),
+            `📅 Update on Job #${jobShortId}: your visit is now set for *${displayDate}* at *${newTime}* — arranged with our team. See you then! 🔧`
+          );
+        }
+        if (job.handymanId) {
+          const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
+          const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+          if (hmPhone) {
+            await sendTwilioMessage(
+              formatPhoneToWhatsApp(hmPhone),
+              `📅 Our team set Job #${jobShortId} to ${displayDate} at ${newTime}. Please plan for it.`
+            );
+          }
+        }
+      } catch (notifyErr) {
+        console.error('⚠️ adminSetSchedule notifications failed (continuing):', notifyErr);
+      }
+
+      await writeAuditLog('admin_set_schedule', decodedToken, { jobId, newDate, newTime: String(newTime) });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in adminSetSchedule:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to set schedule' });
+    }
+  });
+});
+
+/**
+ * adminUnassignJob — F5 forcing action: strip the current handyman and
+ * re-release (Scenario 2 machinery). Unlike the handyman self-cancel,
+ * this is allowed even after the completion poll went out — forcing
+ * actions exist precisely for jobs wedged past the self-serve window.
+ */
+exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const rl = await checkRateLimit(`admin_unassign_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many unassignments — please slow down' });
+      }
+      const { jobId, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      let jobData; let updatePayload; let removedHandymanId;
+      try {
+        await admin.firestore().runTransaction(async (tx) => {
+          const snap = await tx.get(jobRef);
+          if (!snap.exists) throw new Error('NOT_FOUND');
+          const job = snap.data();
+          if (job.status !== 'in_progress' || !job.handymanId) throw new Error('WRONG_STATUS');
+          jobData = job;
+          removedHandymanId = job.handymanId;
+          updatePayload = buildCancelUpdate(job, job.handymanId, {
+            reason: 'admin_forced',
+            note: String(note || '').trim(),
+            nowIso: new Date().toISOString(),
+          });
+          tx.update(jobRef, updatePayload);
+        });
+      } catch (err) {
+        if (err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Job not found' });
+        if (err.message === 'WRONG_STATUS') return res.status(409).json({ error: 'Job is not in progress with an assigned handyman' });
+        throw err;
+      }
+
+      // Close every open channel tied to the removed assignment.
+      try {
+        const openPrompts = await jobRef.collection('prompts').where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs.map((d) =>
+          d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+        await revokeActiveLinks({ db: admin.firestore(), jobId });
+        await jobRef.update({
+          needsAttention: admin.firestore.FieldValue.delete(),
+          attentionNeeded: admin.firestore.FieldValue.delete(),
+        });
+      } catch (cleanupErr) {
+        console.error('⚠️ adminUnassignJob cleanup failed (continuing):', cleanupErr);
+      }
+
+      // Side effects mirror cancelJobAssignment (best-effort, caught).
+      try {
+        await admin.firestore().collection('handymen').doc(removedHandymanId)
+          .update({ cancellationCount: admin.firestore.FieldValue.increment(1) });
+      } catch (err) {
+        console.error(`⚠️ cancellationCount increment failed for ${removedHandymanId}:`, err);
+      }
+      try {
+        const hmSnap = await admin.firestore().collection('handymen').doc(removedHandymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (hmPhone) {
+          await sendTwilioMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            `ℹ️ Our team has removed you from Job #${jobId.slice(-6)} and is reassigning it. Questions? Contact easydonehandyman@gmail.com`
+          );
+        }
+      } catch (err) {
+        console.error('⚠️ Removed-handyman notice failed:', err);
+      }
+      if (jobData.customerPhone) {
+        try {
+          const shortId = jobId.slice(-6);
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(jobData.customerPhone),
+            process.env.TWILIO_TEMPLATE_HANDYMAN_CANCELLED,
+            { '1': jobData.customerName || 'there', '2': shortId, '3': jobData.serviceType || 'your job' },
+            `Update on Job #${shortId} (${jobData.serviceType}):\n\nYour handyman is no longer available. We're finding you a new one — no action needed, and your payment stays protected.\n\nQuestions? Contact easydonehandyman@gmail.com`,
+          );
+        } catch (err) {
+          console.error(`⚠️ Customer unassign notice failed for job ${jobId}:`, err);
+        }
+      }
+      try {
+        await runHandymanFanOut({
+          job: { ...jobData, ...updatePayload, handymanId: null, status: 'pending' },
+          jobId, db: admin.firestore(),
+          sendTwilioTemplateMessage, checkRateLimit, logger: console,
+          round: updatePayload.reassignmentCount,
+          excludeIds: updatePayload.previousHandymanIds,
+        });
+      } catch (err) {
+        console.error(`⚠️ Unassign fan-out failed for job ${jobId}:`, err);
+      }
+
+      await writeAuditLog('admin_force_unassign', decodedToken, {
+        jobId, removedHandymanId,
+        note: String(note || '').slice(0, 500) || null,
+        reassignmentCount: updatePayload.reassignmentCount,
+      });
+      return res.status(200).json({ success: true, reassignmentCount: updatePayload.reassignmentCount });
+    } catch (error) {
+      console.error('❌ Error in adminUnassignJob:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to unassign job' });
+    }
+  });
+});
