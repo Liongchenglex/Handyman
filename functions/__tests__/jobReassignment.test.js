@@ -96,6 +96,9 @@ describe('buildCancelUpdate', () => {
     expect(update.acceptedBy).toBeDefined();
     expect(update.completionPollSentAt).toBeDefined();
     expect(update.completionPollSentBy).toBeDefined();
+    // Stale sweep markers from the previous handyman must not survive into
+    // the new assignment era.
+    expect(update.sweepNudges).toBeDefined();
     // paymentStatus must never appear in the update.
     expect(update).not.toHaveProperty('paymentStatus');
   });

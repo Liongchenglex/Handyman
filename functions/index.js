@@ -3050,6 +3050,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
                 at: new Date().toISOString(),
                 promptId: verdict.prompt.id,
               },
+              // Mirror buildAttentionUpdate: needsAttention drives the admin
+              // queue's query/sort/Mark-resolved button. Without it, this row
+              // is invisible to the queue and vanishes if the job leaves
+              // in_progress.
+              needsAttention: true,
             });
           } catch (flagErr) {
             console.error('⚠️ attentionNeeded flag write failed (continuing):', flagErr);

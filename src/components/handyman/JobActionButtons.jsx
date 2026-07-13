@@ -136,7 +136,8 @@ const JobActionButtons = ({
       setIsProcessing(true);
 
       try {
-        const { updateJob } = await import('../../services/firebase');
+        const { db, COLLECTIONS } = await import('../../services/firebase');
+        const { runTransaction, doc, serverTimestamp } = await import('firebase/firestore');
 
         // Check if a completion poll was already sent (e.g. by the auto-trigger).
         // If so, skip the WhatsApp send to avoid duplicate messages.
@@ -159,7 +160,38 @@ const JobActionButtons = ({
           updateData.completionPollSentBy = 'handyman';
         }
 
-        await updateJob(job.id, updateData);
+        // Race guard: while this handyman's screen still shows stale
+        // 'in_progress' state, a customer's WhatsApp reply can have already
+        // moved the job to 'disputed' or 'pending_admin_approval' (this
+        // stage's auto-poll decides jobs that are still 'in_progress').
+        // Re-read the doc inside a transaction and only write the
+        // completion update if the FRESH status is still 'in_progress' —
+        // otherwise a stale Mark-Complete tap would silently un-dispute the
+        // job by forcing it back to 'pending_confirmation'.
+        const jobRef = doc(db, COLLECTIONS.JOBS, job.id);
+        let staleAbort = false;
+
+        await runTransaction(db, async (transaction) => {
+          const freshSnap = await transaction.get(jobRef);
+          const freshStatus = freshSnap.exists() ? freshSnap.data().status : null;
+
+          if (freshStatus !== 'in_progress') {
+            // Someone else (customer reply, admin action) already moved this
+            // job on. Abort without writing — do not overwrite their change.
+            staleAbort = true;
+            return;
+          }
+
+          transaction.update(jobRef, {
+            ...updateData,
+            updatedAt: serverTimestamp()
+          });
+        });
+
+        if (staleAbort) {
+          alert('This job was just updated — please refresh to see its current status.');
+          return;
+        }
 
         // Lock the button into its terminal state immediately.
         setJustCompleted(true);
