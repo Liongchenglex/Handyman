@@ -88,6 +88,18 @@ const {
   revokeActiveLinks,
 } = require('./scheduleLinkService');
 
+// Stuck-state sweep detectors (lifecycle spec Scenario 12 / F5). See
+// functions/sweepService.js and
+// docs/superpowers/specs/2026-07-13-stuck-state-sweep-design.md.
+const {
+  SWEEP,
+  evaluatePrompt,
+  evaluateLink,
+  evaluateAsapJob,
+  evaluateUnclaimedJob,
+  buildAttentionUpdate,
+} = require('./sweepService');
+
 // Booking-time escrow capture decision (job lifecycle Scenario 0).
 // See functions/paymentCapture.js and
 // docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
@@ -2565,7 +2577,8 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
  * doc that names the job directly) and the legacy phone-lookup path
  * (polls sent before the prompt migration deployed).
  *
- * The transaction re-checks status === 'pending_confirmation' so a
+ * The transaction re-checks status === 'pending_confirmation' (or the
+ * nightly auto-poll's 'in_progress' + completionPollSentAt state) so a
  * double-tap or a stale prompt can never flip an already-decided job.
  *
  * @returns {{outcome: 'confirmed'|'disputed'|'already_processed', jobData?: object, recordedAs?: string}}
@@ -2576,10 +2589,18 @@ async function applyCompletionAnswer({ db, jobId, isConfirm }) {
   try {
     await db.runTransaction(async (tx) => {
       const fresh = await tx.get(jobRef);
-      if (!fresh.exists || fresh.data().status !== 'pending_confirmation') {
+      if (!fresh.exists) {
         throw new Error('ALREADY_PROCESSED');
       }
-      jobData = fresh.data();
+      const freshData = fresh.data();
+      // Accept the answer while the question is actually open: either the
+      // handyman marked complete (pending_confirmation) or the nightly
+      // auto-poll asked the customer while the job stayed in_progress.
+      const pollOpen = freshData.status === 'in_progress' && !!freshData.completionPollSentAt;
+      if (freshData.status !== 'pending_confirmation' && !pollOpen) {
+        throw new Error('ALREADY_PROCESSED');
+      }
+      jobData = freshData;
       if (isConfirm) {
         tx.update(jobRef, {
           status: 'pending_admin_approval',
@@ -3803,6 +3824,214 @@ Please confirm if the work has been completed to your satisfaction.
       console.error('❌ Error in auto-trigger completion poll:', error);
       throw error;
     }
+  });
+
+/**
+ * stuckStateSweep — Scenario 12's safety net (spec:
+ * 2026-07-13-stuck-state-sweep-design.md). Runs daily at 10:30 SGT,
+ * 30 min after the completion poll, so freshly-sent polls are never
+ * inspected in the run that created them.
+ *
+ * Four ladders, each nudging AT MOST ONCE per state before escalating
+ * to the admin attention queue (needsAttention on the job + one digest
+ * email per run). The sweep never touches money.
+ */
+exports.stuckStateSweep = functions.pubsub
+  .schedule('every day 10:30')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    const db = admin.firestore();
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const escalations = []; // {jobId, type, detail} for the digest
+    const counts = { nudged: 0, escalated: 0, renewedLinks: 0, fanouts: 0 };
+
+    const escalate = async (jobId, type, detail, promptId = null) => {
+      try {
+        await db.collection('jobs').doc(jobId)
+          .update(buildAttentionUpdate(type, { detail, promptId, nowIso }));
+        escalations.push({ jobId, type, detail });
+        counts.escalated++;
+      } catch (err) {
+        console.error(`⚠️ Sweep escalation write failed for job ${jobId} (${type}):`, err);
+      }
+    };
+
+    // ---- Ladder 1: open prompts past expiry (CG query, capped) ----
+    try {
+      const snap = await db.collectionGroup('prompts')
+        .where('status', '==', 'open')
+        .where('expiresAt', '<=', nowIso)
+        .limit(200)
+        .get();
+      if (snap.size === 200) console.warn('⚠️ Sweep prompt query hit the 200 cap — rerun tomorrow covers the rest');
+      for (const doc of snap.docs) {
+        const p = doc.data();
+        const verdict = evaluatePrompt(p, nowMs);
+        const jobShortId = String(p.jobId || '').slice(-6);
+        if (verdict === 'nudge') {
+          try {
+            const isPoll = p.type === 'completion_confirmation';
+            const fallback = isPoll
+              ? `⏰ Reminder for Job #${jobShortId}: was your job completed?\n\n👉 Reply *YES* to confirm\n👉 Reply *NO* to report an issue`
+              : `⏰ Reminder (Job #${jobShortId}) — we're still waiting for your reply:\n\n${String(p.question || '').slice(0, 200)}\n\nPlease reply when you can.`;
+            await sendTwilioTemplateMessage(
+              formatPhoneToWhatsApp(p.toPhone),
+              process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+              { '1': String(p.question || '').slice(0, 120), '2': jobShortId },
+              fallback,
+            );
+            await doc.ref.update({
+              nudgedAt: nowIso,
+              expiresAt: new Date(nowMs + SWEEP.PROMPT_NUDGE_EXTEND_HOURS * 3600 * 1000).toISOString(),
+            });
+            counts.nudged++;
+          } catch (err) {
+            console.error(`⚠️ Prompt nudge failed for ${doc.ref.path}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Prompt expire write failed for ${doc.ref.path}:`, err);
+          }
+          await escalate(p.jobId, 'prompt_expired',
+            `${p.type} to ${p.toRole} unanswered after nudge`, doc.id);
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 1 (prompts) failed:', err);
+    }
+
+    // ---- Ladder 2a: active schedule links past expiry ----
+    try {
+      const snap = await db.collection('scheduleLinks')
+        .where('status', '==', 'active')
+        .where('expiresAt', '<=', nowIso)
+        .limit(100)
+        .get();
+      for (const doc of snap.docs) {
+        const link = doc.data();
+        const verdict = evaluateLink(link, nowMs);
+        const jobShortId = String(link.jobId || '').slice(-6);
+        if (verdict === 'renew') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+            // Job must still be schedulable; otherwise just drop the link.
+            const jobSnap = await db.collection('jobs').doc(link.jobId).get();
+            if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') continue;
+            const { token } = await issueScheduleLink({
+              db, jobId: link.jobId, customerPhone: link.customerPhone, createdBy: 'system_nudge',
+            });
+            await sendTwilioTemplateMessage(
+              formatPhoneToWhatsApp(link.customerPhone),
+              process.env.TWILIO_TEMPLATE_SCHEDULE_LINK,
+              { '1': jobShortId, '2': token },
+              `⏰ Your pick-a-time link for Job #${jobShortId} expired — here's a fresh one (valid 72 hours):\n${APP_URL}/pick-time?t=${token}`,
+            );
+            counts.renewedLinks++;
+          } catch (err) {
+            console.error(`⚠️ Link renew failed for job ${link.jobId}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Link expire write failed for ${doc.id}:`, err);
+          }
+          await escalate(link.jobId, 'link_ignored', 'customer ignored two pick-time links');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 2a (links) failed:', err);
+    }
+
+    // ---- Ladders 2b + 3: job scans (in_progress ASAP gaps; pending unclaimed) ----
+    try {
+      const inProgress = await db.collection('jobs')
+        .where('status', '==', 'in_progress').limit(300).get();
+      for (const doc of inProgress.docs) {
+        const job = doc.data();
+        if (job.preferredTiming === 'Schedule' || job.scheduledFromAsapAt) continue;
+        // Anything already in flight?
+        const openPrompts = await doc.ref.collection('prompts')
+          .where('status', '==', 'open').get();
+        const hasOpenSchedulePrompt = openPrompts.docs.some((d) =>
+          ['schedule_approval', 'schedule_pick_approval'].includes(d.data().type));
+        const activeLinks = await db.collection('scheduleLinks')
+          .where('jobId', '==', doc.id).where('status', '==', 'active').limit(1).get();
+        const verdict = evaluateAsapJob(job,
+          { hasOpenSchedulePrompt, hasActiveLink: !activeLinks.empty }, nowMs);
+        if (verdict === 'nudge') {
+          try {
+            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioMessage(
+                formatPhoneToWhatsApp(hmPhone),
+                `⏰ Job #${doc.id.slice(-6)} still has no confirmed visit time. Please tap "Set visit time" on the job page so the customer can approve it.`
+              );
+            }
+            await doc.ref.update({ 'sweepNudges.asap_no_time': nowIso });
+            counts.nudged++;
+          } catch (err) {
+            console.error(`⚠️ ASAP nudge failed for job ${doc.id}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          await escalate(doc.id, 'asap_no_time', 'ASAP job accepted but no visit time confirmed');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 2b (ASAP) failed:', err);
+    }
+
+    try {
+      const pending = await db.collection('jobs')
+        .where('status', '==', 'pending').limit(300).get();
+      for (const doc of pending.docs) {
+        const job = doc.data();
+        const { verdict, kind } = evaluateUnclaimedJob(job, nowMs);
+        if (verdict === 'fanout') {
+          try {
+            // Round 900+N: a marker namespace the accept/cancel rounds
+            // never use, so this re-notification is idempotent per sweep
+            // era and cannot collide with organic rounds.
+            await runHandymanFanOut({
+              job, jobId: doc.id, db,
+              sendTwilioTemplateMessage, checkRateLimit, logger: console,
+              round: 900 + (job.reassignmentCount || 0),
+              excludeIds: Array.isArray(job.previousHandymanIds) ? job.previousHandymanIds : [],
+            });
+            const key = kind === 'reclaim_stalled' ? 'reclaim_refanout' : 'unclaimed_refanout';
+            await doc.ref.update({ [`sweepNudges.${key}`]: nowIso });
+            counts.fanouts++;
+          } catch (err) {
+            console.error(`⚠️ Sweep fan-out failed for job ${doc.id}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          await escalate(doc.id, kind,
+            kind === 'unclaimed' ? 'paid job never accepted' : 're-released job never re-claimed');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 3 (unclaimed) failed:', err);
+    }
+
+    // ---- One digest email per run (free SMTP; deadlocks already email immediately) ----
+    if (escalations.length > 0) {
+      const rows = escalations.map((e) =>
+        `<tr><td>${escapeHtml(String(e.jobId).slice(-6))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.detail || '')}</td></tr>`
+      ).join('');
+      await sendAdminEmail(
+        `⚠️ Attention needed: ${escalations.length} stuck job${escalations.length > 1 ? 's' : ''}`,
+        `<p>The daily sweep escalated ${escalations.length} job(s) to the attention queue:</p>
+         <table border="1" cellpadding="6"><tr><th>Job</th><th>Type</th><th>Why</th></tr>${rows}</table>
+         <p>Resolve them from the admin dashboard's Active jobs section.</p>`
+      );
+    }
+
+    console.log(`🧹 Sweep done: ${counts.nudged} nudged, ${counts.renewedLinks} links renewed, ${counts.fanouts} fan-outs, ${counts.escalated} escalated`);
+    return null;
   });
 
 // ===================================
