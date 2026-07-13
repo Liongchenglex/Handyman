@@ -22,19 +22,19 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 
 | # | Scenario | Status today |
 |---|----------|--------------|
-| 0 | Capture escrow at booking | **Bug/gap** — capture only happens at fund release; auth expires at ~7 days; fan-out trigger likely never fires |
-| 1 | Happy flow (done on schedule) | Built |
+| 0 | Capture escrow at booking | **Built** (2026-07-12, stage 1 — capture at booking + canceled-auth alarm) |
+| 1 | Happy flow (done on schedule) | Built (auto-poll YES now counts — inert-confirm fix shipped with stage 4) |
 | 2 | Handyman cancels → re-release | Built (2026-07-11) |
-| 3 | Reschedule | Handyman-proposal direction built (2026-07-13); customer-pick direction (F6 links) documented, not built |
-| 4 | ASAP job: fixing the visit time | Accept-with-proposal built (2026-07-13); decline→link flow documented, not built (also fixes ASAP poll/date-gate blind spot) |
+| 3 | Reschedule | **Built** (2026-07-13 — both directions: handyman proposal + customer pick via F6 links; admin Trigger B) |
+| 4 | ASAP job: fixing the visit time | **Built** (2026-07-13 — accept-with-proposal, decline→link, admin doors) |
 | 5 | Same-day "running late" notice | New |
-| 6 | Handyman swap after inspection (late lifecycle) | Partial — cancel blocked once completion poll sent |
+| 6 | Handyman swap after inspection (late lifecycle) | Partial — self-serve cancel still blocked once completion poll sent; admin force-unassign (stage 4) covers the wedge |
 | 7 | Handyman no-show | New |
 | 8 | Customer no-show / no access | New |
-| 9 | Customer cancellation + refund | New |
+| 9 | Customer cancellation + refund | **Deferred — manual via admin** (owner decision 2026-07-13; queue Refund button / Stripe Dashboard) |
 | 10 | Price/scope change after inspection | Spec exists (`price-adjustment-flow.md`); integration defined here |
 | 11 | Second visit needed | New |
-| 12 | Stuck-state timeouts | New |
+| 12 | Stuck-state timeouts | **Built** (2026-07-13, stage 4 — sweep ladders + attention queue with forcing actions) |
 
 **Non-goals for v1** (admin resolves manually via existing dispute/refund tools): partial completion / partial payment, property-damage incidents, refund-after-release, editing job details other than schedule before acceptance, free-form chat.
 
@@ -311,6 +311,8 @@ Visit day → handyman at door, no access
 
 ### Scenario 9 — Customer cancellation + refund
 
+> **DEFERRED — handled manually in v1 (owner decision 2026-07-13).** No structured in-WA cancel flow ships. The manual path: customer emails easydonehandyman@gmail.com (or their free-text "cancel" lands in the F3 admin inbox) → admin refunds via the attention queue's **Refund** button (available for in-progress and flagged jobs; refund-then-cancel with the Finish-cancelling recovery) or, for a paid job not listed in the queue (e.g. unclaimed and not yet swept), directly in the **Stripe Dashboard** — the unclaimed sweep will surface such jobs within 3–7 days anyway. The `refundPayment` endpoint stays admin-authorized; escrow rules (§2b row 9) are unchanged. The structured flow below is kept as the v2 design.
+
 **Constraint.** Customers are anonymous-auth with no dashboard — WhatsApp is their only channel. Refunds stay admin-executed (golden rule: money movement is deliberate), but the request/confirmation is structured.
 
 **Solution.** Customer texts "cancel" (intent-recognized any time pre-release) → router resolves which job (single active → direct; multiple → numbered picker) → confirmation prompt stating the policy ("Reply 1 to confirm cancelling Job #a1b2c3. Refund: full, minus payment-processing costs." — exact policy copy is an owner decision, see §6) → on confirm: job → `cancellation_requested`, assigned handyman (if any) is un-assigned + notified ("customer cancelled — no action needed"), job leaves the board, admin gets an actionable alert → admin executes the refund with the existing `refundPayment` → customer gets a refund-processed message. Jobs in `pending_confirmation` or later can't self-serve cancel (that's the dispute path).
@@ -404,16 +406,20 @@ Visit 1 done, more work needed
 3. **Penalty copy** in the Express-Interest modal ("$20 penalty") — implement, soften, or remove; interacts with Scenarios 2/7/8 counters.
 4. **No-show → new handyman** (Scenario 7 option 2): keep admin confirmation in the loop (recommended) or fully automatic un-assign.
 
-## 7. Suggested build order
+## 7. Build order — status as of 2026-07-13
 
-1. **Scenario 0** (capture at booking) — smallest change, fixes a live financial bug and probably the fan-out trigger; ship independently and first.
-2. **F2 + F3** (pending prompts + no-silent-drops) — the router foundation; migrate the completion poll onto it.
-3. **Scenarios 3 + 4 + F4** (reschedule + ASAP time-fixing + schedule single-writer) — one machinery, two triggers; highest frequency. *Shipped 2026-07-13 (handyman-proposal direction).*
-3b. **F6 + revised decline flows** (schedule links, `/pick-time` page, `schedule_pick_approval`, decline→link auto-send, AdminDashboard Active-jobs table with "Send reschedule link") — documented 2026-07-13, not yet planned; natural companion to stage 4 since both feed the attention queue.
-4. **Scenario 12** (stuck sweeps + admin attention queue) — the net under everything above; now also sweeps F6 link expiry and surfaces schedule deadlocks.
-5. **Scenarios 7 + 8 + 5** (no-shows + running late) — reporting + choice prompts reusing 3/4.
-6. **Scenario 9** (customer cancel + refund request).
-7. **Scenarios 10 + 11** (price adjustment integration + second visits), alongside the existing price-adjustment spec.
-8. **Scenario 6** (late-lifecycle swap window relaxation) — small delta on shipped code, but depends on F2 (prompt supersede).
+All on branch `feature/job-lifecycle-flows` (stacks on `feature/job-reassignment`; merge that first, regular merge not squash). Every completed stage passed a whole-stage adversarial review; each plan carries its own E2E checklist, consolidated in `docs/features/e2e-test-plan-job-lifecycle.md`.
 
-Each stage is independently shippable and testable; every stage after 1 rides on the F2 router.
+| Stage | Scope | Status |
+|---|---|---|
+| 1 | **Scenario 0** — capture at booking + canceled-auth alarm | ✅ **DONE** 2026-07-12 |
+| 2 | **F2 + F3** — pending-prompt router + no-silent-drops; completion poll migrated | ✅ **DONE** 2026-07-12 |
+| 3 | **Scenarios 3 + 4 + F4** — propose-time flows, ASAP accept-with-proposal, schedule single-writer | ✅ **DONE** 2026-07-13 (plan `2026-07-12-schedule-flows.md`) |
+| 3b | **F6** — schedule links, `/pick-time`, `schedule_pick_approval`, decline→link, admin send-link | ✅ **DONE** 2026-07-13 (plan `2026-07-13-schedule-links.md`) |
+| 4 | **Scenario 12** — stuck-state sweep ladders, attention queue + forcing actions (set time / force-unassign / refund / resolve), inert auto-poll fix | ✅ **DONE** 2026-07-13 (plan `2026-07-13-stuck-state-sweep.md`, machinery spec `2026-07-13-stuck-state-sweep-design.md`) |
+| — | **Scenario 9** — customer cancel + refund | ⛔ **DEFERRED — manual via admin** (owner decision 2026-07-13; see Scenario 9 note) |
+| 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Not started |
+| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits | Not started |
+| 7 | **Scenario 6** — late-lifecycle swap window relaxation (self-serve; admin force-unassign already covers the wedge) | Not started |
+
+Owner gates before the built stages are live: Stripe webhook subscriptions (`payment_intent.amount_capturable_updated` + `payment_intent.canceled`, both endpoints); Meta templates `schedule_proposal`, `schedule_link`, `prompt_nudge` (+ env SIDs; freeform fallback until approved); deploy functions + rules + **indexes** together; run the consolidated E2E plan.
