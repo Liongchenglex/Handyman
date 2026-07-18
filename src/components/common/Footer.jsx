@@ -1,19 +1,17 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import BrandLogo from './BrandLogo';
 
 const Footer = () => {
   return (
     <footer className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-16">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
-          {/* Brand Section */}
-          <div className="col-span-1 lg:col-span-1">
-            <div className="flex items-center gap-2 mb-4">
-              <svg className="h-8 w-8 text-primary" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"></path>
-              </svg>
-              <span className="text-xl font-bold text-gray-900 dark:text-white">EasyDoneHandyman</span>
-            </div>
+          {/* Brand Section — spans the full width on mobile (2-col grid) so the
+              blurb has room to breathe, then collapses to one column at md+. */}
+          <div className="col-span-2 md:col-span-1">
+            {/* Links to home for a consistent, clickable brand mark */}
+            <BrandLogo to="/" className="mb-4" />
             <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">
               Connecting customers with trusted handymen across Singapore. Quality service, guaranteed satisfaction.
             </p>
@@ -49,15 +47,15 @@ const Footer = () => {
             <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-4 uppercase tracking-wide">Contact</h4>
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-lg">phone</span>
+                <span className="material-symbols-outlined text-primary text-lg shrink-0">phone</span>
                 <span className="text-gray-600 dark:text-gray-400 text-sm">+65 6123 4567</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-lg">mail</span>
-                <span className="text-gray-600 dark:text-gray-400 text-sm">easydonehandyman@gmail.com</span>
+                <span className="material-symbols-outlined text-primary text-lg shrink-0">mail</span>
+                <span className="text-gray-600 dark:text-gray-400 text-sm break-all">easydonehandyman@gmail.com</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-lg">location_on</span>
+                <span className="material-symbols-outlined text-primary text-lg shrink-0">location_on</span>
                 <span className="text-gray-600 dark:text-gray-400 text-sm">Singapore</span>
               </div>
             </div>
