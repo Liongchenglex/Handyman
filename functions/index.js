@@ -2233,10 +2233,21 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
               'partially_refunded',
             ];
             if (laterStates.includes(current)) return;
-            tx.update(jobRef, {
+            const update = {
               paymentStatus: 'succeeded',
               paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
+            };
+            // Server-side board release. The booking page also flips
+            // awaiting_payment → pending on payment success, but that
+            // client write can silently never happen (closed tab, network,
+            // crashed handler) — and a PAID job stuck in awaiting_payment
+            // is invisible to handymen and, worse, matches the
+            // cleanupAbandonedJobs sweep. The webhook is the reliable
+            // writer; the client flip remains only for immediacy.
+            if (snap.data().status === 'awaiting_payment') {
+              update.status = 'pending';
+            }
+            tx.update(jobRef, update);
           });
         }
         break;
@@ -3651,21 +3662,46 @@ exports.cleanupAbandonedJobs = functions.pubsub
         return null;
       }
 
-      // Delete abandoned jobs in batch
+      // Delete abandoned jobs in batch — but NEVER a job whose payment
+      // was captured (paymentStatus 'succeeded'): deleting it would leave
+      // customer money held with no job record. Those are rescued to
+      // 'pending' instead (the succeeded-webhook normally does this; this
+      // is the safety net for docs that missed the event) and the admin
+      // is alerted.
       const batch = admin.firestore().batch();
       const deletedJobIds = [];
+      const rescuedPaidJobIds = [];
 
       abandonedJobsSnapshot.forEach((doc) => {
+        if (doc.data().paymentStatus === 'succeeded') {
+          batch.update(doc.ref, { status: 'pending' });
+          rescuedPaidJobIds.push(doc.id);
+          return;
+        }
         batch.delete(doc.ref);
         deletedJobIds.push(doc.id);
       });
 
       await batch.commit();
 
+      if (rescuedPaidJobIds.length > 0) {
+        console.warn(`⚠️ Paid jobs were stuck in awaiting_payment — rescued to pending: ${rescuedPaidJobIds.join(', ')}`);
+        try {
+          await sendAdminEmail(
+            `⚠️ ${rescuedPaidJobIds.length} paid job(s) were stuck in awaiting_payment`,
+            `<p>The abandoned-job cleanup found jobs with <strong>captured payment</strong> still in awaiting_payment (the booking page's status flip never landed). They were rescued to 'pending' and are now on the board:</p>
+             <p>${rescuedPaidJobIds.map(escapeHtml).join('<br/>')}</p>`
+          );
+        } catch (emailErr) {
+          console.error('⚠️ Rescue alert email failed:', emailErr);
+        }
+      }
+
       return {
         success: true,
         deletedCount: deletedJobIds.length,
-        deletedJobIds: deletedJobIds
+        deletedJobIds: deletedJobIds,
+        rescuedPaidJobIds,
       };
     } catch (error) {
       console.error('❌ Error cleaning up abandoned jobs:', error);
