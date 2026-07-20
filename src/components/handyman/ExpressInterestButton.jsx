@@ -48,11 +48,14 @@ const ExpressInterestButton = ({
   // Date-picker bounds (today … +90d) matching the server's validation.
   const dateBounds = getProposalDateBounds();
 
-  // A job can only be claimed while it is still open ('pending') and unassigned.
-  // If it already has a handymanId / a non-pending status, interest was already
-  // expressed (possibly by this user on a previous click), so the button must
-  // not allow another submission.
-  const alreadyClaimed = expressed || job.status !== 'pending' || !!job.handymanId;
+  // A job can only be claimed while it is still open ('pending') and
+  // unassigned. Who claimed it decides the button copy: "Interest
+  // Expressed" is only true for THIS user's claim — a late WhatsApp
+  // deep-link tap on someone else's job must read "No longer
+  // available", not imply the viewer claimed it.
+  const claimedByMe = expressed || !!(user && job.handymanId === user.uid);
+  const claimedByOther = !claimedByMe && (job.status !== 'pending' || !!job.handymanId);
+  const alreadyClaimed = claimedByMe || claimedByOther;
 
   // A handyman who cancelled this job cannot re-claim it. Firestore
   // rules enforce this server-side; this flag just explains it in the UI
@@ -319,7 +322,12 @@ const ExpressInterestButton = ({
             <span className="material-symbols-outlined">block</span>
             You previously cancelled this job
           </>
-        ) : alreadyClaimed ? (
+        ) : claimedByOther ? (
+          <>
+            <span className="material-symbols-outlined">event_busy</span>
+            No longer available
+          </>
+        ) : claimedByMe ? (
           <>
             <span className="material-symbols-outlined">check_circle</span>
             Interest Expressed

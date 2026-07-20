@@ -30,8 +30,22 @@ const JobCard = () => {
   const [job, setJob] = useState(location.state?.job || null);
   const [loading, setLoading] = useState(!location.state?.job && !!jobId);
 
+  // A logged-out visitor (the typical WhatsApp deep-link tap on a fresh
+  // device) cannot read the job at all — Firestore rules require a
+  // signed-in user — so without this redirect they'd see "Job not
+  // found" instead of a way in. Send them to handyman auth with a
+  // next= hint so they land back on this exact job after signing in.
+  // AuthContext only renders children once auth state has resolved, so
+  // `user` here is definitive, not still loading.
   useEffect(() => {
-    if (job || !jobId) return;
+    if (!user && jobId) {
+      const next = encodeURIComponent(`${location.pathname}${location.search}`);
+      navigate(`/handyman-auth?next=${next}`, { replace: true });
+    }
+  }, [user, jobId, navigate, location.pathname, location.search]);
+
+  useEffect(() => {
+    if (job || !jobId || !user) return;
     let cancelled = false;
     (async () => {
       try {
@@ -46,7 +60,7 @@ const JobCard = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [jobId, job]);
+  }, [jobId, job, user]);
 
   // Check if this job belongs to the current handyman
   const isMyJob = job?.handymanId === user?.uid;
