@@ -33,4 +33,13 @@ module.exports = {
   // treated as enabled, on purpose — accidentally clearing the var
   // should NOT disable notifications.
   NOTIFY_ENABLED: process.env.NOTIFY_ENABLED !== 'false',
+
+  // Match handymen to the job's serviceType (serviceTypes
+  // array-contains). OFF by default (owner decision 2026-07-20): with a
+  // handful of handymen on the roster, every active+verified+onboarded
+  // handyman hears about every job regardless of trade. Set
+  // NOTIFY_FILTER_BY_SERVICE_TYPE=true in the env once the roster is
+  // big enough that per-trade targeting matters.
+  NOTIFY_FILTER_BY_SERVICE_TYPE:
+    process.env.NOTIFY_FILTER_BY_SERVICE_TYPE === 'true',
 };
