@@ -126,7 +126,11 @@ function composeMessage(job, jobId) {
       '2': String(job.estimatedBudget || ''),
       '3': timing,
       '4': districtLabel,
-      '5': deepLink,
+      // Raw job id, NOT the full URL: the approved Meta template
+      // hardcodes the domain (…/job-details/{{5}}), so passing the full
+      // deep link renders a doubled URL. The freeform fallback carries
+      // the full deepLink and is unaffected.
+      '5': String(jobId),
     },
     fallback,
     deepLink,
