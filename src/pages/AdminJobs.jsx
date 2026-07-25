@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { adminSetJobStatus } from '../services/api/adminQueue';
 
 /**
  * AdminJobs — every job, every status, newest first.
@@ -53,6 +54,23 @@ const AdminJobs = () => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  // per-job override state: 'busy' | <error string>
+  const [overrideState, setOverrideState] = useState({});
+
+  // Manual status override (support escape hatch — e.g. a customer says
+  // they confirmed completion but the reply never landed). Audit-logged
+  // server-side; the select snaps back on cancel/failure via fetchJobs.
+  const handleStatusOverride = async (job, newStatus) => {
+    if (!newStatus || newStatus === job.status) return;
+    const note = window.prompt(
+      `Change Job #${job.id.slice(-6)} from "${job.status}" to "${newStatus}"?\n\nThis is a manual override (audit-logged). Optional note:`
+    );
+    if (note === null) { fetchJobs(); return; } // cancelled — reset the select
+    setOverrideState((s) => ({ ...s, [job.id]: 'busy' }));
+    const result = await adminSetJobStatus(job.id, newStatus, note);
+    setOverrideState((s) => ({ ...s, [job.id]: result.success ? undefined : (result.error || 'Failed') }));
+    fetchJobs();
+  };
 
   const fetchJobs = useCallback(async () => {
     setLoading(true);
@@ -144,7 +162,34 @@ const AdminJobs = () => {
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                   {scheduleLabel(job)} · Payment: {job.paymentStatus || '—'} · Created {toDisplayDate(job.createdAt)}
                   {typeof job.estimatedBudget !== 'undefined' && ` · S$${job.estimatedBudget}`}
+                  {job.statusOverride && (
+                    <span className="ml-1 text-xs text-orange-600 dark:text-orange-400" title={`from ${job.statusOverride.from} · ${job.statusOverride.note || 'no note'}`}>
+                      · manually set {toDisplayDate(job.statusOverride.at)}
+                    </span>
+                  )}
                 </p>
+              </div>
+              <div className="mt-3 md:mt-0 shrink-0 flex flex-col md:items-end gap-1">
+                <label className="text-xs text-gray-500 dark:text-gray-400" htmlFor={`status-${job.id}`}>
+                  Set status (override)
+                </label>
+                <select
+                  id={`status-${job.id}`}
+                  value={job.status || ''}
+                  disabled={overrideState[job.id] === 'busy'}
+                  onChange={(e) => handleStatusOverride(job, e.target.value)}
+                  className="text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-2 disabled:opacity-50"
+                >
+                  {STATUS_FILTERS.filter((s) => s !== 'all' && s !== 'awaiting_payment').map((s) => (
+                    <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                  ))}
+                  {job.status === 'awaiting_payment' && (
+                    <option value="awaiting_payment">awaiting payment</option>
+                  )}
+                </select>
+                {typeof overrideState[job.id] === 'string' && overrideState[job.id] !== 'busy' && (
+                  <p className="text-xs text-red-600 dark:text-red-400">{overrideState[job.id]}</p>
+                )}
               </div>
             </div>
           ))}

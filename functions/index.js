@@ -5002,3 +5002,69 @@ exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
     }
   });
 });
+
+/**
+ * adminSetJobStatus — manual status override (support escape hatch).
+ *
+ * For jobs wedged by a missed reply / expired prompt (e.g. customer
+ * says they confirmed but the job sits in pending_confirmation), the
+ * admin sets the status directly from /admin/jobs. Every override is
+ * audit-logged and stamped on the job (statusOverride) so a hand-moved
+ * job never masquerades as an organic transition. Deliberately does NOT
+ * touch money: releasing/refunding still goes through their own flows.
+ *
+ * POST body: { jobId, newStatus, note? }
+ */
+exports.adminSetJobStatus = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const ADMIN_SETTABLE_STATUSES = [
+        'pending', 'in_progress', 'pending_confirmation',
+        'pending_admin_approval', 'disputed', 'completed', 'cancelled',
+      ];
+      const { jobId, newStatus, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      if (!ADMIN_SETTABLE_STATUSES.includes(newStatus)) {
+        return res.status(400).json({ error: `newStatus must be one of: ${ADMIN_SETTABLE_STATUSES.join(', ')}` });
+      }
+
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      const snap = await jobRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Job not found' });
+      const fromStatus = snap.data().status || null;
+
+      const update = {
+        status: newStatus,
+        statusOverride: {
+          at: new Date().toISOString(),
+          by: decodedToken.uid,
+          from: fromStatus,
+          note: String(note || '').trim().slice(0, 300) || null,
+        },
+      };
+      // A manual move into the fund-release queue should look complete
+      // to that page's date rendering.
+      if (newStatus === 'pending_admin_approval' && !snap.data().customerConfirmedAt) {
+        update.customerConfirmedAt = new Date().toISOString();
+        update.confirmedVia = 'admin_override';
+      }
+      await jobRef.update(update);
+
+      await writeAuditLog('admin_status_override', decodedToken, {
+        jobId, from: fromStatus, to: newStatus,
+        note: String(note || '').slice(0, 300) || null,
+      });
+      console.log(`🔧 Admin status override job=${jobId} ${fromStatus} → ${newStatus} by ${decodedToken.uid}`);
+      return res.status(200).json({ success: true, from: fromStatus, to: newStatus });
+    } catch (error) {
+      console.error('❌ Error in adminSetJobStatus:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to set job status' });
+    }
+  });
+});

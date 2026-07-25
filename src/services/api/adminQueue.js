@@ -49,3 +49,7 @@ export const adminUnassignJob = (jobId, note = '') =>
  */
 export const adminRefundJob = (paymentIntentId) =>
   post('refundPayment', { paymentIntentId, reason: 'requested_by_customer' });
+
+/** Manual status override (support escape hatch) — audit-logged server-side. */
+export const adminSetJobStatus = (jobId, newStatus, note = '') =>
+  post('adminSetJobStatus', { jobId, newStatus, note });
