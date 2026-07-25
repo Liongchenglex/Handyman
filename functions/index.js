@@ -2886,8 +2886,12 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
                 const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
                 const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
                 if (hmPhone) {
-                  await sendTwilioMessage(
+                  // Template-first: the handyman didn't just reply, so
+                  // they may be outside the 24h session window (63016).
+                  await sendTwilioTemplateMessage(
                     formatPhoneToWhatsApp(hmPhone),
+                    process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                    { '1': jobShortId, '2': displayDate, '3': String(proposal.proposedTime) },
                     `✅ Customer confirmed: Job #${jobShortId} is set for ${displayDate} at ${proposal.proposedTime}.`
                   );
                 }
@@ -3031,8 +3035,12 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             try {
               const job = changeResult.job;
               if (job && job.customerPhone) {
-                await sendTwilioMessage(
+                // Template-first: the customer picked on the web page, so
+                // they may have no open session window (63016).
+                await sendTwilioTemplateMessage(
                   formatPhoneToWhatsApp(job.customerPhone),
+                  process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                  { '1': jobShortId, '2': displayDate, '3': String(pick.pickedTime) },
                   `✅ Confirmed! Your visit for Job #${jobShortId} is set for *${displayDate}* at *${pick.pickedTime}* — the time you picked. See you then! 🔧`
                 );
               }
@@ -4862,9 +4870,13 @@ exports.adminSetSchedule = functions.https.onRequest(async (req, res) => {
         weekday: 'long', day: 'numeric', month: 'long',
       });
       try {
+        // Template-first for both: an admin set-time is business-initiated
+        // to parties who may have no open session window (63016).
         if (job.customerPhone) {
-          await sendTwilioMessage(
+          await sendTwilioTemplateMessage(
             formatPhoneToWhatsApp(job.customerPhone),
+            process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+            { '1': jobShortId, '2': displayDate, '3': String(newTime) },
             `📅 Update on Job #${jobShortId}: your visit is now set for *${displayDate}* at *${newTime}* — arranged with our team. See you then! 🔧`
           );
         }
@@ -4872,8 +4884,10 @@ exports.adminSetSchedule = functions.https.onRequest(async (req, res) => {
           const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
           const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
           if (hmPhone) {
-            await sendTwilioMessage(
+            await sendTwilioTemplateMessage(
               formatPhoneToWhatsApp(hmPhone),
+              process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+              { '1': jobShortId, '2': displayDate, '3': String(newTime) },
               `📅 Our team set Job #${jobShortId} to ${displayDate} at ${newTime}. Please plan for it.`
             );
           }
