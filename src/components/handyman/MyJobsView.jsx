@@ -105,7 +105,7 @@ const MyJobsView = ({ user, onViewChange }) => {
                     )}
                   </div>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-                    Job ID: {job.id} • Accepted {job.acceptedAt}
+                    <span title={job.id}>Job #{job.id.slice(-6)}</span> • Accepted {job.acceptedAt}
                   </p>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
                     Customer: {job.customerName}

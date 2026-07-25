@@ -136,7 +136,8 @@ const JobCard = () => {
                   {getUrgencyBadge(job.urgency)}
                 </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 break-words">
-                  Job ID: {job.id} • Posted {job.postedAt}
+                  {/* Short id matches WhatsApp messages + admin views; full id on hover */}
+                  <span title={job.id}>Job #{job.id.slice(-6)}</span> • Posted {job.postedAt}
                 </p>
               </div>
               <div className="text-right flex-shrink-0">
