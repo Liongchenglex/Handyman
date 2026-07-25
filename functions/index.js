@@ -4634,8 +4634,14 @@ exports.submitSchedulePick = functions.https.onRequest(async (req, res) => {
         const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
         const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
         if (hmPhone) {
-          await sendTwilioMessage(
+          // Template-first: this is business-initiated to the HANDYMAN,
+          // who often has no open 24h session with our number — a
+          // freeform send dies with Twilio 63016 (observed live). The
+          // freeform body remains the sandbox/in-session fallback.
+          await sendTwilioTemplateMessage(
             formatPhoneToWhatsApp(hmPhone),
+            process.env.TWILIO_TEMPLATE_SCHEDULE_PICK_APPROVAL,
+            { '1': jobShortId, '2': displayDate, '3': String(time) },
             `📅 The customer picked a visit time for Job #${jobShortId}: *${displayDate}* at *${time}*.${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to approve\n👉 Reply *NO* if you can't make it (our team will step in)`
           );
           await openPrompt({
