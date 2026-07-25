@@ -1803,6 +1803,24 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         ],
       });
 
+      // Tell the handyman their money is on the way — with the payout
+      // timing expectation, so "where's my money?" support pings answer
+      // themselves. Template-first (business-initiated, likely outside
+      // any session window); best-effort, never blocks the release.
+      try {
+        const hmPhone = handymanData.phone || null;
+        if (hmPhone) {
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            process.env.TWILIO_TEMPLATE_PAYMENT_RELEASED,
+            { '1': jobId.slice(-6), '2': handymanPayout.toFixed(2) },
+            `💰 Payment released for Job #${jobId.slice(-6)}: S$${handymanPayout.toFixed(2)} has been transferred to your Stripe account.\n\nIt typically reaches your bank in 2–4 business days (your first-ever payout can take 7–14 days while Stripe verifies your account).`
+          );
+        }
+      } catch (notifyErr) {
+        console.error('⚠️ Payment-released notice failed (release stands):', notifyErr);
+      }
+
       await writeAuditLog('fund_release', decodedToken, {
         jobId,
         handymanId,
