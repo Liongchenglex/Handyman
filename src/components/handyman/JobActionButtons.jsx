@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { sendJobCompletionNotification } from '../../services/whatsappService';
+import CancelJobModal from './CancelJobModal';
 
 /**
  * JobActionButtons Component
@@ -28,6 +29,7 @@ const JobActionButtons = ({
   // Tracks a successful completion so the button locks into its terminal
   // "Marked as Completed" state immediately, before the parent list refetches.
   const [justCompleted, setJustCompleted] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
 
   // Synchronous re-entrancy guard. React state updates (setIsProcessing) are
   // asynchronous, so a rapid double-click can fire two completion writes before
@@ -42,6 +44,20 @@ const JobActionButtons = ({
     justCompleted ||
     job.status === 'pending_confirmation' ||
     job.status === 'completed';
+
+  // Cancel is available in the same window the server enforces:
+  // assigned job still in progress, completion poll not yet sent.
+  const canCancel = job.status === 'in_progress' && !job.completionPollSentAt && !isCompleted;
+
+  const handleCancelled = () => {
+    setShowCancelModal(false);
+    alert('Job cancelled. It has been returned to the job board and the customer has been notified.');
+    if (variant === 'full') {
+      navigate('/handyman-dashboard');
+    } else if (onStatusChange) {
+      onStatusChange();
+    }
+  };
 
   /**
    * Check if the job's scheduled date has arrived.
@@ -250,6 +266,23 @@ const JobActionButtons = ({
             ? `You can mark this job as complete on or after ${formatPreferredDate()}`
             : 'Mark this job as complete to notify the customer'}
         </p>
+
+        {canCancel && (
+          <button
+            onClick={() => setShowCancelModal(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 px-6 py-3 rounded-xl hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined">event_busy</span>
+            Can't do this job? Cancel it
+          </button>
+        )}
+
+        <CancelJobModal
+          job={job}
+          isOpen={showCancelModal}
+          onClose={() => setShowCancelModal(false)}
+          onCancelled={handleCancelled}
+        />
       </div>
     );
   }
@@ -309,6 +342,23 @@ const JobActionButtons = ({
           View Job Details
         </button>
       )}
+
+      {canCancel && (
+        <button
+          onClick={() => setShowCancelModal(true)}
+          className="flex items-center justify-center gap-2 border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 px-4 py-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors font-medium"
+        >
+          <span className="material-symbols-outlined text-sm">event_busy</span>
+          Cancel Job
+        </button>
+      )}
+
+      <CancelJobModal
+        job={job}
+        isOpen={showCancelModal}
+        onClose={() => setShowCancelModal(false)}
+        onCancelled={handleCancelled}
+      />
     </div>
   );
 };

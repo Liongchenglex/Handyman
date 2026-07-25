@@ -89,28 +89,6 @@ export const confirmPayment = async (paymentIntentId) => {
 };
 
 /**
- * Release escrow and split payment (10% cofounder, 10% operator, 80% handyman)
- *
- * @param {Object} releaseData
- * @param {string} releaseData.paymentIntentId - Payment intent ID
- * @param {string} releaseData.jobId - Job ID
- * @param {number} releaseData.serviceFee - Service fee in dollars
- * @param {string} releaseData.handymanAccountId - Handyman's Stripe account ID
- * @param {string} releaseData.cofounderAccountId - Cofounder's Stripe account ID
- * @param {string} releaseData.operatorAccountId - Operator's Stripe account ID
- * @returns {Promise<Object>} Transfer results
- */
-export const releaseEscrowAndSplit = async (releaseData) => {
-  try {
-    const response = await axios.post(`${BASE_URL}/releaseEscrowAndSplit`, releaseData);
-    return response.data;
-  } catch (error) {
-    console.error('Error releasing escrow:', error);
-    throw error;
-  }
-};
-
-/**
  * Refund a payment
  *
  * @param {string} paymentIntentId - Payment intent ID

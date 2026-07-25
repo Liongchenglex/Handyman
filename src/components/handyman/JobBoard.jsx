@@ -7,6 +7,9 @@ import ExpressInterestButton from './ExpressInterestButton';
 import { getAvailableJobs } from '../../services/api/jobs';
 import { subscribeToCollection } from '../../services/firebase';
 
+// Job sorting utilities
+import { compareByDateNeeded } from '../../utils/jobHelpers';
+
 /**
  * JobBoard Component
  *
@@ -27,7 +30,7 @@ const JobBoard = ({
     budgetRange: '',
     location: '',
     urgency: '',
-    sortBy: 'newest'
+    sortBy: 'date-needed'
   });
 
   // Set up real-time listener for jobs (automatically syncs with Firebase)
@@ -102,6 +105,7 @@ const JobBoard = ({
   ];
 
   const sortOptions = [
+    { label: 'Date Needed', value: 'date-needed' },
     { label: 'Newest First', value: 'newest' },
     { label: 'Highest Budget', value: 'budget-high' },
     { label: 'Lowest Budget', value: 'budget-low' },
@@ -137,6 +141,8 @@ const JobBoard = ({
   // Sort jobs
   const sortedJobs = [...filteredJobs].sort((a, b) => {
     switch (selectedFilters.sortBy) {
+      case 'date-needed':
+        return compareByDateNeeded(a, b);
       case 'budget-high':
         return b.estimatedBudget - a.estimatedBudget;
       case 'budget-low':
@@ -345,7 +351,7 @@ const JobBoard = ({
                   budgetRange: '',
                   location: '',
                   urgency: '',
-                  sortBy: 'newest'
+                  sortBy: 'date-needed'
                 });
               }}
               className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"

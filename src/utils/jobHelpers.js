@@ -97,3 +97,47 @@ export const getStatusText = (status) => {
 export const formatPhoneForWhatsApp = (phone) => {
   return phone.replace(/[^0-9]/g, '');
 };
+
+/**
+ * Job board "Date Needed" comparator (default board sort).
+ *
+ * Ordering (reassignment spec §7):
+ *   1. ASAP/Immediate jobs first, newest-posted first among them —
+ *      anything that isn't explicitly scheduled counts as ASAP.
+ *   2. Scheduled jobs by soonest preferredDate.
+ *   3. Scheduled jobs missing a date sink to the very end (unknown
+ *      urgency shouldn't outrank a known near date).
+ *
+ * NaN safety: `new Date(x).getTime()` is NaN for missing/unparseable
+ * values, and `Infinity - Infinity` is also NaN — either would make
+ * Array.prototype.sort behave unpredictably. `timeOr` normalizes any
+ * missing/unparseable value to an explicit fallback so the comparator
+ * always returns a real number.
+ */
+export const compareByDateNeeded = (a, b) => {
+  const isAsap = (job) => job.preferredTiming !== 'Schedule';
+  // Millisecond timestamp for `value`, or `fallback` when the value is
+  // missing or fails to parse — comparator must never return NaN.
+  // Handles both ISO strings (preferredDate from the booking form) and
+  // Firestore Timestamp objects (createdAt is written with
+  // serverTimestamp() and arrives from subscriptions as a Timestamp,
+  // which `new Date(...)` cannot parse).
+  const timeOr = (value, fallback) => {
+    if (value && typeof value.toMillis === 'function') {
+      return value.toMillis();
+    }
+    const t = value ? new Date(value).getTime() : NaN;
+    return Number.isNaN(t) ? fallback : t;
+  };
+
+  if (isAsap(a) && isAsap(b)) {
+    return timeOr(b.createdAt || b.postedAt, 0) - timeOr(a.createdAt || a.postedAt, 0);
+  }
+  if (isAsap(a)) return -1;
+  if (isAsap(b)) return 1;
+
+  const aTime = timeOr(a.preferredDate, Infinity);
+  const bTime = timeOr(b.preferredDate, Infinity);
+  if (aTime === bTime) return 0; // covers the both-Infinity (both missing/unparseable) case
+  return aTime - bTime;
+};

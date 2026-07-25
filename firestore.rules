@@ -42,12 +42,14 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.admin == true;
     }
 
-    // Fields on a job document that represent settled financial state.
-    // Clients (customer or handyman) must NEVER mutate these directly —
-    // they are written exclusively by Cloud Functions (Admin SDK) in
-    // response to Stripe events (payment capture, transfer, refund) or
-    // admin actions. Mutating any of them client-side would let a user
-    // forge payment status, hijack a transfer, or fake a refund.
+    // Fields on a job document that represent settled financial state, plus
+    // the reassignment audit trail. Clients (customer or handyman) must
+    // NEVER mutate these directly — they are written exclusively by Cloud
+    // Functions (Admin SDK) in response to Stripe events (payment capture,
+    // transfer, refund), admin actions, or (for the reassignment fields)
+    // the cancelJobAssignment flow. Mutating any of them client-side would
+    // let a user forge payment status, hijack a transfer, fake a refund, or
+    // forge their own reassignment history to dodge the re-claim block below.
     //
     // Notes on what's intentionally NOT here:
     //   - paymentResult / paymentIntentId / paymentCompletedAt are written
@@ -74,12 +76,51 @@ service cloud.firestore {
         'transferReversalId',
         'chargeId',
         'refundId',
-        'refundedAmount'
+        'refundedAmount',
+        'assignmentHistory',
+        'previousHandymanIds',
+        'reassignmentCount',
+        'cancelledLastBy',
+        'lastCancelledAt'
       ];
     }
 
     function touchesJobSystemFields() {
       return request.resource.data.diff(resource.data).affectedKeys().hasAny(jobSystemFields());
+    }
+
+    // System fields a client may never write even at CREATE time.
+    // paymentStatus is deliberately absent from this list because the
+    // booking flow legitimately initializes it — but only ever to
+    // 'pending' (pinned separately in the jobs create rule). Every later
+    // value ('succeeded', 'released', ...) is written exclusively by
+    // Cloud Functions. Without this create-time deny, a customer could
+    // forge previousHandymanIds (locking a handyman out of a job),
+    // fabricate assignmentHistory shown to the admin at fund release,
+    // or create a job with paymentStatus 'succeeded' and trigger the
+    // handyman fan-out for a job that was never paid.
+    function jobCreateDeniedFields() {
+      return [
+        'paymentSucceededAt',
+        'paymentReleasedAt',
+        'paymentReleasedBy',
+        'paymentRefundedAt',
+        'paymentReleaseError',
+        'paymentReleaseFailedAt',
+        'paymentBreakdown',
+        'escrowReleased',
+        'priceAdjustment',
+        'transferId',
+        'transferReversalId',
+        'chargeId',
+        'refundId',
+        'refundedAmount',
+        'assignmentHistory',
+        'previousHandymanIds',
+        'reassignmentCount',
+        'cancelledLastBy',
+        'lastCancelledAt'
+      ];
     }
 
     // Users collection
@@ -114,9 +155,14 @@ service cloud.firestore {
       // live jobs collection.
       allow read: if isSignedIn();
 
-      // Customers can create jobs (including anonymous users)
+      // Customers can create jobs (including anonymous users).
+      // System fields cannot be forged at create time (see
+      // jobCreateDeniedFields), and paymentStatus — which the booking
+      // flow does write here — is pinned to its initial 'pending' value.
       allow create: if isSignedIn() &&
-                      request.resource.data.customerId == request.auth.uid;
+                      request.resource.data.customerId == request.auth.uid &&
+                      !request.resource.data.keys().hasAny(jobCreateDeniedFields()) &&
+                      request.resource.data.get('paymentStatus', 'pending') == 'pending';
 
       // Job owner or assigned handyman can update workflow fields. Financial
       // and system fields (see jobSystemFields()) are NEVER writable by
@@ -138,7 +184,15 @@ service cloud.firestore {
           (
             isOwner(resource.data.customerId) ||
             (resource.data.handymanId != null && isOwner(resource.data.handymanId)) ||
-            (resource.data.handymanId == null && isHandyman() && request.resource.data.handymanId == request.auth.uid)
+            (
+              resource.data.handymanId == null &&
+              isHandyman() &&
+              request.resource.data.handymanId == request.auth.uid &&
+              // A handyman who cancelled this job cannot re-claim it
+              // (reassignment spec §6). previousHandymanIds is written
+              // only by cancelJobAssignment via the Admin SDK.
+              !(request.auth.uid in resource.data.get('previousHandymanIds', []))
+            )
           )
         )
       );

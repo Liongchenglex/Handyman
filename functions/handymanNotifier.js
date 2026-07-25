@@ -29,6 +29,19 @@ const NOTIFICATION_STATUS = Object.freeze({
 });
 
 /**
+ * Marker doc ID for the (job, handyman, round) idempotency key.
+ *
+ * Round 0 stays the bare handyman id so markers written before the
+ * reassignment feature shipped keep suppressing round-0 duplicates.
+ * Each reassignment bumps the job's reassignmentCount, giving the next
+ * fan-out a fresh namespace — round 1 sends are not suppressed by
+ * round 0 markers, and every round's audit trail is preserved.
+ */
+function notificationMarkerId(handymanId, round) {
+  return round ? `${handymanId}_r${round}` : handymanId;
+}
+
+/**
  * Return up to `cap` handymen eligible to be notified about `job`.
  *
  * Filters at the Firestore query level for the strict criteria (active,
@@ -43,7 +56,7 @@ const NOTIFICATION_STATUS = Object.freeze({
  * rates this is negligible; a Phase 2 tuning knob (over-fetch factor)
  * can compensate if we ever need it.
  */
-async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP) {
+async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP, excludeIds = []) {
   const snapshot = await db.collection('handymen')
     .where('status', '==', 'active')
     .where('verified', '==', true)
@@ -54,7 +67,10 @@ async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP) {
 
   return snapshot.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((h) => h.notifyOnNewJob !== false);
+    .filter((h) => h.notifyOnNewJob !== false)
+    // Handymen who previously cancelled this job never get re-notified
+    // about it (reassignment spec §6).
+    .filter((h) => !excludeIds.includes(h.id));
 }
 
 /**
@@ -136,9 +152,10 @@ async function sendJobNotification({
   db,
   sendTwilioTemplateMessage,
   checkRateLimit,
+  round = 0,
 }) {
   const markerRef = db.collection('jobs').doc(jobId)
-    .collection('notifications').doc(handyman.id);
+    .collection('notifications').doc(notificationMarkerId(handyman.id, round));
 
   try {
     await markerRef.create({
@@ -218,17 +235,19 @@ async function runFanOut({
   sendTwilioTemplateMessage,
   checkRateLimit,
   logger = console,
+  round = 0,
+  excludeIds = [],
 }) {
-  const handymen = await pickEligibleHandymen(job, db, NOTIFY_FANOUT_CAP);
+  const handymen = await pickEligibleHandymen(job, db, NOTIFY_FANOUT_CAP, excludeIds);
 
-  logger.log(`[handyman-notify] job=${jobId} category=${job.serviceType} eligible=${handymen.length} cap=${NOTIFY_FANOUT_CAP}`);
+  logger.log(`[handyman-notify] job=${jobId} category=${job.serviceType} round=${round} eligible=${handymen.length} excluded=${excludeIds.length} cap=${NOTIFY_FANOUT_CAP}`);
 
   if (handymen.length === 0) {
     return { attempted: 0, sent: 0, skipped: 0, failed: 0, alreadyClaimed: 0, results: [] };
   }
 
   const results = await Promise.all(handymen.map((h) =>
-    sendJobNotification({ job, jobId, handyman: h, db, sendTwilioTemplateMessage, checkRateLimit })
+    sendJobNotification({ job, jobId, handyman: h, db, sendTwilioTemplateMessage, checkRateLimit, round })
       .catch((err) => ({
         status: NOTIFICATION_STATUS.ERROR,
         handymanId: h.id,
@@ -251,6 +270,7 @@ async function runFanOut({
 
 module.exports = {
   NOTIFICATION_STATUS,
+  notificationMarkerId,
   pickEligibleHandymen,
   extractDistrict,
   composeMessage,
