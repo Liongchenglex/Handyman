@@ -180,14 +180,6 @@ const StripeCardForm = ({
         )}
       </button>
 
-      {/* Test Cards Info (only in test mode) */}
-      <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-100 dark:bg-gray-800 rounded">
-        <p className="font-semibold mb-1">Test Mode - Use these test cards:</p>
-        <p>• Success: 4242 4242 4242 4242</p>
-        <p>• 3D Secure: 4000 0027 6000 3184</p>
-        <p>• Decline: 4000 0000 0000 0002</p>
-        <p className="mt-1 text-gray-400">Use any future expiry date and any 3-digit CVC</p>
-      </div>
     </form>
   );
 };
