@@ -7,6 +7,7 @@ import PaymentForm from './PaymentForm';
 import FixedStepperContainer from '../common/FixedStepperContainer';
 import ConfirmationScreen from './ConfirmationScreen';
 import { scrollToFirstError } from '../../utils/scrollToFirstError';
+import { TIME_SLOTS } from '../../utils/timeSlots';
 
 // Firebase imports
 import { createAnonymousUser } from '../../services/firebase';
@@ -240,12 +241,8 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   const timingOptions = ['Immediate', 'Schedule'];
   const materialsOptions = ['I will buy', 'Handyman to buy (surcharge applies)'];
   const siteVisitOptions = ['Yes', 'No'];
-  const timeSlots = [
-    '09:00 AM - 11:00 AM',
-    '11:00 AM - 01:00 PM',
-    '01:00 PM - 03:00 PM',
-    '03:00 PM - 05:00 PM'
-  ];
+  // Shared with every handyman/customer time picker — see utils/timeSlots.js.
+  const timeSlots = TIME_SLOTS;
 
   // Keep the selected time valid: if it falls into the past (e.g. the
   // date is switched to today, or the page sits open past a slot),

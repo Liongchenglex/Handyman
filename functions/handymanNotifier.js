@@ -18,6 +18,7 @@ const admin = require('firebase-admin');
 const {
   NOTIFY_FANOUT_CAP,
   NOTIFY_MAX_PER_HANDYMAN_PER_HOUR,
+  NOTIFY_FILTER_BY_SERVICE_TYPE,
 } = require('./notificationConfig');
 
 const NOTIFICATION_STATUS = Object.freeze({
@@ -57,13 +58,17 @@ function notificationMarkerId(handymanId, round) {
  * can compensate if we ever need it.
  */
 async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP, excludeIds = []) {
-  const snapshot = await db.collection('handymen')
+  let query = db.collection('handymen')
     .where('status', '==', 'active')
     .where('verified', '==', true)
-    .where('stripeOnboardingCompleted', '==', true)
-    .where('serviceTypes', 'array-contains', job.serviceType)
-    .limit(cap)
-    .get();
+    .where('stripeOnboardingCompleted', '==', true);
+  // Per-trade targeting is a config toggle (off while the roster is
+  // small — see notificationConfig.js). When off, every eligible
+  // handyman hears about every job regardless of serviceTypes.
+  if (NOTIFY_FILTER_BY_SERVICE_TYPE) {
+    query = query.where('serviceTypes', 'array-contains', job.serviceType);
+  }
+  const snapshot = await query.limit(cap).get();
 
   return snapshot.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
@@ -126,7 +131,11 @@ function composeMessage(job, jobId) {
       '2': String(job.estimatedBudget || ''),
       '3': timing,
       '4': districtLabel,
-      '5': deepLink,
+      // Raw job id, NOT the full URL: the approved Meta template
+      // hardcodes the domain (…/job-details/{{5}}), so passing the full
+      // deep link renders a doubled URL. The freeform fallback carries
+      // the full deepLink and is unaffected.
+      '5': String(jobId),
     },
     fallback,
     deepLink,

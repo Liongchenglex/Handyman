@@ -1,9 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { sendJobAcceptanceNotification } from '../../services/whatsappService';
+import { proposeSchedule, getProposalDateBounds } from '../../services/api/jobSchedule';
+import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../../utils/timeSlots';
 
 /**
  * ExpressInterestButton Component
@@ -38,11 +40,38 @@ const ExpressInterestButton = ({
   // the duplicate call, preventing duplicate Firebase writes.
   const submittingRef = useRef(false);
 
-  // A job can only be claimed while it is still open ('pending') and unassigned.
-  // If it already has a handymanId / a non-pending status, interest was already
-  // expressed (possibly by this user on a previous click), so the button must
-  // not allow another submission.
-  const alreadyClaimed = expressed || job.status !== 'pending' || !!job.handymanId;
+  // ASAP jobs must carry a proposed visit time WITH the claim
+  // (lifecycle spec Scenario 4): the accept modal requires it, so an
+  // accepted ASAP job can never sit timeless.
+  const isAsapJob = job.preferredTiming !== 'Schedule';
+  // Date-picker bounds (today … +90d) matching the server's validation.
+  const dateBounds = getProposalDateBounds();
+  // ASAP default: the visit date is pre-filled with TODAY and the time
+  // with today's first still-available slot, so the common case is a
+  // zero-edit confirm — but both stay editable (an evening claim often
+  // means "tomorrow morning"), because this date/slot becomes the job's
+  // preferredDate/Time and drives the completion poll.
+  const [proposedDate, setProposedDate] = useState(dateBounds.min);
+  const [proposedTime, setProposedTime] = useState(() => firstAvailableSlot(dateBounds.min));
+
+  // Keep the slot valid when the date changes (or when today's slots
+  // have all passed): snap to the first available slot for the new
+  // date, mirroring the booking form's behavior.
+  useEffect(() => {
+    if (!proposedTime || isSlotInPastForDate(proposedTime, proposedDate)) {
+      setProposedTime(firstAvailableSlot(proposedDate));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposedDate]);
+
+  // A job can only be claimed while it is still open ('pending') and
+  // unassigned. Who claimed it decides the button copy: "Interest
+  // Expressed" is only true for THIS user's claim — a late WhatsApp
+  // deep-link tap on someone else's job must read "No longer
+  // available", not imply the viewer claimed it.
+  const claimedByMe = expressed || !!(user && job.handymanId === user.uid);
+  const claimedByOther = !claimedByMe && (job.status !== 'pending' || !!job.handymanId);
+  const alreadyClaimed = claimedByMe || claimedByOther;
 
   // A handyman who cancelled this job cannot re-claim it. Firestore
   // rules enforce this server-side; this flag just explains it in the UI
@@ -79,6 +108,13 @@ const ExpressInterestButton = ({
     // firing duplicate writes before React re-renders the disabled state.
     if (submittingRef.current) return;
     submittingRef.current = true;
+
+    // ASAP claim requires a proposed visit time (Scenario 4).
+    if (isAsapJob && (!proposedDate || !proposedTime.trim())) {
+      alert('Please pick a proposed visit date and time first.');
+      submittingRef.current = false;
+      return;
+    }
 
     setIsLoading(true);
     setShowConfirmModal(false);
@@ -129,7 +165,32 @@ const ExpressInterestButton = ({
         }
       }
 
-      alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
+      // Scenario 4: submit the visit-time proposal the modal required.
+      // Server-side it messages the customer and opens the approval
+      // prompt. A failure here never un-claims the job — the job page's
+      // "Set visit time" button is the retry path.
+      let proposalSent = true;
+      if (isAsapJob) {
+        try {
+          const proposalResult = await proposeSchedule(job.id, proposedDate, proposedTime.trim(), '');
+          proposalSent = !!proposalResult.success;
+          if (!proposalSent) {
+            console.error('❌ Visit-time proposal failed (retry from job page):', proposalResult.error);
+          }
+        } catch (proposalErr) {
+          proposalSent = false;
+          console.error('❌ Visit-time proposal failed (retry from job page):', proposalErr);
+        }
+      }
+
+      // The handyman must know when the job is theirs but the customer
+      // was never asked about the time — otherwise the job sits in the
+      // exact "accepted but timeless" state Scenario 4 exists to prevent.
+      if (proposalSent) {
+        alert(`Interest expressed! Job ${job.id} has been assigned to you. Customer will be notified via WhatsApp!`);
+      } else {
+        alert(`Job ${job.id} is assigned to you, but we could not send your proposed visit time to the customer. Please tap "Set visit time" on the job page to send it again.`);
+      }
 
       // Execute callbacks (board/card cleanup) before navigating away.
       if (onJobSelect) {
@@ -167,8 +228,12 @@ const ExpressInterestButton = ({
     }
   };
 
-  // Confirmation Modal Component
-  const ConfirmationModal = () => (
+  // Confirmation modal. Rendered via a plain function call, NOT as a
+  // <Component/>: a nested component function gets a new identity every
+  // parent render, which makes React remount the whole modal subtree on
+  // each keystroke — the controlled date/time inputs inside would lose
+  // focus after every character typed.
+  const renderConfirmationModal = () => (
     showConfirmModal && (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-md w-full p-6">
@@ -199,6 +264,42 @@ const ExpressInterestButton = ({
               </ul>
             </div>
 
+            {isAsapJob && (
+              <div className="mb-4">
+                <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">
+                  This is an ASAP job — propose your visit time <span className="text-red-500">*</span>
+                </p>
+                <label htmlFor="asap-date" className="sr-only">Visit date</label>
+                <input
+                  id="asap-date"
+                  type="date"
+                  min={dateBounds.min}
+                  max={dateBounds.max}
+                  value={proposedDate}
+                  onChange={(e) => setProposedDate(e.target.value)}
+                  className="w-full mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
+                />
+                <label htmlFor="asap-time" className="sr-only">Visit time slot</label>
+                <select
+                  id="asap-time"
+                  value={proposedTime}
+                  onChange={(e) => setProposedTime(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
+                >
+                  <option value="">Select a time slot…</option>
+                  {TIME_SLOTS.map((slot) => (
+                    <option key={slot} value={slot} disabled={isSlotInPastForDate(slot, proposedDate)}>
+                      {slot}{isSlotInPastForDate(slot, proposedDate) ? ' (passed)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Set for today — change the date only if you'll visit another day.
+                  The customer will be asked to approve this time on WhatsApp.
+                </p>
+              </div>
+            )}
+
             <p className="text-sm text-gray-600 dark:text-gray-400">
               By expressing interest, you commit to providing professional service if selected by the customer.
             </p>
@@ -214,7 +315,7 @@ const ExpressInterestButton = ({
             </button>
             <button
               onClick={handleConfirmInterest}
-              disabled={isLoading}
+              disabled={isLoading || (isAsapJob && (!proposedDate || !proposedTime.trim()))}
               className="flex-1 bg-primary text-black font-bold py-3 px-4 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? 'Processing...' : 'Confirm Interest'}
@@ -242,7 +343,12 @@ const ExpressInterestButton = ({
             <span className="material-symbols-outlined">block</span>
             You previously cancelled this job
           </>
-        ) : alreadyClaimed ? (
+        ) : claimedByOther ? (
+          <>
+            <span className="material-symbols-outlined">event_busy</span>
+            No longer available
+          </>
+        ) : claimedByMe ? (
           <>
             <span className="material-symbols-outlined">check_circle</span>
             Interest Expressed
@@ -256,7 +362,7 @@ const ExpressInterestButton = ({
       </button>
 
       {/* Confirmation Modal */}
-      <ConfirmationModal />
+      {renderConfirmationModal()}
     </>
   );
 };

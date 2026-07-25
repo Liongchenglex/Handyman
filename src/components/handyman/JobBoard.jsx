@@ -390,7 +390,7 @@ const JobBoard = ({
                         {getUrgencyBadge(job.urgency)}
                       </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Posted {formatPostedTime(job.createdAt)} • Job #{job.id}
+                        Posted {formatPostedTime(job.createdAt)} • <span title={job.id}>Job #{job.id.slice(-6)}</span>
                       </p>
                     </div>
                     <div className="text-right">

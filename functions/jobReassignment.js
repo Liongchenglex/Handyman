@@ -99,6 +99,9 @@ function buildCancelUpdate(job, callerUid, { reason, note, nowIso }) {
     acceptedBy: admin.firestore.FieldValue.delete(),
     completionPollSentAt: admin.firestore.FieldValue.delete(),
     completionPollSentBy: admin.firestore.FieldValue.delete(),
+    // A new assignment era starts: stale sweep markers from the previous
+    // handyman must not suppress nudges/escalations for the next one.
+    sweepNudges: admin.firestore.FieldValue.delete(),
     cancelledLastBy: callerUid,
     lastCancelledAt: nowIso,
   };

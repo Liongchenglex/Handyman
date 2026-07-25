@@ -5,6 +5,7 @@ import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { projectConfig } from '../config/firebaseProject';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import ActiveJobsTable from '../components/admin/ActiveJobsTable';
 
 /**
  * AdminDashboard Component
@@ -272,6 +273,29 @@ const AdminDashboard = () => {
             )}
           </Link>
 
+          {/* All Jobs Card */}
+          <Link
+            to="/admin/jobs"
+            className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 hover:shadow-md transition-shadow group"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
+                <span className="material-symbols-outlined text-2xl text-blue-600 dark:text-blue-400">
+                  list_alt
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-gray-400 group-hover:text-primary transition-colors">
+                arrow_forward
+              </span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+              All Jobs
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+              Every job across all statuses
+            </p>
+          </Link>
+
           {/* Disputed Jobs Card */}
           <Link
             to="/admin/disputed-jobs"
@@ -380,6 +404,10 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
+
+        {/* Active jobs — Scenario 3 Trigger B: send the customer a
+            pick-time link when they ask for a schedule change. */}
+        <ActiveJobsTable />
       </main>
     </div>
   );

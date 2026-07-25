@@ -164,6 +164,20 @@ const TermsOfService = () => {
               <li><strong>Customer Confirmation</strong>: The Customer confirms job completion via WhatsApp notification.</li>
               <li><strong>Fund Release</strong>: Upon confirmation, funds are released to the Handyman's account.</li>
             </ol>
+
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">5.4 Payout Timing</h3>
+            <p className="text-gray-600 dark:text-gray-300 mb-2">
+              Released funds are transferred immediately to the Handyman's connected Stripe
+              account. The onward payout to the Handyman's bank account is processed by Stripe
+              on a daily schedule and typically arrives within 2–4 business days of release.
+              A connected account's first-ever payout may take longer (typically 7–14 days)
+              due to Stripe's standard verification holds.
+            </p>
+            <p className="text-gray-600 dark:text-gray-300">
+              These timings are indicative only: bank payout timing is controlled by Stripe
+              and the receiving bank, not by EasyDoneHandyman, and may vary with weekends,
+              public holidays and Stripe's risk checks.
+            </p>
           </section>
 
           {/* Section 6 */}

@@ -72,6 +72,68 @@ const {
   CancelError,
 } = require('./jobReassignment');
 
+// Schedule-change domain logic (F4 single writer). See
+// functions/scheduleService.js and the lifecycle spec §3/§4.3-4.4.
+const {
+  ScheduleError,
+  validateScheduleProposal,
+  buildScheduleChangeUpdate,
+} = require('./scheduleService');
+
+// Secure schedule links (F6) — token hashing + link issuance/revocation.
+// See functions/scheduleLinkService.js.
+const {
+  hashLinkToken,
+  issueScheduleLink,
+  revokeActiveLinks,
+} = require('./scheduleLinkService');
+
+// Stuck-state sweep detectors (lifecycle spec Scenario 12 / F5). See
+// functions/sweepService.js and
+// docs/superpowers/specs/2026-07-13-stuck-state-sweep-design.md.
+const {
+  SWEEP,
+  evaluatePrompt,
+  evaluateLink,
+  evaluateAsapJob,
+  evaluateUnclaimedJob,
+  buildAttentionUpdate,
+} = require('./sweepService');
+
+// Booking-time escrow capture decision (job lifecycle Scenario 0).
+// See functions/paymentCapture.js and
+// docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md.
+const { assessCaptureability, isUnexpectedStateError } = require('./paymentCapture');
+
+// Pending-prompt primitive — see functions/promptService.js and
+// docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md §3.
+const {
+  normalizePhoneKey,
+  interpretReply,
+  buildDisambiguationList,
+  findOpenPrompts,
+  markAnswered,
+  openPrompt,
+} = require('./promptService');
+
+// Reply options for the completion poll — shared by the handyman
+// "Mark Complete" proxy path and the daily auto-poll so both create
+// identical prompts. Keys mirror the quick-reply button texts and the
+// words the legacy regexes accepted.
+const COMPLETION_PROMPT_OPTIONS = {
+  'YES': 'confirm', 'CONFIRM COMPLETE': 'confirm', 'CONFIRM': 'confirm',
+  'NO': 'reject', 'REPORT ISSUE': 'reject', 'REPORT': 'reject', 'ISSUE': 'reject',
+  'Y': 'confirm', 'N': 'reject',
+};
+
+// Reply options for schedule-approval prompts (reschedule + ASAP
+// time-fixing). Keys mirror quick-reply button texts plus terse
+// replies; values are the dispatcher actions.
+const SCHEDULE_APPROVAL_OPTIONS = {
+  'YES': 'approve', 'Y': 'approve', 'APPROVE': 'approve', 'OK': 'approve',
+  'NO': 'decline', 'N': 'decline', 'DECLINE': 'decline',
+};
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -1741,6 +1803,24 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         ],
       });
 
+      // Tell the handyman their money is on the way — with the payout
+      // timing expectation, so "where's my money?" support pings answer
+      // themselves. Template-first (business-initiated, likely outside
+      // any session window); best-effort, never blocks the release.
+      try {
+        const hmPhone = handymanData.phone || null;
+        if (hmPhone) {
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            process.env.TWILIO_TEMPLATE_PAYMENT_RELEASED,
+            { '1': jobId.slice(-6), '2': handymanPayout.toFixed(2) },
+            `💰 Payment released for Job #${jobId.slice(-6)}: S$${handymanPayout.toFixed(2)} has been transferred to your Stripe account.\n\nIt typically reaches your bank in 2–4 business days (your first-ever payout can take 7–14 days while Stripe verifies your account).`
+          );
+        }
+      } catch (notifyErr) {
+        console.error('⚠️ Payment-released notice failed (release stands):', notifyErr);
+      }
+
       await writeAuditLog('fund_release', decodedToken, {
         jobId,
         handymanId,
@@ -2022,14 +2102,22 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // re-delivery. We use a Firestore transaction on /stripeEvents/{id} so
   // two concurrent deliveries can't both decide they're the "first".
   const eventRef = admin.firestore().collection('stripeEvents').doc(event.id);
+  // For booking-time captures, defer the dedup marker until AFTER the
+  // switch has handled the event successfully. The capture call itself
+  // is idempotency-keyed, so a redelivery re-running it is safe — but
+  // writing the marker up front would let a mid-capture crash get
+  // permanently swallowed as a "duplicate" on Stripe's retry.
+  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated';
   try {
     const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
       if (snap.exists) return false;
-      tx.set(eventRef, {
-        type: event.type,
-        receivedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      if (!deferDedupWrite) {
+        tx.set(eventRef, {
+          type: event.type,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
       return true;
     });
 
@@ -2046,6 +2134,96 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
   try {
     switch (event.type) {
+      case 'payment_intent.amount_capturable_updated': {
+        // Booking-time capture (job lifecycle Scenario 0). The customer's
+        // card confirmation just landed (manual-capture PI is now
+        // 'requires_capture'). Capture immediately so the money moves to
+        // the platform balance — an uncaptured authorization silently
+        // expires after ~7 days, which loses the escrow on any job whose
+        // lifecycle stretches (reschedules, second visits, swaps).
+        //
+        // We deliberately do NOT write paymentStatus here: the capture
+        // makes Stripe emit payment_intent.succeeded, whose handler below
+        // is the single writer of paymentStatus='succeeded' (and thereby
+        // the handyman fan-out trigger).
+        const capturablePI = event.data.object;
+        const verdict = assessCaptureability(capturablePI);
+        if (!verdict.shouldCapture) {
+          console.log(`ℹ️ Skipping booking-time capture for ${capturablePI && capturablePI.id}: ${verdict.reason}`);
+          break;
+        }
+
+        const captureJobId = capturablePI.metadata.jobId;
+        try {
+          // Idempotency key means a webhook redelivery (or a race with the
+          // legacy release-time capture) can never double-capture.
+          await stripe.paymentIntents.capture(capturablePI.id, {}, {
+            idempotencyKey: `capture-${capturablePI.id}`,
+          });
+          console.log(`✅ Captured payment at booking for job ${captureJobId} (${capturablePI.id})`);
+        } catch (captureErr) {
+          let msg = String(captureErr.message || '');
+          if (isUnexpectedStateError(captureErr)) {
+            // 'payment_intent_unexpected_state' covers two opposite
+            // situations: someone else already captured (benign race with
+            // the legacy release-time capture) OR the authorization
+            // expired/was canceled (real failure). Only the PI's current
+            // status can tell them apart.
+            let currentStatus = 'unknown';
+            try {
+              const currentPI = await stripe.paymentIntents.retrieve(capturablePI.id);
+              currentStatus = currentPI.status;
+            } catch (lookupErr) {
+              console.error(`⚠️ Could not re-fetch PI ${capturablePI.id} after capture error:`, lookupErr);
+            }
+            if (currentStatus === 'succeeded') {
+              // Benign: something else captured first.
+              console.log(`ℹ️ PaymentIntent ${capturablePI.id} already captured — nothing to do`);
+              break;
+            }
+            msg = `Capture failed — PaymentIntent status is '${currentStatus}' (not requires_capture): ${msg}`;
+          }
+          // Permanent failures (expired/canceled auth) would fail a Stripe
+          // retry identically, so we do NOT 500. Mark the job so the admin
+          // (and the future Scenario 12 sweep) can see it and act.
+          console.error(`❌ Booking-time capture failed for job ${captureJobId}:`, captureErr);
+          try {
+            await admin.firestore().collection('jobs').doc(captureJobId).update({
+              captureError: msg.slice(0, 500) || 'capture failed',
+              captureFailedAt: new Date().toISOString(),
+            });
+          } catch (markErr) {
+            console.error(`⚠️ Could not mark capture failure on job ${captureJobId}:`, markErr);
+          }
+        }
+        break;
+      }
+
+      case 'payment_intent.canceled': {
+        // Last-resort escrow alarm: if a manual-capture authorization is
+        // canceled (including Stripe's automatic ~7-day expiry,
+        // cancellation_reason 'expired'), the job's money is GONE — the
+        // admin must re-collect from the customer. Mark the job and alert.
+        const canceledPI = event.data.object;
+        const canceledJobId = canceledPI.metadata && canceledPI.metadata.jobId;
+        if (!canceledJobId) break;
+        const cancelReason = canceledPI.cancellation_reason || 'unknown';
+        console.error(`❌ PaymentIntent canceled for job ${canceledJobId} (reason: ${cancelReason}) — escrow lost`);
+        try {
+          await admin.firestore().collection('jobs').doc(canceledJobId).update({
+            captureError: `PaymentIntent canceled (${cancelReason}) — authorization no longer collectable`,
+            captureFailedAt: new Date().toISOString(),
+          });
+        } catch (markErr) {
+          console.error(`⚠️ Could not mark cancellation on job ${canceledJobId}:`, markErr);
+        }
+        await sendAdminEmail(
+          `❌ Payment authorization lost — Job #${String(canceledJobId).slice(-6)}`,
+          `<p>The payment authorization for job <strong>${canceledJobId}</strong> was canceled (reason: ${cancelReason}). No funds can be captured — contact the customer to re-collect payment.</p>`
+        );
+        break;
+      }
+
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object;
         const jobId = paymentIntent.metadata?.jobId;
@@ -2073,10 +2251,21 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
               'partially_refunded',
             ];
             if (laterStates.includes(current)) return;
-            tx.update(jobRef, {
+            const update = {
               paymentStatus: 'succeeded',
               paymentSucceededAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
+            };
+            // Server-side board release. The booking page also flips
+            // awaiting_payment → pending on payment success, but that
+            // client write can silently never happen (closed tab, network,
+            // crashed handler) — and a PAID job stuck in awaiting_payment
+            // is invisible to handymen and, worse, matches the
+            // cleanupAbandonedJobs sweep. The webhook is the reliable
+            // writer; the client flip remains only for immediacy.
+            if (snap.data().status === 'awaiting_payment') {
+              update.status = 'pending';
+            }
+            tx.update(jobRef, update);
           });
         }
         break;
@@ -2171,6 +2360,20 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
       default:
         // Unhandled event type
         break;
+    }
+
+    // Deferred dedup for capture events: recorded only after the switch
+    // completed, so a crash mid-capture lets Stripe's redelivery retry
+    // the (idempotent) capture instead of being swallowed as a duplicate.
+    if (deferDedupWrite) {
+      try {
+        await eventRef.set({
+          type: event.type,
+          receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (dedupWriteErr) {
+        console.error('Deferred dedup write failed (redelivery will re-run an idempotent capture):', dedupWriteErr);
+      }
     }
 
     res.json({ received: true });
@@ -2317,6 +2520,26 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
         }
 
         case 'job_completion': {
+          // Load the job and derive the customer phone from IT — never
+          // from the request body. Without this, any authenticated
+          // caller could bind answer-authority for an arbitrary jobId
+          // to their own phone and forge the completion confirmation
+          // the admin trusts at fund release.
+          let jobSnapshotData = null;
+          if (data.jobId) {
+            const jobSnap = await admin.firestore().collection('jobs').doc(data.jobId).get();
+            if (!jobSnap.exists) {
+              return res.status(404).json({ error: 'Job not found' });
+            }
+            jobSnapshotData = jobSnap.data();
+            const jobPhoneKey = String(jobSnapshotData.customerPhone || '').replace(/\D/g, '');
+            const requestPhoneKey = String(data.customerPhone || '').replace(/\D/g, '');
+            if (!jobPhoneKey || !(jobPhoneKey === requestPhoneKey || jobPhoneKey.endsWith(requestPhoneKey) || requestPhoneKey.endsWith(jobPhoneKey))) {
+              console.warn(`🚫 job_completion phone mismatch: job ${data.jobId} caller ${decodedToken.uid}`);
+              return res.status(403).json({ error: 'Forbidden: phone does not match the job' });
+            }
+          }
+
           const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
           const fallback = `Hello ${data.customerName}! 👋\n\nYour handyman *${data.handymanName}* has marked the following job as complete:\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nPlease confirm if the work has been completed to your satisfaction.\n\n👉 Reply *YES* to confirm completion\n👉 Reply *NO* to report an issue`;
 
@@ -2326,6 +2549,26 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
             { '1': data.customerName, '2': data.handymanName, '3': data.serviceType, '4': data.jobId },
             fallback
           );
+
+          // F2: record the question so the reply router can bind the
+          // customer's YES/NO to THIS job without phone-lookup guessing.
+          if (result.success && data.jobId) {
+            try {
+              await openPrompt({
+                db: admin.firestore(),
+                jobId: data.jobId,
+                type: 'completion_confirmation',
+                toPhone: jobSnapshotData.customerPhone,
+                toRole: 'customer',
+                question: `Has ${data.handymanName || 'your handyman'} completed the ${data.serviceType || 'job'}?`,
+                options: COMPLETION_PROMPT_OPTIONS,
+              });
+            } catch (promptErr) {
+              // Prompt bookkeeping must not fail the send — the legacy
+              // reply path still handles this job by phone lookup.
+              console.error(`⚠️ openPrompt failed for job ${data.jobId} (job_completion):`, promptErr);
+            }
+          }
           break;
         }
 
@@ -2356,6 +2599,106 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
 // ===================================
 
 /**
+ * Apply a customer's completion answer to a job, atomically.
+ *
+ * Extracted from the webhook so BOTH reply paths share one
+ * transaction: the prompt router (post-migration polls carry a prompt
+ * doc that names the job directly) and the legacy phone-lookup path
+ * (polls sent before the prompt migration deployed).
+ *
+ * The transaction re-checks status === 'pending_confirmation' (or the
+ * nightly auto-poll's 'in_progress' + completionPollSentAt state) so a
+ * double-tap or a stale prompt can never flip an already-decided job.
+ *
+ * @returns {{outcome: 'confirmed'|'disputed'|'already_processed', jobData?: object, recordedAs?: string}}
+ */
+async function applyCompletionAnswer({ db, jobId, isConfirm }) {
+  const jobRef = db.collection('jobs').doc(jobId);
+  let jobData;
+  try {
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(jobRef);
+      if (!fresh.exists) {
+        throw new Error('ALREADY_PROCESSED');
+      }
+      const freshData = fresh.data();
+      // Accept the answer while the question is actually open: either the
+      // handyman marked complete (pending_confirmation) or the nightly
+      // auto-poll asked the customer while the job stayed in_progress.
+      const pollOpen = freshData.status === 'in_progress' && !!freshData.completionPollSentAt;
+      if (freshData.status !== 'pending_confirmation' && !pollOpen) {
+        throw new Error('ALREADY_PROCESSED');
+      }
+      jobData = freshData;
+      if (isConfirm) {
+        tx.update(jobRef, {
+          status: 'pending_admin_approval',
+          customerConfirmedAt: new Date().toISOString(),
+          confirmedVia: 'whatsapp_reply',
+        });
+      } else {
+        tx.update(jobRef, {
+          status: 'disputed',
+          disputedAt: new Date().toISOString(),
+          disputedVia: 'whatsapp_reply',
+          disputeReason: 'Customer reported issue via WhatsApp reply',
+        });
+      }
+    });
+  } catch (txError) {
+    if (txError.message === 'ALREADY_PROCESSED') {
+      let recordedAs = 'already recorded';
+      try {
+        const snap = await jobRef.get();
+        const s = snap.exists ? snap.data().status : null;
+        if (s === 'pending_admin_approval') recordedAs = '✅ Confirmed';
+        else if (s === 'disputed') recordedAs = '⚠️ Issue Reported';
+      } catch (readErr) {
+        console.error('Could not read job status after ALREADY_PROCESSED:', readErr);
+      }
+      return { outcome: 'already_processed', recordedAs };
+    }
+    throw txError;
+  }
+  return { outcome: isConfirm ? 'confirmed' : 'disputed', jobData };
+}
+
+/**
+ * Apply a schedule change to a job, atomically (F4 single writer).
+ *
+ * Used by the webhook's schedule_approval dispatch (customer approved
+ * over WhatsApp) and, later, by admin-as-actor tooling (Scenario 12).
+ * The transaction re-checks status so a change can never land on a job
+ * that was cancelled or completed between proposal and approval.
+ *
+ * @returns {{outcome: 'applied'|'wrong_status', job?: object}}
+ */
+async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId }) {
+  const jobRef = db.collection('jobs').doc(jobId);
+  let jobData;
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(jobRef);
+      if (!snap.exists || snap.data().status !== 'in_progress') {
+        throw new Error('WRONG_STATUS');
+      }
+      jobData = snap.data();
+      const update = buildScheduleChangeUpdate(jobData, {
+        newDate, newTime, actor, via, note, promptId,
+        nowIso: new Date().toISOString(),
+      });
+      tx.update(jobRef, update);
+    });
+  } catch (err) {
+    if (err.message === 'WRONG_STATUS') {
+      return { outcome: 'wrong_status' };
+    }
+    throw err;
+  }
+  return { outcome: 'applied', job: jobData };
+}
+
+/**
  * WhatsApp Webhook Handler (Twilio)
  *
  * Handles incoming WhatsApp messages from Twilio.
@@ -2380,7 +2723,15 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     console.log('📥 Webhook body keys:', Object.keys(req.body || {}));
 
     const From = req.body.From;
-    const Body = req.body.Body;
+    const Body = req.body.Body || '';
+
+    // Inbound media (job-site photos etc.) — extracted early so a
+    // media-only message (empty Body) isn't rejected below.
+    const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0;
+    const mediaUrls = [];
+    for (let i = 0; i < numMedia; i++) {
+      if (req.body[`MediaUrl${i}`]) mediaUrls.push(req.body[`MediaUrl${i}`]);
+    }
 
     // Per-phone rate limit on incoming customer replies. Twilio retries
     // on 5xx, so we acknowledge with 200 (don't make Twilio retry) but
@@ -2398,7 +2749,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
     // Twilio also sends status callbacks (delivery receipts) that don't have Body.
     // These have a MessageStatus field instead — ignore them gracefully.
-    if (!From || !Body) {
+    if (!From || (!Body && mediaUrls.length === 0)) {
       const status = req.body.MessageStatus || req.body.SmsStatus;
       if (status) {
         // This is a delivery status callback, not an incoming message
@@ -2414,6 +2765,386 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     const messageText = Body.trim().toUpperCase();
 
     console.log(`📱 Incoming WhatsApp from ${customerPhone}: "${Body.trim()}"`);
+
+    // ------- Prompt-first routing (job lifecycle spec §3 F2) -------
+    const senderKey = normalizePhoneKey(From);
+    let openPrompts = [];
+    try {
+      openPrompts = await findOpenPrompts(admin.firestore(), senderKey);
+    } catch (promptLookupErr) {
+      // A missing index or transient error must not kill the webhook —
+      // fall through to the legacy path.
+      console.error('Prompt lookup failed (falling back to legacy):', promptLookupErr);
+    }
+
+    if (openPrompts.length > 0) {
+      const verdict = interpretReply(openPrompts, Body);
+
+      if (verdict.kind === 'answer') {
+        if (verdict.prompt.type === 'completion_confirmation') {
+          const isPromptConfirm = verdict.action === 'confirm';
+          const answerResult = await applyCompletionAnswer({
+            db: admin.firestore(),
+            jobId: verdict.prompt.jobId,
+            isConfirm: isPromptConfirm,
+          });
+
+          // Close the prompt AFTER the job write settles (either way the
+          // question is no longer open — 'already_processed' means it was
+          // decided elsewhere). The job transaction already committed, so
+          // a failure here must not 500 the webhook or skip the admin
+          // email / customer reply below — just log and continue.
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: answerResult.outcome,
+            });
+          } catch (markAnsweredErr) {
+            console.error(`⚠️ markAnswered failed for job ${verdict.prompt.jobId} (prompt stays open):`, markAnsweredErr);
+          }
+
+          if (answerResult.outcome === 'already_processed') {
+            await sendTwilioMessage(
+              From,
+              `ℹ️ Your ${isPromptConfirm ? 'confirmation' : 'report'} for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+            );
+            return res.status(200).json({ received: true, processed: false, reason: 'Prompt answer on already-processed job' });
+          }
+
+          if (answerResult.outcome === 'confirmed') {
+            await sendAdminNotificationEmail(answerResult.jobData, verdict.prompt.jobId);
+            await sendTwilioMessage(
+              From,
+              `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you confirmed by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe hope to serve you again! 🔧`
+            );
+            return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval', via: 'prompt' });
+          }
+
+          await sendTwilioMessage(
+            From,
+            `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`
+          );
+          return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
+        }
+
+        if (verdict.prompt.type === 'schedule_approval') {
+          const proposal = verdict.prompt.payload || {};
+          const jobShortId = String(verdict.prompt.jobId).slice(-6);
+
+          // Defensive: a prompt without a usable proposal (legacy doc,
+          // manual creation) must never crash the webhook — an
+          // undefined field value makes the Firestore update throw,
+          // 500s the handler, strands the prompt open, and puts Twilio
+          // into a retry loop. Close it out and hand the reply to the
+          // admin instead.
+          if (!proposal.proposedDate || !proposal.proposedTime) {
+            console.error(`⚠️ schedule_approval prompt ${verdict.prompt.id} has no usable payload — closing and forwarding`);
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: 'invalid_payload',
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'Schedule prompt without payload — forwarded to admin' });
+          }
+
+          if (verdict.action === 'approve') {
+            const changeResult = await applyScheduleChange({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              newDate: proposal.proposedDate,
+              newTime: proposal.proposedTime,
+              actor: senderKey,
+              via: 'whatsapp_reply',
+              note: proposal.note,
+              promptId: verdict.prompt.id,
+            });
+
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: changeResult.outcome,
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+
+            if (changeResult.outcome === 'wrong_status') {
+              await sendTwilioMessage(
+                From,
+                `ℹ️ This job's schedule can no longer be changed (Job #${jobShortId}). If something looks wrong, contact easydonehandyman@gmail.com.`
+              );
+              return res.status(200).json({ received: true, processed: false, reason: 'Schedule approval on non-in_progress job' });
+            }
+
+            // A settled schedule kills any outstanding pick link (F6:
+            // a stale link must never resurrect a settled schedule).
+            try {
+              await revokeActiveLinks({ db: admin.firestore(), jobId: verdict.prompt.jobId });
+            } catch (revokeErr) {
+              console.error('⚠️ Link revocation after schedule approval failed (continuing):', revokeErr);
+            }
+
+            // Confirm to the customer...
+            const displayDate = new Date(proposal.proposedDate).toLocaleDateString('en-SG', {
+              weekday: 'long', day: 'numeric', month: 'long',
+            });
+            await sendTwilioMessage(
+              From,
+              `✅ Confirmed! Your visit for Job #${jobShortId} is set for *${displayDate}* at *${proposal.proposedTime}*.\n\nSee you then! 🔧`
+            );
+
+            // ...and tell the handyman their proposal was accepted.
+            try {
+              const job = changeResult.job;
+              if (job && job.handymanId) {
+                const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
+                const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+                if (hmPhone) {
+                  // Template-first: the handyman didn't just reply, so
+                  // they may be outside the 24h session window (63016).
+                  await sendTwilioTemplateMessage(
+                    formatPhoneToWhatsApp(hmPhone),
+                    process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                    { '1': jobShortId, '2': displayDate, '3': String(proposal.proposedTime) },
+                    `✅ Customer confirmed: Job #${jobShortId} is set for ${displayDate} at ${proposal.proposedTime}.`
+                  );
+                }
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Handyman schedule-confirmation notice failed:', notifyErr);
+            }
+
+            return res.status(200).json({ received: true, processed: true, action: 'schedule_applied', via: 'prompt' });
+          }
+
+          // Decline: schedule unchanged; handyman must re-propose (or the
+          // F5 ladder / Scenario 12 sweep escalates the stall later).
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: 'declined',
+            });
+          } catch (markErr) {
+            console.error('⚠️ markAnswered failed (continuing):', markErr);
+          }
+
+          // Decline → the customer picks their own time (F6). The reply
+          // rides the free 24h session window (they just messaged us),
+          // so a freeform message with the link needs no template.
+          // Failure to issue/send falls back to the old copy — the
+          // Scenario 12 sweep still catches the stall.
+          let declineLinkSent = false;
+          try {
+            const { token } = await issueScheduleLink({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              customerPhone: verdict.prompt.toPhone,
+              createdBy: 'system_decline',
+            });
+            await sendTwilioMessage(
+              From,
+              `👍 No problem — pick a time that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`
+            );
+            declineLinkSent = true;
+          } catch (linkErr) {
+            console.error('⚠️ Decline→link auto-send failed (falling back to old copy):', linkErr);
+          }
+          if (!declineLinkSent) {
+            await sendTwilioMessage(
+              From,
+              proposal.isFirstTime
+                ? `👍 No problem — your handyman will propose another time for Job #${jobShortId}.`
+                : `👍 No problem — the original time for Job #${jobShortId} stays. Your handyman may propose another option.`
+            );
+          }
+
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+            const hmId = jobSnap.exists ? jobSnap.data().handymanId : null;
+            if (hmId) {
+              const hmSnap = await admin.firestore().collection('handymen').doc(hmId).get();
+              const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+              if (hmPhone) {
+                await sendTwilioMessage(
+                  formatPhoneToWhatsApp(hmPhone),
+                  declineLinkSent
+                    ? `ℹ️ The customer declined your proposed time for Job #${jobShortId}. They've been sent a link to pick a time — you'll be asked to approve their pick.`
+                    : `ℹ️ The customer declined your proposed time for Job #${jobShortId}. Please propose another time from the job page.`
+                );
+              }
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ Handyman decline notice failed:', notifyErr);
+          }
+
+          return res.status(200).json({ received: true, processed: true, action: 'schedule_declined', via: 'prompt' });
+        }
+
+        if (verdict.prompt.type === 'schedule_pick_approval') {
+          const pick = verdict.prompt.payload || {};
+          const jobShortId = String(verdict.prompt.jobId).slice(-6);
+
+          // Same invalid-payload guard as schedule_approval: never let a
+          // legacy/malformed prompt 500 the webhook into a Twilio retry
+          // loop with a stranded open prompt.
+          if (!pick.pickedDate || !pick.pickedTime) {
+            console.error(`⚠️ schedule_pick_approval prompt ${verdict.prompt.id} has no usable payload — closing and forwarding`);
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: 'invalid_payload',
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'Pick prompt without payload — forwarded to admin' });
+          }
+
+          const displayDate = new Date(pick.pickedDate).toLocaleDateString('en-SG', {
+            weekday: 'long', day: 'numeric', month: 'long',
+          });
+
+          if (verdict.action === 'approve') {
+            const changeResult = await applyScheduleChange({
+              db: admin.firestore(),
+              jobId: verdict.prompt.jobId,
+              newDate: pick.pickedDate,
+              newTime: pick.pickedTime,
+              actor: pick.pickedBy || 'customer',
+              via: 'customer_link',
+              note: pick.note,
+              promptId: verdict.prompt.id,
+            });
+
+            try {
+              await markAnswered(verdict.prompt.ref, {
+                answer: verdict.answerText,
+                resultingAction: changeResult.outcome,
+              });
+            } catch (markErr) {
+              console.error('⚠️ markAnswered failed (continuing):', markErr);
+            }
+
+            if (changeResult.outcome === 'wrong_status') {
+              await sendTwilioMessage(
+                From,
+                `ℹ️ This job's schedule can no longer be changed (Job #${jobShortId}). If something looks wrong, contact easydonehandyman@gmail.com.`
+              );
+              return res.status(200).json({ received: true, processed: false, reason: 'Pick approval on non-in_progress job' });
+            }
+
+            try {
+              await revokeActiveLinks({ db: admin.firestore(), jobId: verdict.prompt.jobId });
+            } catch (revokeErr) {
+              console.error('⚠️ Link revocation after pick approval failed (continuing):', revokeErr);
+            }
+
+            await sendTwilioMessage(
+              From,
+              `✅ Confirmed: Job #${jobShortId} is set for *${displayDate}* at *${pick.pickedTime}*. See you then! 🔧`
+            );
+
+            // Tell the customer their picked time is locked in.
+            try {
+              const job = changeResult.job;
+              if (job && job.customerPhone) {
+                // Template-first: the customer picked on the web page, so
+                // they may have no open session window (63016).
+                await sendTwilioTemplateMessage(
+                  formatPhoneToWhatsApp(job.customerPhone),
+                  process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                  { '1': jobShortId, '2': displayDate, '3': String(pick.pickedTime) },
+                  `✅ Confirmed! Your visit for Job #${jobShortId} is set for *${displayDate}* at *${pick.pickedTime}* — the time you picked. See you then! 🔧`
+                );
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Customer pick-confirmation notice failed:', notifyErr);
+            }
+
+            return res.status(200).json({ received: true, processed: true, action: 'schedule_pick_applied', via: 'prompt' });
+          }
+
+          // Decline → schedule deadlock: the ping-pong cap. Straight to
+          // the admin queue, no third automated round (spec Scenario 4).
+          try {
+            await markAnswered(verdict.prompt.ref, {
+              answer: verdict.answerText,
+              resultingAction: 'declined_deadlock',
+            });
+          } catch (markErr) {
+            console.error('⚠️ markAnswered failed (continuing):', markErr);
+          }
+
+          try {
+            await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update({
+              attentionNeeded: {
+                type: 'schedule_deadlock',
+                at: new Date().toISOString(),
+                promptId: verdict.prompt.id,
+              },
+              // Mirror buildAttentionUpdate: needsAttention drives the admin
+              // queue's query/sort/Mark-resolved button. Without it, this row
+              // is invisible to the queue and vanishes if the job leaves
+              // in_progress.
+              needsAttention: true,
+            });
+          } catch (flagErr) {
+            console.error('⚠️ attentionNeeded flag write failed (continuing):', flagErr);
+          }
+
+          await sendAdminEmail(
+            `🔴 Schedule deadlock — Job #${jobShortId}`,
+            `<p>The handyman declined the customer's picked time (<strong>${escapeHtml(displayDate)} at ${escapeHtml(String(pick.pickedTime))}</strong>).</p>
+             <p>Job: ${escapeHtml(String(verdict.prompt.jobId))}</p>
+             <p>Per the lifecycle spec this is the ping-pong cap — please call both parties and set the time from the admin dashboard (or force-unassign / offer a refund).</p>`
+          );
+
+          await sendTwilioMessage(
+            From,
+            `ℹ️ Noted — you declined the customer's picked time for Job #${jobShortId}. Our team will step in to arrange the schedule with both of you.`
+          );
+
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+            const custPhone = jobSnap.exists ? jobSnap.data().customerPhone : null;
+            if (custPhone) {
+              await sendTwilioMessage(
+                formatPhoneToWhatsApp(custPhone),
+                `ℹ️ Your handyman couldn't make the time you picked for Job #${jobShortId}. We're arranging it — you'll hear from us shortly.`
+              );
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ Customer deadlock notice failed:', notifyErr);
+          }
+
+          return res.status(200).json({ received: true, processed: true, action: 'schedule_deadlock', via: 'prompt' });
+        }
+
+        // A prompt type this deploy doesn't know how to dispatch —
+        // defensive forward rather than a wrong action.
+        console.warn(`Unknown prompt type '${verdict.prompt.type}' — forwarding to admin`);
+        await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+        return res.status(200).json({ received: true, processed: false, reason: 'Unknown prompt type' });
+      }
+
+      if (verdict.kind === 'disambiguate') {
+        await sendTwilioMessage(From, buildDisambiguationList(openPrompts));
+        return res.status(200).json({ received: true, processed: false, reason: 'Multiple prompts — asked to disambiguate' });
+      }
+
+      // 'unmatched' with open prompts: the strict matcher could not
+      // attribute this reply — do NOT let the looser legacy regexes
+      // guess (that's how "the job is not complete" gets CONFIRMED).
+      // Straight to F3: store, forward to admin, ack.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+      return res.status(200).json({ received: true, processed: false, reason: 'Unmatched with open prompts — forwarded to admin' });
+    }
+    // ------- end prompt-first routing -------
 
     // Process confirmation replies — supports both text replies (YES/NO)
     // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
@@ -2431,9 +3162,9 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     const selectorIndex = selectorMatch ? parseInt(selectorMatch[1], 10) : null;
 
     if (!isConfirm && !isReject) {
-      // Not a confirmation reply — ignore
-      console.log(`ℹ️ Non-confirmation message received: "${Body.trim()}", ignoring`);
-      return res.status(200).json({ received: true, processed: false, reason: 'Not a confirmation reply' });
+      // Not a recognizable reply — F3: store, forward to admin, ack.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
+      return res.status(200).json({ received: true, processed: false, reason: 'Unmatched — forwarded to admin' });
     }
 
     // Try multiple phone formats since customer might have stored different format
@@ -2533,10 +3264,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       }
 
       console.warn('⚠️ No pending job found for customer:', customerPhone);
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
       return res.status(200).json({
         received: true,
         processed: false,
-        reason: 'No pending job found'
+        reason: 'No pending job found — forwarded to admin'
       });
     }
 
@@ -2544,62 +3276,26 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     // The transaction protects against a double-tap race where two webhooks for the
     // same button arrive near-simultaneously and both try to process the same job.
     const jobId = pendingJobRef.id;
-    let action;
-    let jobData;
-    try {
-      await admin.firestore().runTransaction(async (tx) => {
-        const fresh = await tx.get(pendingJobRef);
-        if (!fresh.exists || fresh.data().status !== 'pending_confirmation') {
-          throw new Error('ALREADY_PROCESSED');
-        }
+    const answerResult = await applyCompletionAnswer({
+      db: admin.firestore(),
+      jobId,
+      isConfirm,
+    });
 
-        jobData = fresh.data();
-
-        if (isConfirm) {
-          tx.update(pendingJobRef, {
-            status: 'pending_admin_approval',
-            customerConfirmedAt: new Date().toISOString(),
-            confirmedVia: 'whatsapp_reply'
-          });
-          action = 'confirm';
-        } else {
-          tx.update(pendingJobRef, {
-            status: 'disputed',
-            disputedAt: new Date().toISOString(),
-            disputedVia: 'whatsapp_reply',
-            disputeReason: 'Customer reported issue via WhatsApp reply'
-          });
-          action = 'reject';
-        }
+    if (answerResult.outcome === 'already_processed') {
+      await sendTwilioMessage(
+        From,
+        `ℹ️ Your ${isConfirm ? 'confirmation' : 'report'} for Job #${jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
+      );
+      return res.status(200).json({
+        received: true,
+        processed: false,
+        reason: 'Job already processed — customer notified'
       });
-    } catch (txError) {
-      if (txError.message === 'ALREADY_PROCESSED') {
-        // The job was already answered between the lookup and the
-        // transaction — typically the customer tapped both buttons
-        // (Confirm then Report, or the reverse) and this is the
-        // second tap. Tell them explicitly that this response did
-        // NOT change the outcome, rather than acknowledging silently.
-        let recordedAs = 'already recorded';
-        try {
-          const snap = await pendingJobRef.get();
-          const s = snap.exists ? snap.data().status : null;
-          if (s === 'pending_admin_approval') recordedAs = '✅ Confirmed';
-          else if (s === 'disputed') recordedAs = '⚠️ Issue Reported';
-        } catch (readErr) {
-          console.error('Could not read job status after ALREADY_PROCESSED:', readErr);
-        }
-        await sendTwilioMessage(
-          From,
-          `ℹ️ Your ${isConfirm ? 'confirmation' : 'report'} for Job #${jobId} did not go through — this job has already been recorded as: ${recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
-        );
-        return res.status(200).json({
-          received: true,
-          processed: false,
-          reason: 'Job already processed — customer notified'
-        });
-      }
-      throw txError;
     }
+
+    const action = answerResult.outcome === 'confirmed' ? 'confirm' : 'reject';
+    const jobData = answerResult.jobData;
 
     if (action === 'confirm') {
       await sendAdminNotificationEmail(jobData, jobId);
@@ -2769,6 +3465,113 @@ function formatPhoneToWhatsApp(phone) {
 }
 
 /**
+ * Send the admin a plain operational email. Generic sibling of
+ * sendAdminNotificationEmail (which is fund-release-specific); used by
+ * the F3 no-silent-drops forwarder and future lifecycle flows.
+ * Same env contract: ADMIN_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.
+ * Never throws — email is best-effort, callers must not fail on it.
+ */
+async function sendAdminEmail(subject, html) {
+  const nodemailer = require('nodemailer');
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const smtpHost = process.env.SMTP_HOST;
+  const smtpPort = process.env.SMTP_PORT || 587;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+
+  if (!adminEmail || !smtpHost || !smtpUser || !smtpPass) {
+    console.warn('⚠️ Email not configured — admin email skipped:', subject);
+    return { success: false, error: 'Email not configured' };
+  }
+  try {
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+    await transporter.sendMail({
+      from: `"EasyDone System" <${smtpUser}>`,
+      to: adminEmail,
+      subject,
+      html,
+    });
+    return { success: true };
+  } catch (err) {
+    console.error('⚠️ sendAdminEmail failed:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+/** Minimal HTML escape for user-controlled text embedded in admin emails. */
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * F3 — no silent drops (job lifecycle spec §3). Any inbound WhatsApp
+ * message we could not resolve is stored, forwarded to the admin, and
+ * (rate-limited) acknowledged to the sender. This is v1's substitute
+ * for chat-level admin transparency, and the metric for whether a real
+ * chat channel is ever needed.
+ */
+async function forwardUnmatchedInbound({ from, body, mediaUrls, reason }) {
+  const phoneKey = normalizePhoneKey(from);
+
+  // Best-guess job attribution: the sender's most recent job.
+  let matchedJobId = null;
+  let matchedService = null;
+  try {
+    const phoneFormats = [phoneKey, `+${phoneKey}`, phoneKey.startsWith('65') ? phoneKey.substring(2) : phoneKey];
+    for (const p of phoneFormats) {
+      const snap = await admin.firestore().collection('jobs')
+        .where('customerPhone', '==', p)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        matchedJobId = snap.docs[0].id;
+        matchedService = snap.docs[0].data().serviceType || null;
+        break;
+      }
+    }
+  } catch (lookupErr) {
+    console.warn('Inbound job attribution failed (storing anyway):', lookupErr.message);
+  }
+
+  await admin.firestore().collection('inboundMessages').add({
+    fromPhone: phoneKey,
+    body: String(body || '').slice(0, 2000),
+    mediaUrls: mediaUrls || [],
+    reason, // 'no_open_prompt' | 'unmatched_reply' | 'selector_out_of_range'
+    matchedJobId,
+    receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await sendAdminEmail(
+    `📨 Unhandled WhatsApp message${matchedJobId ? ` — Job #${matchedJobId.slice(-6)}` : ''}`,
+    `<div style="font-family: Arial, sans-serif; max-width: 600px;">
+      <p><strong>From:</strong> ${phoneKey}</p>
+      ${matchedJobId ? `<p><strong>Likely job:</strong> ${matchedJobId} (${matchedService || 'unknown service'})</p>` : '<p><strong>Likely job:</strong> none found</p>'}
+      <p><strong>Reason:</strong> ${reason}</p>
+      <p><strong>Message:</strong></p>
+      <blockquote style="border-left: 3px solid #ccc; padding-left: 10px;">${escapeHtml(String(body || '(no text)').slice(0, 2000))}</blockquote>
+      ${(mediaUrls && mediaUrls.length) ? `<p><strong>Media:</strong> ${mediaUrls.length} attachment(s) — view in Twilio console</p>` : ''}
+    </div>`
+  );
+
+  // Ack the sender at most once per 12h so they aren't ghosted, without
+  // ack-looping against autoresponders.
+  const rl = await checkRateLimit(`whatsapp_ack_${phoneKey}`, 1, 43200);
+  if (rl.allowed) {
+    await sendTwilioMessage(
+      from,
+      `Thanks for your message — our team has received it and will get back to you if needed.\n\nFor urgent matters, contact easydonehandyman@gmail.com.`
+    );
+  }
+}
+
+/**
  * Helper function to send admin notification email
  * Used when a job status changes to pending_admin_approval
  *
@@ -2885,21 +3688,46 @@ exports.cleanupAbandonedJobs = functions.pubsub
         return null;
       }
 
-      // Delete abandoned jobs in batch
+      // Delete abandoned jobs in batch — but NEVER a job whose payment
+      // was captured (paymentStatus 'succeeded'): deleting it would leave
+      // customer money held with no job record. Those are rescued to
+      // 'pending' instead (the succeeded-webhook normally does this; this
+      // is the safety net for docs that missed the event) and the admin
+      // is alerted.
       const batch = admin.firestore().batch();
       const deletedJobIds = [];
+      const rescuedPaidJobIds = [];
 
       abandonedJobsSnapshot.forEach((doc) => {
+        if (doc.data().paymentStatus === 'succeeded') {
+          batch.update(doc.ref, { status: 'pending' });
+          rescuedPaidJobIds.push(doc.id);
+          return;
+        }
         batch.delete(doc.ref);
         deletedJobIds.push(doc.id);
       });
 
       await batch.commit();
 
+      if (rescuedPaidJobIds.length > 0) {
+        console.warn(`⚠️ Paid jobs were stuck in awaiting_payment — rescued to pending: ${rescuedPaidJobIds.join(', ')}`);
+        try {
+          await sendAdminEmail(
+            `⚠️ ${rescuedPaidJobIds.length} paid job(s) were stuck in awaiting_payment`,
+            `<p>The abandoned-job cleanup found jobs with <strong>captured payment</strong> still in awaiting_payment (the booking page's status flip never landed). They were rescued to 'pending' and are now on the board:</p>
+             <p>${rescuedPaidJobIds.map(escapeHtml).join('<br/>')}</p>`
+          );
+        } catch (emailErr) {
+          console.error('⚠️ Rescue alert email failed:', emailErr);
+        }
+      }
+
       return {
         success: true,
         deletedCount: deletedJobIds.length,
-        deletedJobIds: deletedJobIds
+        deletedJobIds: deletedJobIds,
+        rescuedPaidJobIds,
       };
     } catch (error) {
       console.error('❌ Error cleaning up abandoned jobs:', error);
@@ -3027,6 +3855,21 @@ Please confirm if the work has been completed to your satisfaction.
           continue;
         }
 
+        // F2: record the question for the reply router (see promptService).
+        try {
+          await openPrompt({
+            db: admin.firestore(),
+            jobId,
+            type: 'completion_confirmation',
+            toPhone: job.customerPhone,
+            toRole: 'customer',
+            question: `Has ${handymanName} completed the ${job.serviceType || 'job'}?`,
+            options: COMPLETION_PROMPT_OPTIONS,
+          });
+        } catch (promptErr) {
+          console.error(`⚠️ openPrompt failed for job ${jobId} (auto poll):`, promptErr);
+        }
+
         // Mark the poll as sent to prevent duplicates
         await admin.firestore().collection('jobs').doc(jobId).update({
           completionPollSentAt: new Date().toISOString(),
@@ -3048,6 +3891,249 @@ Please confirm if the work has been completed to your satisfaction.
       console.error('❌ Error in auto-trigger completion poll:', error);
       throw error;
     }
+  });
+
+/**
+ * stuckStateSweep — Scenario 12's safety net (spec:
+ * 2026-07-13-stuck-state-sweep-design.md). Runs daily at 10:30 SGT,
+ * 30 min after the completion poll, so freshly-sent polls are never
+ * inspected in the run that created them.
+ *
+ * Four ladders, each nudging AT MOST ONCE per state before escalating
+ * to the admin attention queue (needsAttention on the job + one digest
+ * email per run). The sweep never touches money.
+ */
+exports.stuckStateSweep = functions.pubsub
+  .schedule('every day 10:30')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    const db = admin.firestore();
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const escalations = []; // {jobId, type, detail, customerName, handymanName, ageDays} for the digest
+    const counts = { nudged: 0, escalated: 0, renewedLinks: 0, fanouts: 0 };
+
+    // Types describing a persistent job state escalate ONCE — after the
+    // admin resolves, the sweep must not re-flag the same stall the next
+    // morning (prompt/link types are naturally once-only: escalation
+    // mutates their doc out of the query).
+    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled'];
+
+    const escalate = async (jobId, type, detail, promptId = null) => {
+      try {
+        const jobRef = db.collection('jobs').doc(jobId);
+        const snap = await jobRef.get();
+        if (!snap.exists) return;
+        const job = snap.data();
+        const marks = job.sweepNudges || {};
+        if (ONCE_ONLY_TYPES.includes(type) && marks[`${type}_escalated`]) return;
+        const update = buildAttentionUpdate(type, { detail, promptId, nowIso });
+        if (ONCE_ONLY_TYPES.includes(type)) {
+          update[`sweepNudges.${type}_escalated`] = nowIso;
+        }
+        await jobRef.update(update);
+        escalations.push({
+          jobId,
+          type,
+          detail,
+          customerName: job.customerName || '—',
+          handymanName: (job.acceptedBy && job.acceptedBy.name) || '—',
+          ageDays: (() => {
+            const created = job.createdAt && (typeof job.createdAt.toMillis === 'function' ? job.createdAt.toMillis() : Date.parse(job.createdAt));
+            return Number.isFinite(created) ? Math.round((nowMs - created) / 86400000) : null;
+          })(),
+        });
+        counts.escalated++;
+      } catch (err) {
+        console.error(`⚠️ Sweep escalation write failed for job ${jobId} (${type}):`, err);
+      }
+    };
+
+    // ---- Ladder 1: open prompts past expiry (CG query, capped) ----
+    try {
+      const snap = await db.collectionGroup('prompts')
+        .where('status', '==', 'open')
+        .where('expiresAt', '<=', nowIso)
+        .limit(200)
+        .get();
+      if (snap.size === 200) console.warn('⚠️ Sweep prompt query hit the 200 cap — rerun tomorrow covers the rest');
+      for (const doc of snap.docs) {
+        const p = doc.data();
+        const verdict = evaluatePrompt(p, nowMs);
+        const jobShortId = String(p.jobId || '').slice(-6);
+        if (verdict === 'nudge') {
+          try {
+            const isPoll = p.type === 'completion_confirmation';
+            const fallback = isPoll
+              ? `⏰ Reminder for Job #${jobShortId}: was your job completed?\n\n👉 Reply *YES* to confirm\n👉 Reply *NO* to report an issue`
+              : `⏰ Reminder (Job #${jobShortId}) — we're still waiting for your reply:\n\n${String(p.question || '').slice(0, 200)}\n\nPlease reply when you can.`;
+            await sendTwilioTemplateMessage(
+              formatPhoneToWhatsApp(p.toPhone),
+              process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+              { '1': String(p.question || '').slice(0, 120), '2': jobShortId },
+              fallback,
+            );
+            await doc.ref.update({
+              nudgedAt: nowIso,
+              expiresAt: new Date(nowMs + SWEEP.PROMPT_NUDGE_EXTEND_HOURS * 3600 * 1000).toISOString(),
+            });
+            counts.nudged++;
+          } catch (err) {
+            console.error(`⚠️ Prompt nudge failed for ${doc.ref.path}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Prompt expire write failed for ${doc.ref.path}:`, err);
+          }
+          await escalate(p.jobId, 'prompt_expired',
+            `${p.type} to ${p.toRole} unanswered after nudge`, doc.id);
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 1 (prompts) failed:', err);
+    }
+
+    // ---- Ladder 2a: active schedule links past expiry ----
+    try {
+      const snap = await db.collection('scheduleLinks')
+        .where('status', '==', 'active')
+        .where('expiresAt', '<=', nowIso)
+        .limit(100)
+        .get();
+      if (snap.size === 100) console.warn('⚠️ Sweep link query hit the 100 cap — rerun tomorrow covers the rest');
+      for (const doc of snap.docs) {
+        const link = doc.data();
+        const verdict = evaluateLink(link, nowMs);
+        const jobShortId = String(link.jobId || '').slice(-6);
+        if (verdict === 'renew') {
+          try {
+            const jobSnap = await db.collection('jobs').doc(link.jobId).get();
+            if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') {
+              // Job no longer schedulable — just retire the link.
+              await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+              continue;
+            }
+            // No manual pre-expire: issueScheduleLink revokes prior actives,
+            // so a crash before this point leaves the old link queryable and
+            // tomorrow's run retries the renewal.
+            const { token } = await issueScheduleLink({
+              db, jobId: link.jobId, customerPhone: link.customerPhone, createdBy: 'system_nudge',
+            });
+            await sendTwilioTemplateMessage(
+              formatPhoneToWhatsApp(link.customerPhone),
+              process.env.TWILIO_TEMPLATE_SCHEDULE_LINK,
+              { '1': jobShortId, '2': token },
+              `⏰ Your pick-a-time link for Job #${jobShortId} expired — here's a fresh one (valid 72 hours):\n${APP_URL}/pick-time?t=${token}`,
+            );
+            counts.renewedLinks++;
+          } catch (err) {
+            console.error(`⚠️ Link renew failed for job ${link.jobId}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Link expire write failed for ${doc.id}:`, err);
+          }
+          await escalate(link.jobId, 'link_ignored', 'customer ignored two pick-time links');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 2a (links) failed:', err);
+    }
+
+    // ---- Ladders 2b + 3: job scans (in_progress ASAP gaps; pending unclaimed) ----
+    try {
+      const inProgress = await db.collection('jobs')
+        .where('status', '==', 'in_progress').limit(300).get();
+      if (inProgress.size === 300) console.warn('⚠️ Sweep in_progress query hit the 300 cap — rerun tomorrow covers the rest');
+      for (const doc of inProgress.docs) {
+        const job = doc.data();
+        if (job.preferredTiming === 'Schedule' || job.scheduledFromAsapAt) continue;
+        // Anything already in flight?
+        const openPrompts = await doc.ref.collection('prompts')
+          .where('status', '==', 'open').get();
+        const hasOpenSchedulePrompt = openPrompts.docs.some((d) =>
+          ['schedule_approval', 'schedule_pick_approval'].includes(d.data().type));
+        const activeLinks = await db.collection('scheduleLinks')
+          .where('jobId', '==', doc.id).where('status', '==', 'active').limit(1).get();
+        const verdict = evaluateAsapJob(job,
+          { hasOpenSchedulePrompt, hasActiveLink: !activeLinks.empty }, nowMs);
+        if (verdict === 'nudge') {
+          try {
+            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioTemplateMessage(
+                formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+                { '1': 'Set the visit time from the job page so the customer can approve it', '2': doc.id.slice(-6) },
+                `⏰ Job #${doc.id.slice(-6)} still has no confirmed visit time. Please tap "Set visit time" on the job page so the customer can approve it.`,
+              );
+            }
+            await doc.ref.update({ 'sweepNudges.asap_no_time': nowIso });
+            counts.nudged++;
+          } catch (err) {
+            console.error(`⚠️ ASAP nudge failed for job ${doc.id}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          await escalate(doc.id, 'asap_no_time', 'ASAP job accepted but no visit time confirmed');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 2b (ASAP) failed:', err);
+    }
+
+    try {
+      const pending = await db.collection('jobs')
+        .where('status', '==', 'pending').limit(300).get();
+      if (pending.size === 300) console.warn('⚠️ Sweep pending query hit the 300 cap — rerun tomorrow covers the rest');
+      for (const doc of pending.docs) {
+        const job = doc.data();
+        const { verdict, kind } = evaluateUnclaimedJob(job, nowMs);
+        if (verdict === 'fanout') {
+          try {
+            // Round 900+N: a marker namespace the accept/cancel rounds
+            // never use, so this re-notification is idempotent per sweep
+            // era and cannot collide with organic rounds.
+            await runHandymanFanOut({
+              job, jobId: doc.id, db,
+              sendTwilioTemplateMessage, checkRateLimit, logger: console,
+              round: 900 + (job.reassignmentCount || 0),
+              excludeIds: Array.isArray(job.previousHandymanIds) ? job.previousHandymanIds : [],
+            });
+            const key = kind === 'reclaim_stalled' ? 'reclaim_refanout' : 'unclaimed_refanout';
+            await doc.ref.update({ [`sweepNudges.${key}`]: nowIso });
+            counts.fanouts++;
+          } catch (err) {
+            console.error(`⚠️ Sweep fan-out failed for job ${doc.id}:`, err);
+          }
+        } else if (verdict === 'escalate') {
+          await escalate(doc.id, kind,
+            kind === 'unclaimed' ? 'paid job never accepted' : 're-released job never re-claimed');
+        }
+      }
+    } catch (err) {
+      console.error('⚠️ Sweep ladder 3 (unclaimed) failed:', err);
+    }
+
+    // ---- One digest email per run (free SMTP; deadlocks already email immediately) ----
+    if (escalations.length > 0) {
+      const rows = escalations.map((e) =>
+        `<tr><td>${escapeHtml(String(e.jobId).slice(-6))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.customerName)} / ${escapeHtml(e.handymanName)}</td><td>${e.ageDays === null ? '—' : `${e.ageDays}d`}</td><td>${escapeHtml(e.detail || '')}</td></tr>`
+      ).join('');
+      await sendAdminEmail(
+        `⚠️ Attention needed: ${escalations.length} stuck job${escalations.length > 1 ? 's' : ''}`,
+        `<p>The daily sweep escalated ${escalations.length} job(s) to the attention queue:</p>
+         <table border="1" cellpadding="6"><tr><th>Job</th><th>Type</th><th>Customer / Handyman</th><th>Age</th><th>Why</th></tr>${rows}</table>
+         <p>Resolve them from the admin dashboard's Active jobs section.</p>`
+      );
+    }
+
+    console.log(`🧹 Sweep done: ${counts.nudged} nudged, ${counts.renewedLinks} links renewed, ${counts.fanouts} fan-outs, ${counts.escalated} escalated`);
+    return null;
   });
 
 // ===================================
@@ -3262,6 +4348,761 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         return res.status(401).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Failed to cancel job assignment' });
+    }
+  });
+});
+
+/**
+ * proposeSchedule — the assigned handyman proposes a (new) visit time.
+ *
+ * Two triggers share this endpoint (lifecycle spec Scenarios 3 + 4):
+ * a reschedule of an already-scheduled job, and the mandatory
+ * time-fixing proposal submitted together with an ASAP job's claim.
+ * Either way: validate → WhatsApp the customer → open a
+ * schedule_approval prompt carrying the proposal as payload. The
+ * schedule itself changes ONLY when the customer approves (F4 — the
+ * webhook dispatch calls applyScheduleChange).
+ *
+ * POST body: { jobId, proposedDate, proposedTime, note? }
+ */
+exports.proposeSchedule = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, proposedDate, proposedTime, note } = req.body || {};
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+
+      try {
+        validateScheduleProposal({ date: proposedDate, time: proposedTime });
+      } catch (err) {
+        if (err instanceof ScheduleError) {
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+
+      const rl = await checkRateLimit(`schedule_propose_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many proposals — please slow down', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const jobSnap = await admin.firestore().collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      const job = jobSnap.data();
+      if (job.handymanId !== decodedToken.uid) {
+        return res.status(403).json({ error: 'Only the assigned handyman can propose a time' });
+      }
+      if (job.status !== 'in_progress') {
+        return res.status(409).json({ error: `This job can no longer be rescheduled (status: ${job.status})` });
+      }
+      if (!job.customerPhone) {
+        return res.status(400).json({ error: 'Job has no customer phone on record' });
+      }
+
+      const handymanName = (job.acceptedBy && job.acceptedBy.name) || 'Your handyman';
+      const displayDate = new Date(proposedDate).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+      const isFirstTime = job.preferredTiming !== 'Schedule';
+      const trimmedNote = String(note || '').trim().slice(0, 300);
+
+      // WhatsApp the customer. Business-initiated → template with
+      // freeform fallback (sandbox / pre-approval), existing pattern.
+      const fallback = isFirstTime
+        ? `📅 ${handymanName} proposes to visit on *${displayDate}* at *${proposedTime}* for your ${job.serviceType || 'job'} (Job #${jobId.slice(-6)}).${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to confirm this time\n👉 Reply *NO* to ask for another`
+        : `📅 ${handymanName} proposes a NEW time for your ${job.serviceType || 'job'} (Job #${jobId.slice(-6)}): *${displayDate}* at *${proposedTime}*.${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to approve\n👉 Reply *NO* to keep the original time`;
+
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(job.customerPhone),
+        process.env.TWILIO_TEMPLATE_SCHEDULE_PROPOSAL,
+        { '1': handymanName, '2': displayDate, '3': String(proposedTime), '4': jobId.slice(-6) },
+        fallback,
+      );
+      if (!sendResult.success) {
+        return res.status(502).json({ error: 'Could not reach the customer on WhatsApp — please try again' });
+      }
+
+      // F2: the prompt carries the proposal so the reply dispatcher can
+      // apply exactly what was asked, even if a newer proposal replaces
+      // this one (supersede) before the customer answers.
+      const { promptId } = await openPrompt({
+        db: admin.firestore(),
+        jobId,
+        type: 'schedule_approval',
+        toPhone: job.customerPhone,
+        toRole: 'customer',
+        question: `Approve ${handymanName}'s proposed time: ${displayDate} at ${proposedTime}?`,
+        options: SCHEDULE_APPROVAL_OPTIONS,
+        payload: {
+          proposedDate,
+          proposedTime: String(proposedTime),
+          proposedBy: decodedToken.uid,
+          note: trimmedNote || null,
+          isFirstTime,
+        },
+      });
+
+      await writeAuditLog('schedule_proposed', decodedToken, {
+        jobId, proposedDate, proposedTime: String(proposedTime), promptId, isFirstTime,
+      });
+
+      console.log(`📅 Schedule proposal for job ${jobId} by ${decodedToken.uid}: ${proposedDate} ${proposedTime} (prompt ${promptId})`);
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ Error in proposeSchedule:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to propose schedule' });
+    }
+  });
+});
+
+/**
+ * Rate-limit key for unauthenticated link endpoints. Behind Google's
+ * front end X-Forwarded-For's first hop is the client.
+ */
+function linkRequestIpKey(req) {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return (xff || req.ip || 'unknown').replace(/[^0-9a-fA-F.:]/g, '').slice(0, 45) || 'unknown';
+}
+
+/**
+ * Resolve a raw link token to a live link + its job, mapping every
+ * failure to a precise HTTP status. Lazily marks overdue links expired.
+ *
+ * @returns {{ ok: true, linkRef, link, jobRef, job }
+ *         | { ok: false, status: number, error: string, code: string }}
+ */
+async function resolveScheduleLink(db, token) {
+  if (!token || typeof token !== 'string') {
+    return { ok: false, status: 400, error: 'Missing link token', code: 'bad_token' };
+  }
+  const linkRef = db.collection('scheduleLinks').doc(hashLinkToken(token));
+  const linkSnap = await linkRef.get();
+  if (!linkSnap.exists) {
+    return { ok: false, status: 404, error: 'This link is not valid', code: 'not_found' };
+  }
+  const link = linkSnap.data();
+  if (link.status !== 'active') {
+    return { ok: false, status: 410, error: 'This link has already been used or replaced', code: `link_${link.status}` };
+  }
+  if (new Date(link.expiresAt).getTime() < Date.now()) {
+    try {
+      await linkRef.update({ status: 'expired' });
+    } catch (expireErr) {
+      console.error('⚠️ Lazy link-expiry write failed (continuing):', expireErr);
+    }
+    return { ok: false, status: 410, error: 'This link has expired', code: 'link_expired' };
+  }
+  const jobRef = db.collection('jobs').doc(link.jobId);
+  const jobSnap = await jobRef.get();
+  if (!jobSnap.exists || jobSnap.data().status !== 'in_progress') {
+    return { ok: false, status: 409, error: 'This job can no longer be rescheduled', code: 'job_not_active' };
+  }
+  return { ok: true, linkRef, link, jobRef, job: jobSnap.data() };
+}
+
+/**
+ * getScheduleLinkContext — public, token-gated (F6).
+ *
+ * The /pick-time page calls this on load. The token is the ONLY
+ * credential; the response is deliberately minimal (no customer PII —
+ * the customer already knows who they are; no handyman phone).
+ *
+ * POST body: { token }
+ */
+exports.getScheduleLinkContext = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const rl = await checkRateLimit(`schedule_link_ctx_${linkRequestIpKey(req)}`, 30, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests — please try again later' });
+      }
+
+      const resolved = await resolveScheduleLink(admin.firestore(), (req.body || {}).token);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+      }
+
+      const { link, job } = resolved;
+      return res.status(200).json({
+        success: true,
+        job: {
+          shortId: String(link.jobId).slice(-6),
+          serviceType: job.serviceType || 'job',
+          preferredDate: job.preferredDate || null,
+          preferredTime: job.preferredTime || null,
+          preferredTiming: job.preferredTiming || null,
+          handymanName: (job.acceptedBy && job.acceptedBy.name) || 'Your handyman',
+        },
+      });
+    } catch (error) {
+      console.error('❌ Error in getScheduleLinkContext:', error);
+      return res.status(500).json({ error: 'Something went wrong — please try again' });
+    }
+  });
+});
+
+/**
+ * submitSchedulePick — public, token-gated (F6).
+ *
+ * Consumes the link (single-use, transactional) and opens the
+ * roles-flipped schedule_pick_approval prompt to the handyman. The
+ * schedule itself changes ONLY when the handyman approves (F4).
+ * Once the link is consumed the customer's part is DONE — failures
+ * after that point (no handyman phone, Twilio down, prompt write
+ * failure) fall back to the F3 admin email and still return success,
+ * because the admin queue is the designed recovery door.
+ *
+ * POST body: { token, date, time, note? }
+ */
+exports.submitSchedulePick = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const rl = await checkRateLimit(`schedule_link_pick_${linkRequestIpKey(req)}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests — please try again later' });
+      }
+
+      const { token, date, time, note } = req.body || {};
+      try {
+        validateScheduleProposal({ date, time });
+      } catch (err) {
+        if (err instanceof ScheduleError) {
+          return res.status(400).json({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+
+      const db = admin.firestore();
+      const resolved = await resolveScheduleLink(db, token);
+      if (!resolved.ok) {
+        return res.status(resolved.status).json({ error: resolved.error, code: resolved.code });
+      }
+      const { linkRef, link } = resolved;
+      const jobId = link.jobId;
+      const trimmedNote = String(note || '').trim().slice(0, 300);
+
+      // Consume the link transactionally: re-check active + job status so
+      // two racing submits (or a submit racing a scheduleChange) can't
+      // both go through.
+      let job;
+      try {
+        await db.runTransaction(async (tx) => {
+          const lSnap = await tx.get(linkRef);
+          if (!lSnap.exists || lSnap.data().status !== 'active') {
+            throw new Error('LINK_GONE');
+          }
+          const jSnap = await tx.get(db.collection('jobs').doc(jobId));
+          if (!jSnap.exists || jSnap.data().status !== 'in_progress') {
+            throw new Error('WRONG_STATUS');
+          }
+          job = jSnap.data();
+          tx.update(linkRef, {
+            status: 'used',
+            usedAt: new Date().toISOString(),
+            pickedDate: date,
+            pickedTime: String(time),
+          });
+        });
+      } catch (txErr) {
+        if (txErr.message === 'LINK_GONE') {
+          return res.status(410).json({ error: 'This link has already been used or replaced', code: 'link_used' });
+        }
+        if (txErr.message === 'WRONG_STATUS') {
+          return res.status(409).json({ error: 'This job can no longer be rescheduled', code: 'job_not_active' });
+        }
+        throw txErr;
+      }
+
+      // The customer's counter-pick supersedes any open handyman
+      // proposal — they have effectively declined it by picking.
+      try {
+        const openApprovals = await db.collection('jobs').doc(jobId).collection('prompts')
+          .where('type', '==', 'schedule_approval')
+          .where('status', '==', 'open')
+          .get();
+        await Promise.all(openApprovals.docs.map((d) => d.ref.update({
+          status: 'superseded',
+          supersededAt: new Date().toISOString(),
+        })));
+      } catch (supersedeErr) {
+        console.error('⚠️ Superseding open schedule_approval prompts failed (continuing):', supersedeErr);
+      }
+
+      const jobShortId = String(jobId).slice(-6);
+      const displayDate = new Date(date).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+
+      // Roles-flipped approval: WhatsApp the handyman, then open the
+      // prompt (same send-then-open order as proposeSchedule).
+      let handedToHandyman = false;
+      try {
+        const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (hmPhone) {
+          // Template-first: this is business-initiated to the HANDYMAN,
+          // who often has no open 24h session with our number — a
+          // freeform send dies with Twilio 63016 (observed live). The
+          // freeform body remains the sandbox/in-session fallback.
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            process.env.TWILIO_TEMPLATE_SCHEDULE_PICK_APPROVAL,
+            { '1': jobShortId, '2': displayDate, '3': String(time) },
+            `📅 The customer picked a visit time for Job #${jobShortId}: *${displayDate}* at *${time}*.${trimmedNote ? `\n\nNote: ${trimmedNote}` : ''}\n\n👉 Reply *YES* to approve\n👉 Reply *NO* if you can't make it (our team will step in)`
+          );
+          await openPrompt({
+            db,
+            jobId,
+            type: 'schedule_pick_approval',
+            toPhone: hmPhone,
+            toRole: 'handyman',
+            question: `Approve the customer's picked time: ${displayDate} at ${time}?`,
+            options: SCHEDULE_APPROVAL_OPTIONS,
+            payload: {
+              pickedDate: date,
+              pickedTime: String(time),
+              pickedBy: normalizePhoneKey(link.customerPhone),
+              note: trimmedNote || null,
+              linkTokenHash: hashLinkToken(token),
+            },
+          });
+          handedToHandyman = true;
+        }
+      } catch (handymanErr) {
+        console.error('⚠️ Handing pick to handyman failed (admin fallback):', handymanErr);
+      }
+
+      if (!handedToHandyman) {
+        // F3 door: the pick is recorded on the used link; the admin
+        // finishes the job (set time admin-as-actor after a call).
+        await sendAdminEmail(
+          `⚠️ Schedule pick needs manual handling — Job #${jobShortId}`,
+          `<p>The customer picked <strong>${escapeHtml(displayDate)} at ${escapeHtml(String(time))}</strong> via a schedule link, but the handyman could not be reached on WhatsApp (no phone on record or send failure).</p>
+           <p>Job: ${escapeHtml(jobId)}<br/>Note: ${escapeHtml(trimmedNote || '—')}</p>
+           <p>Please confirm with both parties and set the time from the admin dashboard.</p>`
+        );
+      }
+
+      console.log(`📅 Schedule pick for job ${jobId}: ${date} ${time} (handedToHandyman=${handedToHandyman})`);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in submitSchedulePick:', error);
+      return res.status(500).json({ error: 'Something went wrong — please try again' });
+    }
+  });
+});
+
+/**
+ * sendScheduleLink — admin-only (F6, Scenario 3 Trigger B).
+ *
+ * The customer asked for a schedule change in free text (F3 inbox);
+ * the admin sends them a pick-time link from the Active-jobs table.
+ * Business-initiated → template with freeform fallback.
+ *
+ * POST body: { jobId }
+ */
+exports.sendScheduleLink = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+      }
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const rl = await checkRateLimit(`schedule_link_send_${decodedToken.uid}`, 20, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many link sends — please slow down', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const { jobId } = req.body || {};
+      if (!jobId) {
+        return res.status(400).json({ error: 'Missing jobId' });
+      }
+      const jobSnap = await admin.firestore().collection('jobs').doc(jobId).get();
+      if (!jobSnap.exists) {
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      const job = jobSnap.data();
+      if (job.status !== 'in_progress') {
+        return res.status(409).json({ error: `This job can no longer be rescheduled (status: ${job.status})` });
+      }
+      if (!job.customerPhone) {
+        return res.status(400).json({ error: 'Job has no customer phone on record' });
+      }
+
+      const { token } = await issueScheduleLink({
+        db: admin.firestore(),
+        jobId,
+        customerPhone: job.customerPhone,
+        createdBy: decodedToken.uid,
+      });
+      const jobShortId = String(jobId).slice(-6);
+      const linkUrl = `${APP_URL}/pick-time?t=${token}`;
+
+      // Template var {{2}} is the RAW TOKEN, not the full URL: the Meta
+      // template hardcodes the domain (`.../pick-time?t={{2}}`) because
+      // Meta rejects templates whose variable is an entire URL. The
+      // freeform fallback has no such constraint and carries the full
+      // link built from APP_URL.
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(job.customerPhone),
+        process.env.TWILIO_TEMPLATE_SCHEDULE_LINK,
+        { '1': jobShortId, '2': token },
+        `📅 Need a different visit time for your ${job.serviceType || 'job'} (Job #${jobShortId})?\n\nPick a time that works for you here (valid 72 hours):\n${linkUrl}`
+      );
+      if (!sendResult.success) {
+        return res.status(502).json({ error: 'Could not reach the customer on WhatsApp — please try again' });
+      }
+
+      await writeAuditLog('schedule_link_sent', decodedToken, { jobId });
+      console.log(`🔗 Schedule link sent for job ${jobId} by admin ${decodedToken.uid}`);
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in sendScheduleLink:', error);
+      if (error.message.includes('Unauthorized')) {
+        return res.status(401).json({ error: error.message });
+      }
+      if (error.message.includes('Forbidden')) {
+        return res.status(403).json({ error: error.message });
+      }
+      return res.status(500).json({ error: 'Failed to send schedule link' });
+    }
+  });
+});
+
+/**
+ * resolveAttention — admin clears a job's attention flag (Scenario 12
+ * queue). With markCancelled it also closes the job after a refund
+ * (the queue's refund button calls the existing refundPayment endpoint
+ * first, then this with markCancelled: true).
+ */
+exports.resolveAttention = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const { jobId, markCancelled } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      const snap = await jobRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Job not found' });
+
+      const update = {
+        needsAttention: admin.firestore.FieldValue.delete(),
+        attentionNeeded: admin.firestore.FieldValue.delete(),
+      };
+      if (markCancelled === true) {
+        update.status = 'cancelled';
+        update.cancelledAt = new Date().toISOString();
+        update.cancelledVia = 'admin_queue';
+      }
+      await jobRef.update(update);
+      await writeAuditLog('attention_resolved', decodedToken, {
+        jobId, markCancelled: markCancelled === true,
+        priorAttentionType: (snap.data().attentionNeeded && snap.data().attentionNeeded.type) || null,
+      });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in resolveAttention:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to resolve attention' });
+    }
+  });
+});
+
+/**
+ * adminSetSchedule — F5 admin-as-actor "set the time after phoning both
+ * parties". Applies through the F4 single writer (via 'admin'), then
+ * closes every competing channel: open schedule prompts superseded,
+ * active links revoked, attention cleared. Both parties notified.
+ */
+exports.adminSetSchedule = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const { jobId, newDate, newTime, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      try {
+        validateScheduleProposal({ date: newDate, time: newTime });
+      } catch (err) {
+        if (err instanceof ScheduleError) return res.status(400).json({ error: err.message, code: err.code });
+        throw err;
+      }
+
+      const changeResult = await applyScheduleChange({
+        db: admin.firestore(), jobId,
+        newDate, newTime: String(newTime),
+        actor: decodedToken.uid, via: 'admin',
+        note: String(note || '').trim() || null, promptId: null,
+      });
+      if (changeResult.outcome === 'wrong_status') {
+        return res.status(409).json({ error: 'This job can no longer be rescheduled' });
+      }
+
+      // Close competing channels — a settled schedule kills open asks.
+      try {
+        const openPrompts = await admin.firestore()
+          .collection('jobs').doc(jobId).collection('prompts')
+          .where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs
+          .filter((d) => ['schedule_approval', 'schedule_pick_approval'].includes(d.data().type))
+          .map((d) => d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+        await revokeActiveLinks({ db: admin.firestore(), jobId });
+        await admin.firestore().collection('jobs').doc(jobId).update({
+          needsAttention: admin.firestore.FieldValue.delete(),
+          attentionNeeded: admin.firestore.FieldValue.delete(),
+        });
+      } catch (cleanupErr) {
+        console.error('⚠️ adminSetSchedule cleanup failed (continuing):', cleanupErr);
+      }
+
+      const job = changeResult.job;
+      const jobShortId = String(jobId).slice(-6);
+      const displayDate = new Date(newDate).toLocaleDateString('en-SG', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      });
+      try {
+        // Template-first for both: an admin set-time is business-initiated
+        // to parties who may have no open session window (63016).
+        if (job.customerPhone) {
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(job.customerPhone),
+            process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+            { '1': jobShortId, '2': displayDate, '3': String(newTime) },
+            `📅 Update on Job #${jobShortId}: your visit is now set for *${displayDate}* at *${newTime}* — arranged with our team. See you then! 🔧`
+          );
+        }
+        if (job.handymanId) {
+          const hmSnap = await admin.firestore().collection('handymen').doc(job.handymanId).get();
+          const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+          if (hmPhone) {
+            await sendTwilioTemplateMessage(
+              formatPhoneToWhatsApp(hmPhone),
+              process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+              { '1': jobShortId, '2': displayDate, '3': String(newTime) },
+              `📅 Our team set Job #${jobShortId} to ${displayDate} at ${newTime}. Please plan for it.`
+            );
+          }
+        }
+      } catch (notifyErr) {
+        console.error('⚠️ adminSetSchedule notifications failed (continuing):', notifyErr);
+      }
+
+      await writeAuditLog('admin_set_schedule', decodedToken, { jobId, newDate, newTime: String(newTime) });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ Error in adminSetSchedule:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to set schedule' });
+    }
+  });
+});
+
+/**
+ * adminUnassignJob — F5 forcing action: strip the current handyman and
+ * re-release (Scenario 2 machinery). Unlike the handyman self-cancel,
+ * this is allowed even after the completion poll went out — forcing
+ * actions exist precisely for jobs wedged past the self-serve window.
+ */
+exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+      const rl = await checkRateLimit(`admin_unassign_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many unassignments — please slow down' });
+      }
+      const { jobId, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      let jobData; let updatePayload; let removedHandymanId;
+      try {
+        await admin.firestore().runTransaction(async (tx) => {
+          const snap = await tx.get(jobRef);
+          if (!snap.exists) throw new Error('NOT_FOUND');
+          const job = snap.data();
+          if (job.status !== 'in_progress' || !job.handymanId) throw new Error('WRONG_STATUS');
+          jobData = job;
+          removedHandymanId = job.handymanId;
+          updatePayload = buildCancelUpdate(job, job.handymanId, {
+            reason: 'admin_forced',
+            note: String(note || '').trim(),
+            nowIso: new Date().toISOString(),
+          });
+          tx.update(jobRef, updatePayload);
+        });
+      } catch (err) {
+        if (err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Job not found' });
+        if (err.message === 'WRONG_STATUS') return res.status(409).json({ error: 'Job is not in progress with an assigned handyman' });
+        throw err;
+      }
+
+      // Close every open channel tied to the removed assignment.
+      try {
+        const openPrompts = await jobRef.collection('prompts').where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs.map((d) =>
+          d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+        await revokeActiveLinks({ db: admin.firestore(), jobId });
+        await jobRef.update({
+          needsAttention: admin.firestore.FieldValue.delete(),
+          attentionNeeded: admin.firestore.FieldValue.delete(),
+        });
+      } catch (cleanupErr) {
+        console.error('⚠️ adminUnassignJob cleanup failed (continuing):', cleanupErr);
+      }
+
+      // Side effects mirror cancelJobAssignment (best-effort, caught).
+      try {
+        await admin.firestore().collection('handymen').doc(removedHandymanId)
+          .update({ cancellationCount: admin.firestore.FieldValue.increment(1) });
+      } catch (err) {
+        console.error(`⚠️ cancellationCount increment failed for ${removedHandymanId}:`, err);
+      }
+      try {
+        const hmSnap = await admin.firestore().collection('handymen').doc(removedHandymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (hmPhone) {
+          await sendTwilioMessage(
+            formatPhoneToWhatsApp(hmPhone),
+            `ℹ️ Our team has removed you from Job #${jobId.slice(-6)} and is reassigning it. Questions? Contact easydonehandyman@gmail.com`
+          );
+        }
+      } catch (err) {
+        console.error('⚠️ Removed-handyman notice failed:', err);
+      }
+      if (jobData.customerPhone) {
+        try {
+          const shortId = jobId.slice(-6);
+          await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(jobData.customerPhone),
+            process.env.TWILIO_TEMPLATE_HANDYMAN_CANCELLED,
+            { '1': jobData.customerName || 'there', '2': shortId, '3': jobData.serviceType || 'your job' },
+            `Update on Job #${shortId} (${jobData.serviceType}):\n\nYour handyman is no longer available. We're finding you a new one — no action needed, and your payment stays protected.\n\nQuestions? Contact easydonehandyman@gmail.com`,
+          );
+        } catch (err) {
+          console.error(`⚠️ Customer unassign notice failed for job ${jobId}:`, err);
+        }
+      }
+      try {
+        await runHandymanFanOut({
+          job: { ...jobData, ...updatePayload, handymanId: null, status: 'pending' },
+          jobId, db: admin.firestore(),
+          sendTwilioTemplateMessage, checkRateLimit, logger: console,
+          round: updatePayload.reassignmentCount,
+          excludeIds: updatePayload.previousHandymanIds,
+        });
+      } catch (err) {
+        console.error(`⚠️ Unassign fan-out failed for job ${jobId}:`, err);
+      }
+
+      await writeAuditLog('admin_force_unassign', decodedToken, {
+        jobId, removedHandymanId,
+        note: String(note || '').slice(0, 500) || null,
+        reassignmentCount: updatePayload.reassignmentCount,
+      });
+      return res.status(200).json({ success: true, reassignmentCount: updatePayload.reassignmentCount });
+    } catch (error) {
+      console.error('❌ Error in adminUnassignJob:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to unassign job' });
+    }
+  });
+});
+
+/**
+ * adminSetJobStatus — manual status override (support escape hatch).
+ *
+ * For jobs wedged by a missed reply / expired prompt (e.g. customer
+ * says they confirmed but the job sits in pending_confirmation), the
+ * admin sets the status directly from /admin/jobs. Every override is
+ * audit-logged and stamped on the job (statusOverride) so a hand-moved
+ * job never masquerades as an organic transition. Deliberately does NOT
+ * touch money: releasing/refunding still goes through their own flows.
+ *
+ * POST body: { jobId, newStatus, note? }
+ */
+exports.adminSetJobStatus = functions.https.onRequest(async (req, res) => {
+  cors(req, res, async () => {
+    try {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+      const decodedToken = await verifyAuthToken(req);
+      verifyAdminAccess(decodedToken);
+
+      const ADMIN_SETTABLE_STATUSES = [
+        'pending', 'in_progress', 'pending_confirmation',
+        'pending_admin_approval', 'disputed', 'completed', 'cancelled',
+      ];
+      const { jobId, newStatus, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
+      if (!ADMIN_SETTABLE_STATUSES.includes(newStatus)) {
+        return res.status(400).json({ error: `newStatus must be one of: ${ADMIN_SETTABLE_STATUSES.join(', ')}` });
+      }
+
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+      const snap = await jobRef.get();
+      if (!snap.exists) return res.status(404).json({ error: 'Job not found' });
+      const fromStatus = snap.data().status || null;
+
+      const update = {
+        status: newStatus,
+        statusOverride: {
+          at: new Date().toISOString(),
+          by: decodedToken.uid,
+          from: fromStatus,
+          note: String(note || '').trim().slice(0, 300) || null,
+        },
+      };
+      // A manual move into the fund-release queue should look complete
+      // to that page's date rendering.
+      if (newStatus === 'pending_admin_approval' && !snap.data().customerConfirmedAt) {
+        update.customerConfirmedAt = new Date().toISOString();
+        update.confirmedVia = 'admin_override';
+      }
+      await jobRef.update(update);
+
+      await writeAuditLog('admin_status_override', decodedToken, {
+        jobId, from: fromStatus, to: newStatus,
+        note: String(note || '').slice(0, 300) || null,
+      });
+      console.log(`🔧 Admin status override job=${jobId} ${fromStatus} → ${newStatus} by ${decodedToken.uid}`);
+      return res.status(200).json({ success: true, from: fromStatus, to: newStatus });
+    } catch (error) {
+      console.error('❌ Error in adminSetJobStatus:', error);
+      if (error.message.includes('Unauthorized')) return res.status(401).json({ error: error.message });
+      if (error.message.includes('Forbidden')) return res.status(403).json({ error: error.message });
+      return res.status(500).json({ error: 'Failed to set job status' });
     }
   });
 });

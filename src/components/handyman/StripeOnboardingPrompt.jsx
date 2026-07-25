@@ -295,6 +295,9 @@ const StripeOnboardingPrompt = ({ handyman }) => {
                     <p className="text-gray-600 dark:text-gray-400 text-sm">
                       Receive payments directly to your bank account through Stripe,
                       a secure and trusted payment platform used worldwide.
+                      Released payments typically reach your bank in 2–4 business
+                      days; your first-ever payout can take 7–14 days while Stripe
+                      verifies your account.
                     </p>
                   </div>
                 </div>
