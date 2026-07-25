@@ -33,7 +33,7 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 | 8 | Customer no-show / no access | New |
 | 9 | Customer cancellation + refund | **Deferred — manual via admin** (owner decision 2026-07-13; queue Refund button / Stripe Dashboard) |
 | 10 | Price/scope change after inspection | Spec exists (`price-adjustment-flow.md`); integration defined here |
-| 11 | Second visit needed | New |
+| 11 | Second visit needed | New — design expanded 2026-07-25 (disposition prompt + 4-option poll) |
 | 12 | Stuck-state timeouts | **Built** (2026-07-13, stage 4 — sweep ladders + attention queue with forcing actions) |
 
 **Non-goals for v1** (admin resolves manually via existing dispute/refund tools): partial completion / partial payment, property-damage incidents, refund-after-release, editing job details other than schedule before acceptance, free-form chat.
@@ -103,7 +103,7 @@ scheduleLinks/{tokenHash}            // SHA-256 of the token — raw token is ne
 - **Single-use and revocable**: submitting consumes the link in the same transaction that opens the follow-up prompt. Issuing a new link revokes prior active ones for the job, and applying any `scheduleChange` (F4) revokes open links — a stale link can never resurrect a settled schedule.
 - **The pick never applies directly** — it opens a roles-flipped `schedule_pick_approval` prompt to the handyman (see Scenario 3). Links move no money (§2b holds).
 
-**Template pack** (all Utility; submit early; freeform fallback until approved, matching existing pattern): `schedule_proposal` (shared by Scenario 3 reschedules and Scenario 4 ASAP time-fixing — shipped, env `TWILIO_TEMPLATE_SCHEDULE_PROPOSAL`), `schedule_link` (carries the F6 URL — required because admin-triggered sends can fall outside the 24h session window), `second_visit_proposal`, `running_late_notice`, `no_show_choice`, `customer_cancel_confirm`, `refund_processed`, `prompt_nudge`.
+**Template pack** (all Utility; submit early; freeform fallback until approved, matching existing pattern): `schedule_proposal` (shared by Scenario 3 reschedules and Scenario 4 ASAP time-fixing — shipped, env `TWILIO_TEMPLATE_SCHEDULE_PROPOSAL`), `schedule_link` (carries the F6 URL — required because admin-triggered sends can fall outside the 24h session window), `second_visit_proposal`, `visit_disposition` (per-job deep-link message, Scenario 11 Door 2), `running_late_notice`, `no_show_choice`, `customer_cancel_confirm`, `refund_processed`, `prompt_nudge`. Note: the completion poll template is reworked to a numbered 4-option list (Scenario 11 Door 3) — this also supplies Scenario 7's "never came" option 3.
 
 ## 4. Scenarios
 
@@ -134,7 +134,8 @@ Customer books + card authorized [WA job_created]
 Job created + paid [0] → fan-out [WA] → handyman accepts [A]
       → customer notified [WA job_accepted]
       → handyman shows up on preferredDate, does job
-      → handyman taps Mark Complete [A] → completion poll [WA, quick-reply YES/NO]
+      → handyman taps Mark Complete [A] → completion poll [WA, quick-reply YES/NO
+        as built; becomes a 4-option numbered list at stage 6 — Scenario 11 Door 3]
       → customer YES → status 'pending_admin_approval' → admin email
       → [ADM] reviews payee + reassignment history → clicks Release  ← point of no return
       → transfer to handyman, job 'completed', paymentStatus 'released'
@@ -277,7 +278,7 @@ Scheduled visit happens → handyman inspects → not fit for job
 
 ### Scenario 7 — Handyman no-show (customer-reported)
 
-**Solution.** Two report entry points: (a) a third quick-reply option on the completion poll — "Handyman never came"; (b) free-text intents ("no show", "never came", "didn't come") recognized by the router any time on/after the visit date. Report → job flagged (`noShowReports[]`, handyman profile `noShowCount` incremented — display-only, like `cancellationCount`), admin alerted, and the customer immediately gets a **choice prompt**: 1 = reschedule with the same handyman (→ Scenario 3, handyman must approve this time), 2 = new handyman (→ admin-confirmed forced un-assign, then Scenario 2's re-release; v1 keeps a human in the loop rather than letting one WhatsApp reply strip a job), 3 = cancel and refund (→ Scenario 9). The handyman is notified a no-show was reported and can dispute to the admin (protects against wrong-address/customer-error cases).
+**Solution.** Two report entry points: (a) option 3 of the reworked numbered completion poll (see Scenario 11 Door 3) — "He never came"; (b) free-text intents ("no show", "never came", "didn't come") recognized by the router any time on/after the visit date. Report → job flagged (`noShowReports[]`, handyman profile `noShowCount` incremented — display-only, like `cancellationCount`), admin alerted, and the customer immediately gets a **choice prompt**: 1 = reschedule with the same handyman (→ Scenario 3, handyman must approve this time), 2 = new handyman (→ admin-confirmed forced un-assign, then Scenario 2's re-release; v1 keeps a human in the loop rather than letting one WhatsApp reply strip a job), 3 = cancel and refund (→ Scenario 9). The handyman is notified a no-show was reported and can dispute to the admin (protects against wrong-address/customer-error cases).
 
 **Flow.**
 ```
@@ -349,18 +350,68 @@ Visit 1: inspection → bigger than booked
 
 ### Scenario 11 — Second visit needed
 
-**Solution.** Handyman taps "Needs another visit" (reason: parts/materials, bigger job, customer request + proposed date) → customer Approve/Decline prompt → on approve, a `visits[]` entry is appended and F4 `scheduleChange` moves the working date to the new visit (poll re-arms for it; Mark Complete's gate follows). The job stays `in_progress` across visits; Mark Complete is expected after the final visit. Repeatable (visit 3+) but each round is admin-visible; >2 visits alerts the admin.
+*(Expanded 2026-07-25 — owner brainstorm: entry into this flow must not depend on the handyman remembering to tap a button.)*
+
+**Problem.** As originally sketched, the flow fired only if the handyman tapped "Needs another visit." If they finished visit 1 and forgot, the day-after completion poll asked the customer to verify completion of a job both parties knew was half-done; the customer's NO landed a routine second visit in `disputed`. Goal: make entry near-unmissable without depending on anyone's initiative — "forget" must become "ignored a direct question," which the F5 ladders already handle.
+
+**Solution — three independent entry doors.**
+
+**Door 1 — in-app button (original design, unchanged).** Handyman taps "Needs another visit" (reason: parts/materials, bigger job, customer request + proposed date) → customer Approve/Decline prompt → on approve, a `visits[]` entry is appended and F4 `scheduleChange` moves the working date to the new visit (poll re-arms for it; Mark Complete's gate follows). The job stays `in_progress` across visits; Mark Complete is expected after the final visit. Repeatable (visit 3+) but each round is admin-visible; >2 visits alerts the admin.
+
+**Door 2 — evening visit-disposition prompt (new; the "can't forget" net).** A scheduled function (early evening daily, ~7pm SGT, separate from the morning sweep) finds visit-day jobs the handyman went silent on — `preferredDate` = today, `status='in_progress'`, no `completionPollSentAt`, no pending second-visit entry — and sends the handyman a **per-job deep link**, not numbered reply options:
+
+> "How did today's job go — {title} @ {area}? Tap to update: `https://<app>/jobs/{id}?action=disposition`"
+
+The link opens the handyman's normal authed job page with a disposition sheet auto-opened: **Job's done** (= the existing Mark Complete, one tap) / **Needs another visit** (= Door 1's modal, date picker inline) / **Problem — can't finish** (note → admin via F3 transport; customer told "we're looking into it" — often resolves into [6] swap or [10] price talk). Deep link over numbered WA replies is a deliberate v1 choice: handymen have accounts (no F6 token machinery needed — just normal auth), per-job links stay unambiguous on multi-job days (compound numbered disambiguation risks binding a reply to the *wrong* job — a mis-marked completion), and the most important branch (needs-another-visit) requires the in-app date picker anyway, so the link makes it one continuous flow. An F2 prompt record (`type: visit_disposition`) is still written so sweeps and audit ride the standard rails; a text reply instead of a tap falls through to F3 (reply parsing for single-open-prompt cases is v2).
+
+**Door 3 — customer poll option 4 (backstop when the handyman ignores Door 2).** The completion poll is reworked from YES/NO quick-reply to a **numbered 4-option list** (WA quick-reply templates cap at 3 buttons; numbered replies are the router's existing pattern):
+
+> "Did {name} complete your job? Reply: **1** Yes, all done / **2** No — there's a problem / **3** He never came / **4** He's coming back for another visit"
+
+1 → `pending_admin_approval` (unchanged tail). 2 → `disputed` (today's NO, unchanged semantics). 3 → Scenario 7 no-show flow (this rework supplies the poll option Scenario 7 needs). **4 → second-visit intent recorded from the customer side**: `visits[]` entry `pending_schedule`, customer reassured, handyman pinged to propose the return date via Door 1's picker (ladder below if silent).
+
+**When the poll fires — and how conflicts resolve.** The poll is the customer-verification gate before any release (golden rule), so it is never skipped when a completion claim exists; what varies is trigger and timing:
+
+| Handyman state by visit-day evening | Disposition link (Door 2) | Customer poll |
+|---|---|---|
+| Marked complete (app or via link) | not sent / already used | fires **immediately** at mark-complete, as today — verifies the claim |
+| Flagged "needs another visit" | not sent / already used | **suppressed** — nothing to verify yet; re-arms for the visit-2 date via F4 |
+| Silent | sent ~7pm | fires **next morning** as backstop — customer becomes the reporter |
+
+Conflicts when the handyman claimed complete but the customer answers otherwise — bounded at one automated round, then admin:
+- **2 (problem)** → `disputed`, admin mediates (unchanged).
+- **3 (never came)** → hard contradiction → Scenario 7 report + immediate admin flag (handyman dispute path per Scenario 7).
+- **4 (coming back)** → soft contradiction (commonly benign — "done for today" vs "he'll be back"): `pending_schedule` intent recorded, handyman prompted **once** — "Customer expects a return visit: propose a time, or confirm the job is complete." Proposing converges to Door 1; insisting complete or 24h silence → admin queue [12] (release / call / refund — admin decides). No automated ping-pong.
+
+**Reconciliation ladders (F5; rows join the Scenario 12 sweep at build time).**
+
+| Stuck state | Detection | Nudge | Escalate |
+|---|---|---|---|
+| Disposition link unanswered | `visit_disposition` open past visit-day midnight | none extra — the next-morning customer poll IS the backstop | normal poll ladders apply |
+| Second visit needed, no date | `visits[]` entry `pending_schedule` > 24h, no open schedule prompt | `prompt_nudge` to handyman | 48h: admin queue — set time admin-as-actor / force-unassign [2] / offer refund [9] |
+
+**Data model.** `visits[]` entries: `{proposedDate?, status: 'pending_schedule'|'scheduled'|'done', reason, reportedVia: 'app'|'disposition_link'|'customer_poll'|'admin', createdAt, promptId?}`. New F2 prompt type `visit_disposition`. Completion-poll prompt options extended to 4. No new money paths (§2b row 11 unchanged).
 
 **Flow.**
 ```
-Visit 1 done, more work needed
-      → handyman [A] "Needs another visit" (reason + proposed date)
-      → [WA] customer: Approve / Decline
-      ├─ Approve → [F] scheduleChange: visits[] appended, working date moved,
-      │       poll re-armed for the new date
-      │       → visit 2 happens → Mark Complete [A] → completion poll → Scenario 1 tail
-      ├─ Decline → F3/admin mediates (often becomes [10] price talk or [9] cancel)
-      └─ No reply 48h → nudge → admin queue [12]
+Visit day ends, job still in_progress
+      ├─ handyman [A] Mark Complete → poll (4-option) fires now
+      │       → 1 done → Scenario 1 tail ; 2/3/4 → conflict handling above
+      ├─ handyman [A or link] "Needs another visit" (reason + proposed date)
+      │       → [WA] customer: Approve / Decline
+      │       ├─ Approve → [F] scheduleChange: visits[] appended, working date moved,
+      │       │       poll re-armed for the new date
+      │       │       → visit 2 happens → Mark Complete [A] → poll → Scenario 1 tail
+      │       ├─ Decline → F3/admin mediates (often becomes [10] price talk or [9] cancel)
+      │       └─ No reply 48h → nudge → admin queue [12]
+      ├─ handyman silent → ~7pm [F] disposition prompt [WA deep link]
+      │       → still silent → next morning: customer poll (backstop, 4-option)
+      │       ├─ 1 done → pending_admin_approval → Scenario 1 tail
+      │       ├─ 2 problem → disputed
+      │       ├─ 3 never came → Scenario 7
+      │       └─ 4 coming back → visits[] pending_schedule → handyman picks date
+      │               → no date 24h → nudge → 48h admin queue [12]
+      └─ (>2 visits on any path → admin alerted)
 ```
 
 ---
@@ -419,7 +470,7 @@ All on branch `feature/job-lifecycle-flows` (stacks on `feature/job-reassignment
 | 4 | **Scenario 12** — stuck-state sweep ladders, attention queue + forcing actions (set time / force-unassign / refund / resolve), inert auto-poll fix | ✅ **DONE** 2026-07-13 (plan `2026-07-13-stuck-state-sweep.md`, machinery spec `2026-07-13-stuck-state-sweep-design.md`) |
 | — | **Scenario 9** — customer cancel + refund | ⛔ **DEFERRED — manual via admin** (owner decision 2026-07-13; see Scenario 9 note) |
 | 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Not started |
-| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits | Not started |
+| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits, incl. visit-disposition prompt (Door 2), 4-option poll rework (Door 3), conflict handling + sweep rows | Not started |
 | 7 | **Scenario 6** — late-lifecycle swap window relaxation (self-serve; admin force-unassign already covers the wedge) | Not started |
 
 Owner gates before the built stages are live: Stripe webhook subscriptions (`payment_intent.amount_capturable_updated` + `payment_intent.canceled`, both endpoints); Meta templates `schedule_proposal`, `schedule_link`, `prompt_nudge` (+ env SIDs; freeform fallback until approved); deploy functions + rules + **indexes** together; run the consolidated E2E plan.
