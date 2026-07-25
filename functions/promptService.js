@@ -81,10 +81,23 @@ function interpretReply(prompts, messageText) {
 
   const selectorMatch = text.match(/^\s*([1-9])\b(.*)$/);
   if (!selectorMatch) {
-    // Something that looks like an answer but no selector → ask which.
-    // Pure free text with no option match anywhere → unmatched (F3).
-    const matchesAny = prompts.some((p) => matchOptions(p.options, text));
-    return matchesAny ? { kind: 'disambiguate' } : { kind: 'unmatched' };
+    // Unique-prompt binding: a reply that matches options on exactly ONE
+    // open prompt is unambiguous even without a selector. This matters
+    // for quick-reply buttons ("Approve", "Confirm Complete") — they can
+    // never carry a "1 " prefix, so without this a customer holding two
+    // open prompts is stuck in a disambiguation loop their buttons
+    // cannot exit. A reply matching SEVERAL prompts (a bare "YES") still
+    // asks which; no option match anywhere → unmatched (F3).
+    const matching = prompts.filter((p) => matchOptions(p.options, text));
+    if (matching.length === 1) {
+      return {
+        kind: 'answer',
+        prompt: matching[0],
+        action: matchOptions(matching[0].options, text),
+        answerText: text,
+      };
+    }
+    return matching.length > 1 ? { kind: 'disambiguate' } : { kind: 'unmatched' };
   }
 
   const index = parseInt(selectorMatch[1], 10) - 1;

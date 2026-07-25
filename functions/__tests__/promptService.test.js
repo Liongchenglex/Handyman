@@ -67,6 +67,24 @@ describe('interpretReply — multiple open prompts', () => {
     expect(interpretReply(two, 'yes')).toEqual({ kind: 'disambiguate' });
   });
 
+  test('an answer matching exactly ONE prompt binds without a selector (quick-reply buttons)', () => {
+    // Buttons can't type "1 " prefixes: "Confirm Complete" only exists on
+    // the completion prompt, "Approve" only on the schedule prompt — each
+    // must bind directly even with both prompts open.
+    const pair = [
+      prompt({ id: 'c1', options: { YES: 'confirm', 'CONFIRM COMPLETE': 'confirm', NO: 'reject' } }),
+      prompt({ id: 's1', jobId: 'job_bbb222', type: 'schedule_approval', options: { YES: 'approve', APPROVE: 'approve', NO: 'decline' } }),
+    ];
+    const viaButton = interpretReply(pair, 'Approve');
+    expect(viaButton).toMatchObject({ kind: 'answer', action: 'approve' });
+    expect(viaButton.prompt.id).toBe('s1');
+    const viaCompletion = interpretReply(pair, 'Confirm Complete');
+    expect(viaCompletion).toMatchObject({ kind: 'answer', action: 'confirm' });
+    expect(viaCompletion.prompt.id).toBe('c1');
+    // Shared keys still disambiguate — never guess.
+    expect(interpretReply(pair, 'NO')).toEqual({ kind: 'disambiguate' });
+  });
+
   test('a selector out of range is unmatched', () => {
     expect(interpretReply(two, '5 yes')).toEqual({ kind: 'unmatched' });
   });
