@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { getScheduleLinkContext, submitSchedulePick } from '../services/api/scheduleLink';
 import { getProposalDateBounds } from '../services/api/jobSchedule';
+import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../utils/timeSlots';
 
 /**
  * PickTime — the public F6 deep-link page (lifecycle spec Scenario 3).
@@ -26,6 +27,15 @@ const PickTime = () => {
   const submittingRef = useRef(false);
 
   const dateBounds = getProposalDateBounds();
+
+  // Snap the slot when the chosen date invalidates it (today's slots
+  // pass as the clock moves) — same behavior as the booking form.
+  useEffect(() => {
+    if (date && time && isSlotInPastForDate(time, date)) {
+      setTime(firstAvailableSlot(date));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,17 +153,21 @@ const PickTime = () => {
       />
 
       <label htmlFor="pick-time" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
-        Time <span className="text-red-500">*</span>
+        Time slot <span className="text-red-500">*</span>
       </label>
-      <input
+      <select
         id="pick-time"
-        type="text"
-        maxLength={20}
-        placeholder="e.g. 2:00 PM"
         value={time}
         onChange={(e) => setTime(e.target.value)}
         className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
-      />
+      >
+        <option value="">Select a time slot…</option>
+        {TIME_SLOTS.map((slot) => (
+          <option key={slot} value={slot} disabled={isSlotInPastForDate(slot, date)}>
+            {slot}{isSlotInPastForDate(slot, date) ? ' (passed)' : ''}
+          </option>
+        ))}
+      </select>
 
       <label htmlFor="pick-note" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
         Note to your handyman <span className="text-gray-400">(optional)</span>

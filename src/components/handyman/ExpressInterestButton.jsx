@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { updateJob } from '../../services/firebase';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { sendJobAcceptanceNotification } from '../../services/whatsappService';
 import { proposeSchedule, getProposalDateBounds } from '../../services/api/jobSchedule';
+import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../../utils/timeSlots';
 
 /**
  * ExpressInterestButton Component
@@ -45,12 +46,23 @@ const ExpressInterestButton = ({
   const isAsapJob = job.preferredTiming !== 'Schedule';
   // Date-picker bounds (today … +90d) matching the server's validation.
   const dateBounds = getProposalDateBounds();
-  // ASAP default: the visit date is pre-filled with TODAY so the
-  // handyman normally only picks a time — but it stays editable (an
-  // evening claim often means "tomorrow morning"), because this date
-  // becomes the job's preferredDate and drives the completion poll.
+  // ASAP default: the visit date is pre-filled with TODAY and the time
+  // with today's first still-available slot, so the common case is a
+  // zero-edit confirm — but both stay editable (an evening claim often
+  // means "tomorrow morning"), because this date/slot becomes the job's
+  // preferredDate/Time and drives the completion poll.
   const [proposedDate, setProposedDate] = useState(dateBounds.min);
-  const [proposedTime, setProposedTime] = useState('');
+  const [proposedTime, setProposedTime] = useState(() => firstAvailableSlot(dateBounds.min));
+
+  // Keep the slot valid when the date changes (or when today's slots
+  // have all passed): snap to the first available slot for the new
+  // date, mirroring the booking form's behavior.
+  useEffect(() => {
+    if (!proposedTime || isSlotInPastForDate(proposedTime, proposedDate)) {
+      setProposedTime(firstAvailableSlot(proposedDate));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposedDate]);
 
   // A job can only be claimed while it is still open ('pending') and
   // unassigned. Who claimed it decides the button copy: "Interest
@@ -267,16 +279,20 @@ const ExpressInterestButton = ({
                   onChange={(e) => setProposedDate(e.target.value)}
                   className="w-full mb-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
                 />
-                <label htmlFor="asap-time" className="sr-only">Visit time</label>
-                <input
+                <label htmlFor="asap-time" className="sr-only">Visit time slot</label>
+                <select
                   id="asap-time"
-                  type="text"
-                  maxLength={20}
-                  placeholder="Time, e.g. 2:00 PM"
                   value={proposedTime}
                   onChange={(e) => setProposedTime(e.target.value)}
                   className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
-                />
+                >
+                  <option value="">Select a time slot…</option>
+                  {TIME_SLOTS.map((slot) => (
+                    <option key={slot} value={slot} disabled={isSlotInPastForDate(slot, proposedDate)}>
+                      {slot}{isSlotInPastForDate(slot, proposedDate) ? ' (passed)' : ''}
+                    </option>
+                  ))}
+                </select>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Set for today — change the date only if you'll visit another day.
                   The customer will be asked to approve this time on WhatsApp.

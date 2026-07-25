@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { proposeSchedule, getProposalDateBounds } from '../../services/api/jobSchedule';
+import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../../utils/timeSlots';
 
 /**
  * ProposeTimeModal
@@ -33,6 +34,15 @@ const ProposeTimeModal = ({ job, isOpen, onClose, onProposed }) => {
       submittingRef.current = false;
     }
   }, [isOpen, job.id]);
+
+  // Snap the slot when the chosen date invalidates it (today's slots
+  // pass as the clock moves) — mirrors the booking form's behavior.
+  useEffect(() => {
+    if (date && time && isSlotInPastForDate(time, date)) {
+      setTime(firstAvailableSlot(date));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
 
   if (!isOpen) return null;
 
@@ -91,17 +101,21 @@ const ProposeTimeModal = ({ job, isOpen, onClose, onProposed }) => {
         />
 
         <label htmlFor="propose-time" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
-          Time <span className="text-red-500">*</span>
+          Time slot <span className="text-red-500">*</span>
         </label>
-        <input
+        <select
           id="propose-time"
-          type="text"
-          maxLength={20}
-          placeholder="e.g. 2:00 PM"
           value={time}
           onChange={(e) => setTime(e.target.value)}
           className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
-        />
+        >
+          <option value="">Select a time slot…</option>
+          {TIME_SLOTS.map((slot) => (
+            <option key={slot} value={slot} disabled={isSlotInPastForDate(slot, date)}>
+              {slot}{isSlotInPastForDate(slot, date) ? ' (passed)' : ''}
+            </option>
+          ))}
+        </select>
 
         <label htmlFor="propose-note" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
           Note to customer <span className="text-gray-400">(optional)</span>
