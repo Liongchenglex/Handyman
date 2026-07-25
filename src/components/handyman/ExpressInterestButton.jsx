@@ -43,10 +43,14 @@ const ExpressInterestButton = ({
   // (lifecycle spec Scenario 4): the accept modal requires it, so an
   // accepted ASAP job can never sit timeless.
   const isAsapJob = job.preferredTiming !== 'Schedule';
-  const [proposedDate, setProposedDate] = useState('');
-  const [proposedTime, setProposedTime] = useState('');
   // Date-picker bounds (today … +90d) matching the server's validation.
   const dateBounds = getProposalDateBounds();
+  // ASAP default: the visit date is pre-filled with TODAY so the
+  // handyman normally only picks a time — but it stays editable (an
+  // evening claim often means "tomorrow morning"), because this date
+  // becomes the job's preferredDate and drives the completion poll.
+  const [proposedDate, setProposedDate] = useState(dateBounds.min);
+  const [proposedTime, setProposedTime] = useState('');
 
   // A job can only be claimed while it is still open ('pending') and
   // unassigned. Who claimed it decides the button copy: "Interest
@@ -274,6 +278,7 @@ const ExpressInterestButton = ({
                   className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Set for today — change the date only if you'll visit another day.
                   The customer will be asked to approve this time on WhatsApp.
                 </p>
               </div>
