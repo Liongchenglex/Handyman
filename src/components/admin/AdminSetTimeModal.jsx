@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { adminSetSchedule } from '../../services/api/adminQueue';
 import { getProposalDateBounds } from '../../services/api/jobSchedule';
+import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../../utils/timeSlots';
 
 /**
  * AdminSetTimeModal — F5 admin-as-actor set-time (Scenario 12 queue).
@@ -25,6 +26,15 @@ const AdminSetTimeModal = ({ job, isOpen, onClose, onApplied }) => {
       setIsSubmitting(false); submittingRef.current = false;
     }
   }, [isOpen, jobId]);
+
+  // Snap the slot when the chosen date invalidates it (today's slots
+  // pass as the clock moves) — same behavior as every other picker.
+  useEffect(() => {
+    if (date && time && isSlotInPastForDate(time, date)) {
+      setTime(firstAvailableSlot(date));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
 
   if (!isOpen || !job) return null;
 
@@ -67,13 +77,20 @@ const AdminSetTimeModal = ({ job, isOpen, onClose, onApplied }) => {
           className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
         />
         <label htmlFor="admin-set-time" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
-          Time <span className="text-red-500">*</span>
+          Time slot <span className="text-red-500">*</span>
         </label>
-        <input
-          id="admin-set-time" type="text" maxLength={20} placeholder="e.g. 2:00 PM"
+        <select
+          id="admin-set-time"
           value={time} onChange={(e) => setTime(e.target.value)}
           className="w-full mb-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white p-3"
-        />
+        >
+          <option value="">Select a time slot…</option>
+          {TIME_SLOTS.map((slot) => (
+            <option key={slot} value={slot} disabled={isSlotInPastForDate(slot, date)}>
+              {slot}{isSlotInPastForDate(slot, date) ? ' (passed)' : ''}
+            </option>
+          ))}
+        </select>
         <label htmlFor="admin-set-note" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
           Internal note <span className="text-gray-400">(optional, kept in schedule history)</span>
         </label>
