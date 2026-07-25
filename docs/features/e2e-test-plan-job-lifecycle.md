@@ -26,10 +26,10 @@ Run the suites in order — later suites assume earlier machinery works.
 
 ### A1. Money is captured at booking, not at release
 Flow: `[CUST] book a job (Scheduled, date ≈ tomorrow) with test card → pay`
-- [ ] Stripe Dashboard: the PaymentIntent shows **Succeeded/captured** (not "Uncaptured") within ~a minute of booking.
-- [ ] Firestore job: `paymentStatus: 'succeeded'`, `paymentIntentId` present.
-- [ ] HM-A and HM-B each receive the new-job WhatsApp fan-out (this proves the `payment_intent.succeeded` fan-out trigger fires).
-- [ ] Job appears on the job board.
+- [ x] Stripe Dashboard: the PaymentIntent shows **Succeeded/captured** (not "Uncaptured") within ~a minute of booking.
+- [ x] Firestore job: `paymentStatus: 'succeeded'`, `paymentIntentId` present.
+- [ x ] HM-A and HM-B each receive the new-job WhatsApp fan-out (this proves the `payment_intent.succeeded` fan-out trigger fires).
+- [ x ] Job appears on the job board.
 
 ### A2. Lost authorization alarm
 Flow: `Stripe Dashboard → cancel an UNCAPTURED test PaymentIntent for a booked job (create one by blocking the capture webhook temporarily, or use a stale pre-deploy booking)`
@@ -44,9 +44,9 @@ Flow: `Stripe Dashboard → cancel an UNCAPTURED test PaymentIntent for a booked
 
 ### B1. Happy completion via handyman
 Flow: `[HM-A] accept A1's job → on the visit day [HM-A] Mark Complete → [CUST] receives poll → reply YES`
-- [ ] Job → `pending_admin_approval`; `customerConfirmedAt` set.
-- [ ] Admin fund-release email arrives; job listed on `/admin/fund-release`.
-- [ ] CUST gets the "thank you for confirming" reply.
+- [ x] Job → `pending_admin_approval`; `customerConfirmedAt` set.
+- [ x] Admin fund-release email arrives; job listed on `/admin/fund-release`.
+- [ x] CUST gets the "thank you for confirming" reply.
 
 ### B2. Dispute via NO
 Flow: `same as B1 but [CUST] replies NO`
@@ -78,19 +78,19 @@ Flow: `give CUST two open prompts (e.g. two jobs with completion polls) → [CUS
 
 ### C1. ASAP claim requires a proposed time
 Flow: `[CUST] book an ASAP job (pay) → [HM-A] Express Interest`
-- [ ] Modal shows required date+time pickers; Confirm disabled until both filled; date input bounded today…+90d.
-- [ ] On confirm: job assigned AND CUST receives acceptance + the proposal ("proposes to visit on … YES/NO"); HM-A's success alert names the proposal.
-- [ ] Firestore: open `schedule_approval` prompt under `jobs/{id}/prompts` with the payload.
+- [ x] Modal shows required date+time pickers; Confirm disabled until both filled; date input bounded today…+90d.
+- [ x] On confirm: job assigned AND CUST receives acceptance + the proposal ("proposes to visit on … YES/NO"); HM-A's success alert names the proposal.
+- [ x] Firestore: open `schedule_approval` prompt under `jobs/{id}/prompts` with the payload.
 
 ### C2. Customer approves the ASAP proposal
 Flow: `[CUST] reply YES to C1`
-- [ ] Job: `preferredDate`/`preferredTime` written, `preferredTiming: 'Schedule'`, `scheduledFromAsapAt` stamped, `scheduleHistory` entry `via: 'whatsapp_reply'`.
-- [ ] Both parties get confirmations; prompt `answered`.
+- [ x] Job: `preferredDate`/`preferredTime` written, `preferredTiming: 'Schedule'`, `scheduledFromAsapAt` stamped, `scheduleHistory` entry `via: 'whatsapp_reply'`.
+- [ x] Both parties get confirmations; prompt `answered`.
 
 ### C3. Reschedule a scheduled job (handyman-initiated)
 Flow: `[HM-A] job page → "Propose new time" (new date/time + note) → [CUST] reply YES`
-- [ ] CUST message includes the note; on YES the schedule updates, `completionPollSentAt` cleared (if it was set), history appended.
-- [ ] A second proposal before the customer answers **supersedes** the first prompt (Firestore: old prompt `superseded`).
+- [x ] CUST message includes the note; on YES the schedule updates, `completionPollSentAt` cleared (if it was set), history appended.
+- [x ] A second proposal before the customer answers **supersedes** the first prompt (Firestore: old prompt `superseded`).
 
 ### C4. F4 single-writer enforced
 Flow: `browser console as HM-A (job owner): updateDoc(jobs/{id}, { preferredDate: '2026-12-25' })`
@@ -106,8 +106,8 @@ Flow: `[HM-A] propose with a past date (use curl with yesterday's date to bypass
 
 ### D1. Decline → auto-link
 Flow: `fresh ASAP claim (C1 on a new job) → [CUST] reply NO`
-- [ ] CUST receives the pick-time link (valid-72h copy); HM gets "they've been sent a link to pick a time".
-- [ ] Firestore: `scheduleLinks/{hash}` doc `status: 'active'`, `createdBy: 'system_decline'`; the raw token appears NOWHERE in Firestore or logs.
+- [x ] CUST receives the pick-time link (valid-72h copy); HM gets "they've been sent a link to pick a time".
+- [x ] Firestore: `scheduleLinks/{hash}` doc `status: 'active'`, `createdBy: 'system_decline'`; the raw token appears NOWHERE in Firestore or logs.
 
 ### D2. Customer picks on /pick-time
 Flow: `[CUST] open the link → page shows service, handyman name, current schedule → pick date/time + note → submit`
