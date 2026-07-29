@@ -13,6 +13,8 @@ const SWEEP = Object.freeze({
   PROMPT_NUDGE_EXTEND_HOURS: 24,
   ASAP_NUDGE_HOURS: 24,
   ASAP_ESCALATE_HOURS: 48,
+  SECOND_VISIT_NUDGE_HOURS: 24,
+  SECOND_VISIT_ESCALATE_HOURS: 48,
   UNCLAIMED_FANOUT_DAYS: 3,
   UNCLAIMED_ESCALATE_DAYS: 7,
   RECLAIM_FANOUT_DAYS: 2,
@@ -39,6 +41,12 @@ function toMs(v) {
 
 /** Open prompt past expiresAt: nudge once (orchestrator extends +24h), then escalate. */
 function evaluatePrompt(prompt, nowMs) {
+  // visit_disposition prompts have their own backstop (the next-morning
+  // completion poll) — never nudge or escalate, just close them out.
+  if (prompt.type === 'visit_disposition') {
+    const exp = toMs(prompt.expiresAt);
+    return exp != null && exp <= nowMs ? 'expire_silent' : 'ok';
+  }
   const exp = toMs(prompt.expiresAt);
   if (exp === null || exp > nowMs) return 'ok';
   return prompt.nudgedAt ? 'escalate' : 'nudge';
@@ -69,6 +77,28 @@ function evaluateAsapJob(job, { hasOpenSchedulePrompt = false, hasActiveLink = f
   const nudged = !!(job.sweepNudges && job.sweepNudges.asap_no_time);
   if (nudged) return hours >= SWEEP.ASAP_ESCALATE_HOURS ? 'escalate' : 'ok';
   return hours >= SWEEP.ASAP_NUDGE_HOURS ? 'nudge' : 'ok';
+}
+
+/**
+ * Scenario 11 ladder — a second visit was flagged (poll option 3 or a
+ * declined-then-reset proposal) but the handyman has not proposed a
+ * date. 24h → nudge once, 48h → attention queue.
+ */
+function evaluateSecondVisit(job, nowMs) {
+  const visits = Array.isArray(job.visits) ? job.visits : [];
+  let entry = null;
+  for (let i = visits.length - 1; i >= 0; i--) {
+    const v = visits[i];
+    if (v && v.status === 'pending_schedule' && !v.proposedDate) { entry = v; break; }
+  }
+  if (!entry) return 'ok';
+  const created = toMs(entry.createdAt);
+  if (created == null) return 'ok';
+  const ageHours = (nowMs - created) / 3600000;
+  if (ageHours >= SWEEP.SECOND_VISIT_ESCALATE_HOURS) return 'escalate';
+  if (ageHours < SWEEP.SECOND_VISIT_NUDGE_HOURS) return 'ok';
+  const nudged = job.sweepNudges && job.sweepNudges.second_visit_no_date;
+  return nudged ? 'ok' : 'nudge';
 }
 
 /**
@@ -106,6 +136,7 @@ module.exports = {
   evaluatePrompt,
   evaluateLink,
   evaluateAsapJob,
+  evaluateSecondVisit,
   evaluateUnclaimedJob,
   buildAttentionUpdate,
 };
