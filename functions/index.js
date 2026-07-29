@@ -80,6 +80,16 @@ const {
   buildScheduleChangeUpdate,
 } = require('./scheduleService');
 
+// Second-visit / access-issue domain logic (Scenario 11 + Scenario 8).
+// See functions/visitService.js.
+const {
+  VisitError, SECOND_VISIT_REASONS, VISIT_ISSUE_KINDS,
+  validateSecondVisitRequest, upsertPendingVisit,
+  buildVisitScheduledUpdate, buildVisitDeclinedUpdate,
+  hasPendingSecondVisit, shouldSendDisposition,
+  validateVisitIssueReport, buildVisitIssueEntry,
+} = require('./visitService');
+
 // Secure schedule links (F6) — token hashing + link issuance/revocation.
 // See functions/scheduleLinkService.js.
 const {
@@ -2664,6 +2674,25 @@ async function applyCompletionAnswer({ db, jobId, isConfirm }) {
 }
 
 /**
+ * Close every open prompt of the given types on a job (e.g. an open
+ * completion poll or the evening disposition link once the handyman
+ * has acted through another door). Best-effort: callers treat failures
+ * as non-fatal because the job-state write has already committed.
+ */
+async function supersedeOpenPrompts(db, jobId, types) {
+  let count = 0;
+  const col = db.collection('jobs').doc(jobId).collection('prompts');
+  for (const type of types) {
+    const snap = await col.where('type', '==', type).where('status', '==', 'open').get();
+    for (const doc of snap.docs) {
+      await doc.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() });
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Apply a schedule change to a job, atomically (F4 single writer).
  *
  * Used by the webhook's schedule_approval dispatch (customer approved
@@ -4463,6 +4492,107 @@ exports.proposeSchedule = functions.https.onRequest(async (req, res) => {
         return res.status(401).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Failed to propose schedule' });
+    }
+  });
+});
+
+// ===================================
+// SECOND VISIT — Scenario 11 Door 1 (and the disposition sheet's
+// "Needs another visit"). Opens a second_visit_approval prompt to the
+// customer; the schedule only moves when they approve (Task 4 branch).
+// ===================================
+exports.requestSecondVisit = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, proposedDate, proposedTime, reason, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`second_visit_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      try {
+        validateScheduleProposal({ date: proposedDate, time: proposedTime });
+      } catch (schedErr) {
+        if (schedErr.name === 'ScheduleError') return res.status(400).json({ error: schedErr.message, code: schedErr.code });
+        throw schedErr;
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+      let visitIndex;
+      let jobData;
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateSecondVisitRequest(job, decodedToken.uid, reason, note);
+          const result = upsertPendingVisit(job, {
+            proposedDate, proposedTime: String(proposedTime), reason, note,
+            reportedVia: 'app', promptId: null, nowIso,
+          });
+          visitIndex = result.visitIndex;
+          jobData = job;
+          tx.update(snap.ref, { visits: result.visits, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        });
+      } catch (visitErr) {
+        if (visitErr.name === 'VisitError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_reason: 400, note_required: 400 };
+          return res.status(statusMap[visitErr.code] || 400).json({ error: visitErr.message, code: visitErr.code });
+        }
+        throw visitErr;
+      }
+
+      // The visit request answers both "how did the visit go?" and any
+      // not-yet-answered completion poll — close them so a later customer
+      // reply can't race the new proposal. Best-effort after the commit.
+      try {
+        await supersedeOpenPrompts(db, jobId, ['visit_disposition', 'completion_confirmation']);
+      } catch (supErr) {
+        console.error('⚠️ supersedeOpenPrompts failed (continuing):', supErr);
+      }
+
+      // Customer approval ask — template-first (business may be outside
+      // the 24h session window), freeform fallback until T13 is approved.
+      const jobShortId = jobId.slice(-6);
+      const displayDate = new Date(proposedDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' });
+      const handymanName = (jobData.acceptedBy && jobData.acceptedBy.name) || 'Your handyman';
+      const fallback = `🔁 ${handymanName} says another visit is needed for Job #${jobShortId} and proposes ${displayDate}, ${proposedTime}.\n\n👉 Reply *YES* to approve\n👉 Reply *NO* to decline`;
+      await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(jobData.customerPhone),
+        process.env.TWILIO_TEMPLATE_SECOND_VISIT_PROPOSAL,
+        { '1': handymanName, '2': jobShortId, '3': displayDate, '4': String(proposedTime) },
+        fallback
+      );
+
+      const { promptId } = await openPrompt({
+        db, jobId, type: 'second_visit_approval',
+        toPhone: jobData.customerPhone, toRole: 'customer',
+        question: `Approve a second visit on ${displayDate}, ${proposedTime}? (Job #${jobShortId})`,
+        options: SCHEDULE_APPROVAL_OPTIONS,
+        payload: { proposedDate, proposedTime: String(proposedTime), visitIndex, reason },
+      });
+
+      // Spec: >2 visits alerts the admin (repeatable but admin-visible).
+      // visits[] holds RETURN visits; visitIndex >= 1 means this is at
+      // least the 3rd visit overall (booking + 2 returns).
+      if (visitIndex >= 1) {
+        await sendAdminEmail(
+          `👀 Visit ${visitIndex + 2} requested — Job #${jobShortId}`,
+          `<p>Job <b>${escapeHtml(jobId)}</b> is on return visit #${visitIndex + 1} (visit ${visitIndex + 2} overall). Worth a look — repeated visits often mean a scope problem (Scenario 10).</p>`
+        );
+      }
+
+      await writeAuditLog('second_visit_requested', decodedToken, { jobId, proposedDate, reason });
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ requestSecondVisit error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to request second visit' });
     }
   });
 });
