@@ -85,6 +85,16 @@ describe('upsertPendingVisit', () => {
     expect(visits[0].reportedVia).toBe('customer_poll'); // origin preserved
     expect(visits[0].promptId).toBe('p1');
   });
+  test('preserves original promptId when refilling an existing entry without promptId in args', () => {
+    const j = job({ visits: [{ status: 'pending_schedule', proposedDate: null, promptId: 'poll-prompt-1', reportedVia: 'customer_poll', createdAt: '2026-07-28T02:00:00.000Z' }] });
+    const { visits, visitIndex } = upsertPendingVisit(j, {
+      proposedDate: '2026-08-02', proposedTime: '10:00 AM',
+      reason: 'customer_request', note: '', reportedVia: 'app', promptId: null, nowIso: NOW_ISO,
+    });
+    expect(visitIndex).toBe(0);
+    expect(visits).toHaveLength(1);
+    expect(visits[0].promptId).toBe('poll-prompt-1'); // original preserved
+  });
   test('truncates the note to 300 chars and nulls empty notes', () => {
     const { visits } = upsertPendingVisit(job(), {
       proposedDate: '2026-08-02', proposedTime: '10:00 AM',

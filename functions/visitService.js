@@ -80,7 +80,7 @@ function upsertPendingVisit(job, { proposedDate, proposedTime, reason, note, rep
       proposedTime: proposedTime || null,
       reason: reason || visits[existingIdx].reason || null,
       note: cleanNote(note) || visits[existingIdx].note || null,
-      promptId: promptId || null,
+      promptId: promptId || visits[existingIdx].promptId || null,
     };
     return { visits, visitIndex: existingIdx };
   }
