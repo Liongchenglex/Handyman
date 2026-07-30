@@ -2700,9 +2700,14 @@ async function supersedeOpenPrompts(db, jobId, types) {
  * The transaction re-checks status so a change can never land on a job
  * that was cancelled or completed between proposal and approval.
  *
+ * @param {function(object): object} [extraUpdateFn] - Optional rider that
+ *   receives the pre-update job data and returns additional fields to
+ *   merge into the SAME transactional update as the schedule move (e.g.
+ *   second_visit_approval flipping a visits[] entry to 'scheduled'). May
+ *   throw to abort the whole change.
  * @returns {{outcome: 'applied'|'wrong_status', job?: object}}
  */
-async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId }) {
+async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId, extraUpdateFn }) {
   const jobRef = db.collection('jobs').doc(jobId);
   let jobData;
   try {
@@ -2716,6 +2721,11 @@ async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, no
         newDate, newTime, actor, via, note, promptId,
         nowIso: new Date().toISOString(),
       });
+      // Optional rider for callers that must mutate other job fields in
+      // the SAME transaction as the schedule move (e.g. flipping a
+      // visits[] entry to 'scheduled'). May throw (e.g. VisitError) to
+      // abort the change.
+      if (extraUpdateFn) Object.assign(update, extraUpdateFn(jobData));
       tx.update(jobRef, update);
     });
   } catch (err) {
@@ -3152,6 +3162,89 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           }
 
           return res.status(200).json({ received: true, processed: true, action: 'schedule_deadlock', via: 'prompt' });
+        }
+
+        if (verdict.prompt.type === 'second_visit_approval') {
+          const p = verdict.prompt.payload || {};
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          // Invalid-payload guard (see schedule_approval at 2840) — a
+          // malformed prompt must not 500 the webhook into Twilio retries.
+          if (!p.proposedDate || !p.proposedTime || typeof p.visitIndex !== 'number') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'invalid_payload' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'invalid second_visit payload' });
+          }
+
+          if (verdict.action === 'approve') {
+            let changeResult;
+            try {
+              changeResult = await applyScheduleChange({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                newDate: p.proposedDate, newTime: p.proposedTime,
+                actor: senderKey, via: 'whatsapp_reply',
+                note: `second visit (${p.reason || 'unspecified'})`,
+                promptId: verdict.prompt.id,
+                extraUpdateFn: (job) => buildVisitScheduledUpdate(job, { visitIndex: p.visitIndex, nowIso: new Date().toISOString() }),
+              });
+            } catch (err) {
+              if (err.name === 'VisitError' || (err.message && err.message.includes('WRONG_STATUS'))) {
+                try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'wrong_status' }); }
+                catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+                await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} is no longer awaiting this approval — our team will follow up if anything is needed.`);
+                return res.status(200).json({ received: true, processed: false, reason: 'second visit approve on wrong state' });
+              }
+              throw err;
+            }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'applied' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            const displayDate = new Date(p.proposedDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' });
+            await sendTwilioMessage(From, `✅ Second visit confirmed for Job #${jobShortId}: ${displayDate}, ${p.proposedTime}. See you then!`);
+            // Handyman did not just reply → template-first confirmation.
+            try {
+              const hmSnap = await admin.firestore().collection('handymen').doc(changeResult.job.handymanId).get();
+              const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+              if (hmPhone) {
+                await sendTwilioTemplateMessage(
+                  formatPhoneToWhatsApp(hmPhone),
+                  process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                  { '1': jobShortId, '2': displayDate, '3': String(p.proposedTime) },
+                  `✅ Second visit approved — Job #${jobShortId} is now scheduled for ${displayDate}, ${p.proposedTime}.`
+                );
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Handyman second-visit confirmation failed:', notifyErr);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'second_visit_scheduled', via: 'prompt' });
+          }
+
+          if (verdict.action === 'decline') {
+            // Spec: Decline → F3/admin mediates (often becomes price talk
+            // or a cancel). Mark entry declined + flag attention; NO
+            // automated renegotiation round.
+            const db = admin.firestore();
+            const nowIso = new Date().toISOString();
+            try {
+              await db.runTransaction(async (tx) => {
+                const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
+                if (!snap.exists) return;
+                const upd = buildVisitDeclinedUpdate(snap.data(), { visitIndex: p.visitIndex, nowIso });
+                Object.assign(upd, buildAttentionUpdate('second_visit_declined', { detail: `reason: ${p.reason || 'unspecified'}`, promptId: verdict.prompt.id, nowIso }));
+                tx.update(snap.ref, upd);
+              });
+            } catch (txErr) {
+              console.error('⚠️ second-visit decline write failed (admin email still goes out):', txErr);
+            }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'declined' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(
+              `🔁 Second visit declined — Job #${jobShortId}`,
+              `<p>The customer declined a second visit for job <b>${escapeHtml(verdict.prompt.jobId)}</b> (proposed ${escapeHtml(p.proposedDate)}, ${escapeHtml(String(p.proposedTime))}; reason: ${escapeHtml(p.reason || 'unspecified')}). Please mediate — this often becomes a price discussion or a cancellation.</p>`
+            );
+            await sendTwilioMessage(From, `👍 Understood — no second visit is booked for Job #${jobShortId}. Our team will contact you shortly to sort out next steps.`);
+            return res.status(200).json({ received: true, processed: true, action: 'second_visit_declined', via: 'prompt' });
+          }
         }
 
         // A prompt type this deploy doesn't know how to dispatch —
