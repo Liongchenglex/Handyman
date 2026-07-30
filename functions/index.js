@@ -106,6 +106,7 @@ const {
   evaluatePrompt,
   evaluateLink,
   evaluateAsapJob,
+  evaluateSecondVisit,
   evaluateUnclaimedJob,
   buildAttentionUpdate,
 } = require('./sweepService');
@@ -4274,7 +4275,7 @@ exports.stuckStateSweep = functions.pubsub
     // admin resolves, the sweep must not re-flag the same stall the next
     // morning (prompt/link types are naturally once-only: escalation
     // mutates their doc out of the query).
-    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled'];
+    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled', 'second_visit_no_date'];
 
     const escalate = async (jobId, type, detail, promptId = null) => {
       try {
@@ -4318,6 +4319,14 @@ exports.stuckStateSweep = functions.pubsub
         const p = doc.data();
         const verdict = evaluatePrompt(p, nowMs);
         const jobShortId = String(p.jobId || '').slice(-6);
+        if (verdict === 'expire_silent') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Prompt silent-expire write failed for ${doc.ref.path}:`, err);
+          }
+          continue; // Door 2 prompts: the morning poll is the backstop — no nudge, no escalation
+        }
         if (verdict === 'nudge') {
           try {
             const isPoll = p.type === 'completion_confirmation';
@@ -4437,6 +4446,30 @@ exports.stuckStateSweep = functions.pubsub
           }
         } else if (verdict === 'escalate') {
           await escalate(doc.id, 'asap_no_time', 'ASAP job accepted but no visit time confirmed');
+        }
+
+        // ---- Ladder 2c — Scenario 11: second visit flagged, no date proposed ----
+        const svVerdict = evaluateSecondVisit(job, nowMs);
+        if (svVerdict === 'nudge') {
+          try {
+            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+              await sendTwilioTemplateMessage(
+                formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+                { '1': 'Set a date for the second visit so the customer can approve it', '2': doc.id.slice(-6) },
+                `⏰ Job #${doc.id.slice(-6)} needs a second visit but no time is set. Propose one here:\n${link}`,
+              );
+            }
+            await doc.ref.update({ 'sweepNudges.second_visit_no_date': nowIso });
+            counts.nudged++;
+          } catch (nudgeErr) {
+            console.error(`⚠️ second-visit nudge failed for ${doc.id}:`, nudgeErr);
+          }
+        } else if (svVerdict === 'escalate') {
+          await escalate(doc.id, 'second_visit_no_date', 'second visit flagged but no date proposed for 48h+');
         }
       }
     } catch (err) {
