@@ -1815,6 +1815,59 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         throw transferErr;
       }
 
+      // ── Scenario 10: pay out a PAID delta as a second transfer. The
+      // original transfer is source_transaction-pinned to the original
+      // charge, so the delta MUST ride its own charge (Stripe caps a
+      // pinned transfer at that charge's balance) — two deposits for the
+      // handyman, each with correct per-charge fee math. Runs before the
+      // final state write (same as the original transfer above); a
+      // failure here mirrors that transfer's release_failed handling,
+      // keeping the endpoint retry-safe via deterministic idempotency
+      // keys on both transfers.
+      let deltaTransfer = null;
+      let deltaBreakdown = null;
+      const paidAdjustment = jobData.priceAdjustment && jobData.priceAdjustment.status === 'paid' ? jobData.priceAdjustment : null;
+      if (paidAdjustment && paidAdjustment.deltaPaymentIntentId) {
+        try {
+          const deltaPi = await stripe.paymentIntents.retrieve(paidAdjustment.deltaPaymentIntentId);
+          const deltaChargeId = deltaPi.latest_charge;
+          const deltaCharge = await stripe.charges.retrieve(deltaChargeId);
+          const deltaBt = await stripe.balanceTransactions.retrieve(deltaCharge.balance_transaction);
+          const deltaNet = deltaBt.net / 100;
+          const deltaStripeFee = deltaBt.fee / 100;
+          const deltaPlatformFee = deltaNet * platformFeePercentage / (1 + platformFeePercentage);
+          const deltaPayout = deltaNet - deltaPlatformFee;
+          deltaTransfer = await stripe.transfers.create({
+            amount: Math.round(deltaPayout * 100),
+            currency: 'sgd',
+            destination: handymanAccountId,
+            source_transaction: deltaChargeId,
+            description: `Price adjustment payout for job #${jobId}`,
+            metadata: { jobId, type: 'price_adjustment_delta', deltaServiceFee: String(paidAdjustment.deltaServiceFee) },
+          }, { idempotencyKey: `transfer-delta-${deltaChargeId}` });
+          deltaBreakdown = { deltaGross: paidAdjustment.deltaServiceFee, deltaStripeFee, deltaNet, deltaPayout };
+        } catch (deltaTransferErr) {
+          // Same failure handling as the original transfer above: mark
+          // release_failed and release the lock so an admin can retry.
+          // The retry is safe — the original transfer's idempotency key
+          // makes it a no-op, and this delta transfer's own key makes
+          // IT a no-op too.
+          console.error('❌ Delta transfer failed for job', jobId, deltaTransferErr);
+          try {
+            await jobRef.update({
+              paymentStatus: 'release_failed',
+              paymentReleaseError: deltaTransferErr.message || 'Delta transfer failed',
+              paymentReleaseFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+              releaseLockedAt: admin.firestore.FieldValue.delete(),
+              releaseLockedBy: admin.firestore.FieldValue.delete(),
+            });
+          } catch (markErr) {
+            console.error('Failed to mark job release_failed:', markErr);
+          }
+          throw deltaTransferErr;
+        }
+      }
+
       // Final state write: flip the lock to 'released' and record the
       // payout breakdown. This is the only path that transitions a
       // 'release_pending' job to 'released'.
@@ -1825,12 +1878,16 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         paymentReleasedBy: decodedToken.email,
         transferId: transfer.id,
         chargeId: chargeId,
+        ...(deltaTransfer ? {
+          priceAdjustment: buildAdjustmentTransition(jobData, { to: 'released', stamps: { releasedAt: new Date().toISOString(), transferId: deltaTransfer.id } }).priceAdjustment,
+        } : {}),
         paymentBreakdown: {
           grossAmount: totalAmount,
           stripeFee: stripeFee,
           netAmount: netAmount,
           handymanPayout: handymanPayout,
           platformFee: platformFeeFromNet,
+          ...(deltaBreakdown || {}),
         },
         releaseLockedAt: admin.firestore.FieldValue.delete(),
         releaseLockedBy: admin.firestore.FieldValue.delete(),
