@@ -3920,6 +3920,48 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
     }
     // ------- end prompt-first routing -------
 
+    // ── Scenario 7: free-text no-show intent ("no show", "never came",
+    // "didn't come"). MUST run before the YES/NO regexes — "NO SHOW"
+    // contains \bNO\b and would otherwise be misread as a completion
+    // rejection.
+    const NO_SHOW_INTENT_RE = /\b(no[\s-]?show|never (came|showed|arrived|turned up)|did\s?n[o']?t (come|show|arrive|turn up)|nobody (came|arrived|showed))\b/i;
+    if (NO_SHOW_INTENT_RE.test(Body)) {
+      const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+      // in_progress jobs by phone: the customerPhone+createdAt index with
+      // an in-memory status filter (same trick as forwardUnmatchedInbound)
+      // — no new composite index needed.
+      const noShowCandidates = [];
+      const phoneFormatsNS = [customerPhone, `+${customerPhone}`, customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone];
+      for (const pf of phoneFormatsNS) {
+        const snap = await admin.firestore().collection('jobs')
+          .where('customerPhone', '==', pf)
+          .orderBy('createdAt', 'desc')
+          .limit(20)
+          .get();
+        for (const doc of snap.docs) {
+          const j = doc.data();
+          if (['in_progress', 'pending_confirmation'].includes(j.status)
+              && j.preferredDate && j.preferredDate <= todaySgt
+              && !noShowCandidates.some((c) => c.id === doc.id)) {
+            noShowCandidates.push({ id: doc.id, data: j });
+          }
+        }
+      }
+      if (noShowCandidates.length > 0) {
+        // Most recent eligible job. Multi-job customers are rare; the ack
+        // names the job id so a mismatch is immediately visible, and the
+        // admin email (inside runNoShowReport) carries the full context.
+        const target = noShowCandidates[0];
+        const result = await runNoShowReport({ db: admin.firestore(), jobId: target.id, via: 'freetext', promptId: null });
+        if (result.reported) {
+          return res.status(200).json({ received: true, processed: true, action: 'no_show_reported', via: 'freetext' });
+        }
+      }
+      // Intent matched but no eligible job → F3 with the raw message.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
+      return res.status(200).json({ received: true, processed: false, reason: 'no-show intent, no eligible job — forwarded' });
+    }
+
     // Process confirmation replies — supports both text replies (YES/NO)
     // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
     // Intent detection. Word-boundary matches so a disambiguation
