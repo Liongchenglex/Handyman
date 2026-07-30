@@ -2890,6 +2890,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             let hadCompletionClaim = false;
             let intentRecorded = false;
             await db.runTransaction(async (tx) => {
+              // Reset on every attempt — Firestore retries re-run this
+              // callback, and a retry that early-returns must not inherit
+              // flags from an aborted attempt.
+              hadCompletionClaim = false;
+              intentRecorded = false;
               const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
               if (!snap.exists) return;
               const jobData = snap.data();
