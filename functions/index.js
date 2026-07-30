@@ -4157,6 +4157,66 @@ exports.autoTriggerCompletionPoll = functions.pubsub
     }
   });
 
+// ===================================
+// EVENING VISIT DISPOSITION — Scenario 11 Door 2. On the evening of the
+// visit day, ask any silent handyman how it went via a deep link into
+// the app's disposition sheet. Runs 19:00 SGT; the 10:00 completion
+// poll next morning is the customer-side backstop for continued silence.
+// ===================================
+exports.eveningVisitDisposition = functions.pubsub
+  .schedule('every day 19:00')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    const db = admin.firestore();
+    const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+    let sent = 0; let skipped = 0;
+
+    const snapshot = await db.collection('jobs')
+      .where('status', '==', 'in_progress')
+      .where('preferredTiming', '==', 'Schedule')
+      .limit(300)
+      .get();
+    if (snapshot.size === 300) console.warn('⚠️ eveningVisitDisposition hit the 300-job cap — some jobs not inspected');
+
+    for (const doc of snapshot.docs) {
+      try {
+        const job = doc.data();
+        if (!shouldSendDisposition(job, todaySgt)) { skipped++; continue; }
+
+        const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (!hmPhone) { skipped++; continue; }
+
+        const jobShortId = doc.id.slice(-6);
+        const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+        const sendResult = await sendTwilioTemplateMessage(
+          formatPhoneToWhatsApp(hmPhone),
+          process.env.TWILIO_TEMPLATE_VISIT_DISPOSITION,
+          { '1': job.serviceType || 'job', '2': jobShortId, '3': link },
+          `👷 How did today's job go — ${job.serviceType || 'job'} (#${jobShortId})?\n\nTap to update (done / needs another visit / problem):\n${link}`
+        );
+        if (!sendResult.success) { console.error(`⚠️ disposition send failed for ${doc.id}:`, sendResult.error); skipped++; continue; }
+
+        // Prompt record for audit + sweep visibility. No reply options:
+        // the link is the answer path; text replies fall through to F3.
+        await openPrompt({
+          db, jobId: doc.id, type: 'visit_disposition',
+          toPhone: hmPhone, toRole: 'handyman',
+          question: `How did today's visit go? (#${jobShortId})`,
+          options: {},
+          payload: { link },
+          expiresInHours: 17,
+        });
+        await doc.ref.update({ visitDispositionSentFor: job.preferredDate });
+        sent++;
+      } catch (docErr) {
+        console.error(`❌ eveningVisitDisposition failed for ${doc.id} (continuing):`, docErr);
+      }
+    }
+    console.log(`🌆 eveningVisitDisposition: ${sent} sent, ${skipped} skipped`);
+    return null;
+  });
+
 /**
  * stuckStateSweep — Scenario 12's safety net (spec:
  * 2026-07-13-stuck-state-sweep-design.md). Runs daily at 10:30 SGT,
