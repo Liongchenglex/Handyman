@@ -2156,7 +2156,13 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // is idempotency-keyed, so a redelivery re-running it is safe — but
   // writing the marker up front would let a mid-capture crash get
   // permanently swallowed as a "duplicate" on Stripe's retry.
-  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated';
+  // checkout.session.completed joins the deferral too (Scenario 10 price-
+  // adjustment delta): applyPaidAdjustment is domain-idempotent (guarded by
+  // priceAdjustment.status/sessionId), so a crash mid-apply must not be
+  // permanently swallowed as a "duplicate" on Stripe's retry — same
+  // reasoning as the booking-time capture case above.
+  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated'
+    || event.type === 'checkout.session.completed';
   try {
     const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
@@ -2275,6 +2281,14 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object;
+        // Scenario 10: delta charges have their own lifecycle — the
+        // checkout.session.completed case owns them. Without this guard the
+        // delta PI (which carries metadata.jobId) would re-run the booking
+        // paymentStatus writer below.
+        if (paymentIntent.metadata && paymentIntent.metadata.type === 'price_adjustment_delta') {
+          console.log(`ℹ️ delta PI succeeded for job ${paymentIntent.metadata.jobId} — handled via checkout.session.completed`);
+          break;
+        }
         const jobId = paymentIntent.metadata?.jobId;
         if (jobId) {
           const jobRef = admin.firestore().collection('jobs').doc(jobId);
@@ -2320,6 +2334,176 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         break;
       }
 
+      case 'checkout.session.completed': {
+        // Scenario 10: the customer paid the price-adjustment delta
+        // Checkout link. This is the single writer of priceAdjustment
+        // status 'paid' — the delta PaymentIntent's own
+        // payment_intent.succeeded event is a no-op (guarded above).
+        const session = event.data.object;
+        const meta = session.metadata || {};
+        if (meta.type !== 'price_adjustment_delta' || !meta.jobId) break; // not ours
+
+        const nowIso = new Date().toISOString();
+        let applied = false;
+        let appliedDelta = 0;
+        // True idempotent no-op: a redelivery of this same event lands
+        // after a prior delivery already marked the adjustment 'paid'.
+        // Tracked separately from `applied` so the notification branch
+        // below neither re-notifies nor mistakes this for an orphan.
+        let alreadyApplied = false;
+        await admin.firestore().runTransaction(async (tx) => {
+          applied = false; // reset per attempt (Firestore retries re-run this)
+          alreadyApplied = false;
+          const snap = await tx.get(admin.firestore().collection('jobs').doc(meta.jobId));
+          if (!snap.exists) return;
+          const job = snap.data();
+          const sessionPaymentIntentId = typeof session.payment_intent === 'string'
+            ? session.payment_intent
+            : (session.payment_intent && session.payment_intent.id) || null;
+          // Deviation from the task brief (controller-approved): on a pure
+          // event redelivery the adjustment is already 'paid' with this
+          // same delta PaymentIntent stamped on it. applyPaidAdjustment
+          // would throw PricingError for that state (it requires
+          // 'pending_payment'), which — without this pre-check — would
+          // incorrectly write an "orphaned payment" attention flag for a
+          // payment that in fact succeeded normally. Detect that case and
+          // return silently: no write, no flag.
+          if (job.priceAdjustment
+            && job.priceAdjustment.status === 'paid'
+            && job.priceAdjustment.deltaPaymentIntentId === sessionPaymentIntentId) {
+            alreadyApplied = true;
+            return;
+          }
+          try {
+            const result = applyPaidAdjustment(job, {
+              nowIso,
+              deltaPaymentIntentId: sessionPaymentIntentId,
+              sessionId: session.id,
+            });
+            // Money arrived but the job left in_progress (cancelled/completed
+            // meanwhile): don't apply — flag for a manual delta refund.
+            if (job.status !== 'in_progress') throw new PricingError('bad_transition', 'job no longer in progress');
+            appliedDelta = job.priceAdjustment.deltaServiceFee;
+            tx.update(snap.ref, { ...result, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            applied = true;
+          } catch (e) {
+            if (e.name !== 'PricingError') throw e;
+            tx.update(snap.ref, buildAttentionUpdate('adjustment_payment_orphaned', {
+              detail: `payment received for session ${session.id} but no matching pending adjustment / job inactive — refund the delta`,
+              promptId: null, nowIso,
+            }));
+          }
+        });
+
+        if (applied) {
+          try { await supersedeOpenPrompts(admin.firestore(), meta.jobId, ['price_adjustment_choice']); }
+          catch (e) { console.error('⚠️ adjustment prompt supersede failed (continuing):', e); }
+          // Confirm both parties (business-initiated → template-first).
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(meta.jobId).get();
+            const jobData = jobSnap.exists ? jobSnap.data() : null;
+            const shortId = meta.jobId.slice(-6);
+            const amountDisplay = (appliedDelta * (1 + getPlatformFeePercentage())).toFixed(2);
+            if (jobData && jobData.customerPhone) {
+              await sendTwilioTemplateMessage(formatPhoneToWhatsApp(jobData.customerPhone),
+                process.env.TWILIO_TEMPLATE_ADJUSTMENT_PAID,
+                { '1': amountDisplay, '2': shortId },
+                `✅ Payment received — the +S$${amountDisplay} adjustment for Job #${shortId} is confirmed. Thank you!`);
+            }
+            const hmSnap = jobData && jobData.handymanId ? await admin.firestore().collection('handymen').doc(jobData.handymanId).get() : null;
+            const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioTemplateMessage(formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_ADJUSTMENT_PAID,
+                { '1': amountDisplay, '2': shortId },
+                `✅ The customer paid the +S$${amountDisplay} adjustment for Job #${shortId} — you're clear to proceed.`);
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ adjustment-paid notifications failed (continuing):', notifyErr);
+          }
+          await sendAdminEmail(`💰 Price adjustment paid — Job #${meta.jobId.slice(-6)}`,
+            `<p>Delta paid for job <b>${escapeHtml(meta.jobId)}</b> (session ${escapeHtml(session.id)}). Held with the original pot until release.</p>`);
+        } else if (!alreadyApplied) {
+          await sendAdminEmail(`🚨 Orphaned adjustment payment — Job #${meta.jobId.slice(-6)}`,
+            `<p>A delta payment arrived for job <b>${escapeHtml(meta.jobId)}</b> but no matching pending adjustment (stale session or job closed). Refund it via refundPayment with the delta PaymentIntent.</p>`);
+        }
+        break;
+      }
+
+      case 'checkout.session.expired': {
+        // Scenario 10: the customer never paid or declined the delta
+        // Checkout link within its validity window. Re-issue once (F5-style
+        // automated nudge); on the second expiry, go terminal and unwedge
+        // the job (handyman told to proceed at original scope or cancel).
+        const session = event.data.object;
+        const meta = session.metadata || {};
+        if (meta.type !== 'price_adjustment_delta' || !meta.jobId) break;
+
+        const nowIso = new Date().toISOString();
+        const db = admin.firestore();
+        const jobRef = db.collection('jobs').doc(meta.jobId);
+        const snap = await jobRef.get();
+        if (!snap.exists) break;
+        const job = snap.data();
+        const adj = job.priceAdjustment;
+        // Only act on the CURRENT pending session — stale sessions expire silently.
+        if (!adj || adj.status !== 'pending_payment' || adj.sessionId !== session.id) break;
+
+        if (!adj.reissued && job.status === 'in_progress' && job.customerPhone) {
+          // One automated re-issue = the F5 nudge for this flow.
+          const shortId = meta.jobId.slice(-6);
+          const totalDisplay = (adj.deltaServiceFee * (1 + getPlatformFeePercentage())).toFixed(2);
+          const fresh = await stripe.checkout.sessions.create({
+            mode: 'payment',
+            line_items: [{ price_data: { currency: 'sgd', unit_amount: dollarsToCents(adj.deltaServiceFee * (1 + getPlatformFeePercentage())), product_data: { name: `Price adjustment — ${job.serviceType} job #${shortId}`, description: (adj.reason || '').slice(0, 200) } }, quantity: 1 }],
+            client_reference_id: meta.jobId,
+            metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '' },
+            payment_intent_data: { description: `Price adjustment for ${job.serviceType} - Job #${meta.jobId}`, metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '', customerId: job.customerId || '', serviceType: job.serviceType || '', platform: 'handyman-platform' } },
+            expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
+            success_url: `${APP_URL}/?adjustment=paid&job=${shortId}`,
+            cancel_url: `${APP_URL}/?adjustment=cancelled&job=${shortId}`,
+          }, { idempotencyKey: `adjsession-reissue-${meta.jobId}-${session.id}` });
+          await jobRef.update({
+            'priceAdjustment.sessionId': fresh.id,
+            'priceAdjustment.checkoutUrl': fresh.url,
+            'priceAdjustment.reissued': true,
+          });
+          await sendTwilioTemplateMessage(formatPhoneToWhatsApp(job.customerPhone),
+            process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
+            { '1': totalDisplay, '2': (adj.reason || '').slice(0, 150), '3': shortId, '4': fresh.url },
+            `⏰ Reminder — the +S$${totalDisplay} adjustment for Job #${shortId} is still awaiting your decision.\n\n👉 Pay here to approve (fresh link, valid 24h):\n${fresh.url}\n\n👉 Reply *NO* to decline`);
+        } else {
+          // Second expiry (or job inactive): terminal. Unwedges the
+          // Mark-Complete/poll gates deterministically.
+          try {
+            const upd = buildAdjustmentTransition(job, { to: 'expired', stamps: { expiredAt: nowIso } });
+            Object.assign(upd, buildAttentionUpdate('adjustment_expired', { detail: `customer never paid or declined (+S$${adj.deltaServiceFee})`, promptId: null, nowIso }));
+            await jobRef.update(upd);
+          } catch (e) {
+            if (e.name !== 'PricingError') throw e;
+          }
+          try { await supersedeOpenPrompts(db, meta.jobId, ['price_adjustment_choice']); }
+          catch (e) { console.error('⚠️ prompt supersede failed (continuing):', e); }
+          // Plain (non-template) WhatsApp to the handyman — this branch is
+          // business-initiated but low-stakes/informational (app remains
+          // the source of truth for the handyman's next action), so we
+          // skip the template-approval overhead rather than reuse
+          // TWILIO_TEMPLATE_PROMPT_NUDGE's two-var shape for a message
+          // that doesn't fit it well.
+          try {
+            const hmSnap = job.handymanId ? await db.collection('handymen').doc(job.handymanId).get() : null;
+            const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioMessage(formatPhoneToWhatsApp(hmPhone),
+                `ℹ️ The customer didn't respond to the +S$${adj.deltaServiceFee} adjustment for Job #${meta.jobId.slice(-6)}. You can proceed at the original scope, or cancel the job from the app. Our team has been notified.`);
+            }
+          } catch (e) { console.error('⚠️ handyman expiry notice failed (continuing):', e); }
+          await sendAdminEmail(`⏳ Price adjustment expired — Job #${meta.jobId.slice(-6)}`,
+            `<p>Adjustment on job <b>${escapeHtml(meta.jobId)}</b> expired unanswered after a re-issue. Handyman told to proceed or cancel.</p>`);
+        }
+        break;
+      }
+
       case 'account.updated': {
         const account = event.data.object;
         const firebaseUid = account.metadata?.firebaseUid;
@@ -2352,10 +2536,38 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         // Fired whenever a charge is refunded (full or partial), including
         // refunds initiated manually from the Stripe Dashboard.
         const charge = event.data.object;
-        const jobId = charge.metadata?.jobId
-          || (charge.payment_intent
-            ? (await stripe.paymentIntents.retrieve(charge.payment_intent)).metadata?.jobId
-            : null);
+        // Retrieved once and reused below both as the jobId fallback and
+        // (for delta charges, whose metadata.type lives on the PI rather
+        // than the charge) as the source of refundMeta.
+        const refundedPI = charge.payment_intent
+          ? await stripe.paymentIntents.retrieve(charge.payment_intent)
+          : null;
+        const jobId = charge.metadata?.jobId || refundedPI?.metadata?.jobId || null;
+
+        // Scenario 10: a refunded DELTA charge must mark only the
+        // adjustment — a fully-refunded delta would otherwise compute
+        // fullyRefunded=true and stamp paymentStatus:'refunded' on a job
+        // whose original escrow is untouched.
+        const refundMeta = (charge.metadata && charge.metadata.type)
+          ? charge.metadata
+          : (refundedPI && refundedPI.metadata) || {};
+        if (refundMeta.type === 'price_adjustment_delta') {
+          const adjJobId = refundMeta.jobId;
+          if (adjJobId) {
+            await admin.firestore().runTransaction(async (tx) => {
+              const snap = await tx.get(admin.firestore().collection('jobs').doc(adjJobId));
+              if (!snap.exists) return;
+              try {
+                const upd = buildAdjustmentTransition(snap.data(), { to: 'refunded', stamps: { refundedAt: new Date().toISOString(), refundId: charge.refunds && charge.refunds.data && charge.refunds.data[0] ? charge.refunds.data[0].id : null } });
+                tx.update(snap.ref, upd);
+              } catch (e) {
+                if (e.name !== 'PricingError') throw e; // already refunded/other state: no-op
+              }
+            });
+          }
+          break; // never touch the job's own paymentStatus for a delta charge
+        }
+
         if (jobId) {
           const fullyRefunded = charge.amount_refunded >= charge.amount;
           await admin.firestore().collection('jobs').doc(jobId).update({
