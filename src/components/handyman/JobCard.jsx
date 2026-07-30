@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getJob } from '../../services/firebase';
 import ExpressInterestButton from './ExpressInterestButton';
@@ -19,6 +19,10 @@ const JobCard = () => {
   const location = useLocation();
   const { jobId } = useParams();
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
+  // Read once (lazy init) so the sheet doesn't reopen on re-renders —
+  // same pattern as HandymanDashboard.jsx:28.
+  const [initialAction] = useState(() => searchParams.get('action'));
 
   // A job can arrive two ways:
   //  1. Via navigation state — the fast path when coming from the job
@@ -286,6 +290,7 @@ const JobCard = () => {
                 job={job}
                 variant="full"
                 showViewDetails={false}
+                initialAction={initialAction}
               />
             ) : (
               // Show Express Interest button for available jobs

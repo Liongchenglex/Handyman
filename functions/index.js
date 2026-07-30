@@ -80,6 +80,17 @@ const {
   buildScheduleChangeUpdate,
 } = require('./scheduleService');
 
+// Second-visit / access-issue domain logic (Scenario 11 + Scenario 8).
+// See functions/visitService.js.
+const {
+  VisitError,
+  validateSecondVisitRequest, upsertPendingVisit,
+  buildVisitScheduledUpdate, buildVisitDeclinedUpdate,
+  hasPendingSecondVisit, shouldSendDisposition,
+  validateVisitIssueReport, buildVisitIssueEntry,
+  buildVisitProposalReset,
+} = require('./visitService');
+
 // Secure schedule links (F6) — token hashing + link issuance/revocation.
 // See functions/scheduleLinkService.js.
 const {
@@ -96,6 +107,7 @@ const {
   evaluatePrompt,
   evaluateLink,
   evaluateAsapJob,
+  evaluateSecondVisit,
   evaluateUnclaimedJob,
   buildAttentionUpdate,
 } = require('./sweepService');
@@ -122,8 +134,21 @@ const {
 // words the legacy regexes accepted.
 const COMPLETION_PROMPT_OPTIONS = {
   'YES': 'confirm', 'CONFIRM COMPLETE': 'confirm', 'CONFIRM': 'confirm',
+  'Y': 'confirm', '1': 'confirm',
   'NO': 'reject', 'REPORT ISSUE': 'reject', 'REPORT': 'reject', 'ISSUE': 'reject',
-  'Y': 'confirm', 'N': 'reject',
+  'N': 'reject', '2': 'reject',
+  // Scenario 11 Door 3 — third quick-reply button. NO now routes to a
+  // follow-up prompt (below) instead of straight to 'disputed'.
+  'COMING BACK': 'coming_back', "HE'S COMING BACK": 'coming_back',
+  'ANOTHER VISIT': 'coming_back', 'RETURNING': 'coming_back', '3': 'coming_back',
+};
+
+// Scenario 11 Door 3 — disambiguates a bare NO. Opened by the webhook
+// right after a 'reject' answer; rides the customer's session window.
+const COMPLETION_NO_FOLLOWUP_OPTIONS = {
+  '1': 'problem', 'PROBLEM': 'problem', 'ISSUE': 'problem',
+  '2': 'never_came', 'NEVER CAME': 'never_came', 'NEVER': 'never_came',
+  'NO SHOW': 'never_came', 'NOSHOW': 'never_came', "DIDN'T COME": 'never_came',
 };
 
 // Reply options for schedule-approval prompts (reschedule + ASAP
@@ -132,6 +157,12 @@ const COMPLETION_PROMPT_OPTIONS = {
 const SCHEDULE_APPROVAL_OPTIONS = {
   'YES': 'approve', 'Y': 'approve', 'APPROVE': 'approve', 'OK': 'approve',
   'NO': 'decline', 'N': 'decline', 'DECLINE': 'decline',
+};
+
+// Scenario 8 — customer prompt after a handyman "no access" report.
+const ACCESS_ISSUE_OPTIONS = {
+  '1': 'reschedule', 'RESCHEDULE': 'reschedule',
+  '2': 'support', 'SUPPORT': 'support', 'CONTACT SUPPORT': 'support', 'HELP': 'support',
 };
 
 // ===================================
@@ -2541,7 +2572,9 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
           }
 
           const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
-          const fallback = `Hello ${data.customerName}! 👋\n\nYour handyman *${data.handymanName}* has marked the following job as complete:\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nPlease confirm if the work has been completed to your satisfaction.\n\n👉 Reply *YES* to confirm completion\n👉 Reply *NO* to report an issue`;
+          // Fallback carries all three quick-reply options (Scenario 11 Door 3)
+          // until the owner swaps this SID for the approved v2 template.
+          const fallback = `Hello ${data.customerName}! 👋\n\nYour handyman *${data.handymanName}* has marked the following job as complete:\n\n📋 *Service:* ${data.serviceType}\n🔖 *Job ID:* ${data.jobId}\n\nPlease confirm if the work has been completed to your satisfaction.\n\n👉 Reply *1* — Yes, all done\n👉 Reply *2* — No\n👉 Reply *3* — He's coming back for another visit`;
 
           result = await sendTwilioTemplateMessage(
             toWhatsApp,
@@ -2568,6 +2601,11 @@ exports.sendWhatsAppNotification = functions.https.onRequest(async (req, res) =>
               // reply path still handles this job by phone lookup.
               console.error(`⚠️ openPrompt failed for job ${data.jobId} (job_completion):`, promptErr);
             }
+
+            // Mark Complete via the app also answers the evening question —
+            // retire any unanswered handyman disposition link for this job.
+            try { await supersedeOpenPrompts(admin.firestore(), data.jobId, ['visit_disposition']); }
+            catch (e) { console.error('⚠️ visit_disposition supersede failed (continuing):', e); }
           }
           break;
         }
@@ -2664,6 +2702,25 @@ async function applyCompletionAnswer({ db, jobId, isConfirm }) {
 }
 
 /**
+ * Close every open prompt of the given types on a job (e.g. an open
+ * completion poll or the evening disposition link once the handyman
+ * has acted through another door). Best-effort: callers treat failures
+ * as non-fatal because the job-state write has already committed.
+ */
+async function supersedeOpenPrompts(db, jobId, types) {
+  let count = 0;
+  const col = db.collection('jobs').doc(jobId).collection('prompts');
+  for (const type of types) {
+    const snap = await col.where('type', '==', type).where('status', '==', 'open').get();
+    for (const doc of snap.docs) {
+      await doc.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() });
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Apply a schedule change to a job, atomically (F4 single writer).
  *
  * Used by the webhook's schedule_approval dispatch (customer approved
@@ -2671,9 +2728,14 @@ async function applyCompletionAnswer({ db, jobId, isConfirm }) {
  * The transaction re-checks status so a change can never land on a job
  * that was cancelled or completed between proposal and approval.
  *
+ * @param {function(object): object} [extraUpdateFn] - Optional rider that
+ *   receives the pre-update job data and returns additional fields to
+ *   merge into the SAME transactional update as the schedule move (e.g.
+ *   second_visit_approval flipping a visits[] entry to 'scheduled'). May
+ *   throw to abort the whole change.
  * @returns {{outcome: 'applied'|'wrong_status', job?: object}}
  */
-async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId }) {
+async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, note, promptId, extraUpdateFn }) {
   const jobRef = db.collection('jobs').doc(jobId);
   let jobData;
   try {
@@ -2687,6 +2749,11 @@ async function applyScheduleChange({ db, jobId, newDate, newTime, actor, via, no
         newDate, newTime, actor, via, note, promptId,
         nowIso: new Date().toISOString(),
       });
+      // Optional rider for callers that must mutate other job fields in
+      // the SAME transaction as the schedule move (e.g. flipping a
+      // visits[] entry to 'scheduled'). May throw (e.g. VisitError) to
+      // abort the change.
+      if (extraUpdateFn) Object.assign(update, extraUpdateFn(jobData));
       tx.update(jobRef, update);
     });
   } catch (err) {
@@ -2782,49 +2849,173 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
 
       if (verdict.kind === 'answer') {
         if (verdict.prompt.type === 'completion_confirmation') {
-          const isPromptConfirm = verdict.action === 'confirm';
-          const answerResult = await applyCompletionAnswer({
-            db: admin.firestore(),
-            jobId: verdict.prompt.jobId,
-            isConfirm: isPromptConfirm,
-          });
+          if (verdict.action === 'confirm') {
+            const answerResult = await applyCompletionAnswer({ db: admin.firestore(), jobId: verdict.prompt.jobId, isConfirm: true });
 
-          // Close the prompt AFTER the job write settles (either way the
-          // question is no longer open — 'already_processed' means it was
-          // decided elsewhere). The job transaction already committed, so
-          // a failure here must not 500 the webhook or skip the admin
-          // email / customer reply below — just log and continue.
-          try {
-            await markAnswered(verdict.prompt.ref, {
-              answer: verdict.answerText,
-              resultingAction: answerResult.outcome,
-            });
-          } catch (markAnsweredErr) {
-            console.error(`⚠️ markAnswered failed for job ${verdict.prompt.jobId} (prompt stays open):`, markAnsweredErr);
-          }
+            // Close the prompt AFTER the job write settles (either way the
+            // question is no longer open — 'already_processed' means it was
+            // decided elsewhere). The job transaction already committed, so
+            // a failure here must not 500 the webhook or skip the admin
+            // email / customer reply below — just log and continue.
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: answerResult.outcome }); }
+            catch (e) { console.error(`⚠️ markAnswered failed for job ${verdict.prompt.jobId} (prompt stays open):`, e); }
 
-          if (answerResult.outcome === 'already_processed') {
-            await sendTwilioMessage(
-              From,
-              `ℹ️ Your ${isPromptConfirm ? 'confirmation' : 'report'} for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`
-            );
-            return res.status(200).json({ received: true, processed: false, reason: 'Prompt answer on already-processed job' });
-          }
-
-          if (answerResult.outcome === 'confirmed') {
+            if (answerResult.outcome === 'already_processed') {
+              await sendTwilioMessage(From, `ℹ️ Your confirmation for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'Prompt answer on already-processed job' });
+            }
             await sendAdminNotificationEmail(answerResult.jobData, verdict.prompt.jobId);
-            await sendTwilioMessage(
-              From,
-              `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you confirmed by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe hope to serve you again! 🔧`
-            );
+            await sendTwilioMessage(From, `✅ Thank you for confirming!\n\nOur team will process the payment and email you the receipt.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you confirmed by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe hope to serve you again! 🔧`);
             return res.status(200).json({ received: true, processed: true, action: 'pending_admin_approval', via: 'prompt' });
           }
 
-          await sendTwilioMessage(
-            From,
-            `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`
-          );
-          return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
+          if (verdict.action === 'reject') {
+            // Scenario 11 Door 3: a bare NO is ambiguous (problem? no-show?
+            // half-done job?). Close the poll, ask which — the job state is
+            // untouched until the follow-up lands.
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'followup_opened' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            const { promptId } = await openPrompt({
+              db: admin.firestore(), jobId: verdict.prompt.jobId,
+              type: 'completion_no_followup',
+              toPhone: verdict.prompt.toPhone, toRole: 'customer',
+              question: `What happened with Job #${verdict.prompt.jobId.slice(-6)}?`,
+              options: COMPLETION_NO_FOLLOWUP_OPTIONS,
+              payload: null,
+              expiresInHours: 24,
+            });
+            await sendTwilioMessage(From, `Sorry to hear that. What happened?\n\n👉 Reply *1* — there's a problem with the work\n👉 Reply *2* — the handyman never came`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_followup_opened', via: 'prompt', promptId });
+          }
+
+          if (verdict.action === 'coming_back') {
+            // Scenario 11 Door 3 option 3: record second-visit intent from
+            // the customer side; the handyman owes a date (F5 ladder).
+            // completionPollSentAt is deliberately KEPT so the auto-poll
+            // doesn't re-fire tomorrow; the eventual scheduleChange clears it.
+            const db = admin.firestore();
+            const nowIso = new Date().toISOString();
+            let hadCompletionClaim = false;
+            let intentRecorded = false;
+            await db.runTransaction(async (tx) => {
+              // Reset on every attempt — Firestore retries re-run this
+              // callback, and a retry that early-returns must not inherit
+              // flags from an aborted attempt.
+              hadCompletionClaim = false;
+              intentRecorded = false;
+              const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
+              if (!snap.exists) return;
+              const jobData = snap.data();
+              if (!['in_progress', 'pending_confirmation'].includes(jobData.status)) return;
+              hadCompletionClaim = jobData.status === 'pending_confirmation';
+              const { visits } = upsertPendingVisit(jobData, {
+                proposedDate: null, proposedTime: null, reason: null,
+                note: hadCompletionClaim ? 'customer expects a return visit after handyman marked complete' : null,
+                reportedVia: 'customer_poll', promptId: verdict.prompt.id, nowIso,
+              });
+              const upd = { visits, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+              if (hadCompletionClaim) upd.status = 'in_progress'; // soft conflict: completion claim withdrawn pending the visit
+              tx.update(snap.ref, upd);
+              intentRecorded = true;
+            });
+
+            if (!intentRecorded) {
+              try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'already_processed' }); }
+              catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+              await sendTwilioMessage(From, `ℹ️ Job #${verdict.prompt.jobId.slice(-6)} has already been handled separately, so no return visit was recorded. If something still needs fixing, please contact easydonehandyman@gmail.com.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'coming_back on inactive job' });
+            }
+
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'second_visit_intent' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            // Ping the handyman for a date — business-initiated, template-first.
+            try {
+              const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+              const hmId = jobSnap.exists ? jobSnap.data().handymanId : null;
+              const hmSnap = hmId ? await admin.firestore().collection('handymen').doc(hmId).get() : null;
+              const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+              if (hmPhone) {
+                const link = `${APP_URL}/job-details/${verdict.prompt.jobId}?action=disposition`;
+                await sendTwilioTemplateMessage(
+                  formatPhoneToWhatsApp(hmPhone),
+                  process.env.TWILIO_TEMPLATE_SECOND_VISIT_NEEDED,
+                  { '1': verdict.prompt.jobId.slice(-6), '2': link },
+                  `🔁 The customer says Job #${verdict.prompt.jobId.slice(-6)} needs another visit${hadCompletionClaim ? ' (they answered this after your Mark Complete — if you believe the job IS complete, contact easydonehandyman@gmail.com)' : ''}. Propose the return time here:\n${link}`
+                );
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ second-visit handyman ping failed (sweep ladder will catch it):', notifyErr);
+            }
+            await sendTwilioMessage(From, `👍 Got it — we've asked your handyman to schedule the return visit for Job #${verdict.prompt.jobId.slice(-6)}. You'll get a confirmation once the time is set.`);
+            return res.status(200).json({ received: true, processed: true, action: 'second_visit_intent', via: 'prompt' });
+          }
+        }
+
+        if (verdict.prompt.type === 'completion_no_followup') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'problem') {
+            const answerResult = await applyCompletionAnswer({ db: admin.firestore(), jobId: verdict.prompt.jobId, isConfirm: false });
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: answerResult.outcome }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            if (answerResult.outcome === 'already_processed') {
+              await sendTwilioMessage(From, `ℹ️ Your report for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'Follow-up answer on already-processed job' });
+            }
+            await sendTwilioMessage(From, `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`);
+            return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
+          }
+          if (verdict.action === 'never_came') {
+            // Scenario 7 stub (full no-show choice flow ships at stage 5):
+            // record the report, flag the queue, email the admin.
+            const db = admin.firestore();
+            const nowIso = new Date().toISOString();
+            await db.runTransaction(async (tx) => {
+              const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
+              if (!snap.exists) return;
+              const reports = Array.isArray(snap.data().noShowReports) ? snap.data().noShowReports.slice() : [];
+              reports.push({ reportedAt: nowIso, via: 'poll_followup', promptId: verdict.prompt.id });
+              const upd = { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+              Object.assign(upd, buildAttentionUpdate('no_show_reported', { detail: 'customer replied "never came" on the poll follow-up', promptId: verdict.prompt.id, nowIso }));
+              tx.update(snap.ref, upd);
+            });
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'no_show_reported' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(
+              `🚨 No-show reported — Job #${jobShortId}`,
+              `<p>The customer reports the handyman never came for job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Money is held; please call both parties and resolve (reschedule / reassign / refund).</p>`
+            );
+            await sendTwilioMessage(From, `😔 We're very sorry about that. Our team has been alerted and will contact you shortly to make this right (Job #${jobShortId}).`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_reported', via: 'prompt' });
+          }
+        }
+
+        if (verdict.prompt.type === 'access_issue_choice') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'reschedule') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'link_sent' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            try {
+              const { token } = await issueScheduleLink({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                customerPhone: verdict.prompt.toPhone, createdBy: 'system_access_issue',
+              });
+              await sendTwilioMessage(From, `👍 No problem — pick a new time that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`);
+            } catch (linkErr) {
+              console.error('⚠️ access-issue link send failed:', linkErr);
+              await sendTwilioMessage(From, `👍 Our team will arrange a new time with you shortly (Job #${jobShortId}).`);
+              await sendAdminEmail(`⚠️ Access-issue reschedule link failed — Job #${jobShortId}`, `<p>Send a schedule link manually for job <b>${escapeHtml(verdict.prompt.jobId)}</b>.</p>`);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'access_reschedule_link', via: 'prompt' });
+          }
+          if (verdict.action === 'support') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'support_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`☎️ Support requested — Job #${jobShortId}`, `<p>The customer asked for support after an access issue on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Please contact them.</p>`);
+            await sendTwilioMessage(From, `👍 Our team will contact you shortly about Job #${jobShortId}.`);
+            return res.status(200).json({ received: true, processed: true, action: 'access_support', via: 'prompt' });
+          }
         }
 
         if (verdict.prompt.type === 'schedule_approval') {
@@ -3123,6 +3314,114 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           }
 
           return res.status(200).json({ received: true, processed: true, action: 'schedule_deadlock', via: 'prompt' });
+        }
+
+        if (verdict.prompt.type === 'second_visit_approval') {
+          const p = verdict.prompt.payload || {};
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          // Invalid-payload guard (see schedule_approval at 2840) — a
+          // malformed prompt must not 500 the webhook into Twilio retries.
+          if (!p.proposedDate || !p.proposedTime || typeof p.visitIndex !== 'number') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'invalid_payload' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'unmatched_reply' });
+            return res.status(200).json({ received: true, processed: false, reason: 'invalid second_visit payload' });
+          }
+
+          if (verdict.action === 'approve') {
+            let changeResult;
+            try {
+              changeResult = await applyScheduleChange({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                newDate: p.proposedDate, newTime: p.proposedTime,
+                actor: senderKey, via: 'whatsapp_reply',
+                note: `second visit (${p.reason || 'unspecified'})`,
+                promptId: verdict.prompt.id,
+                extraUpdateFn: (job) => buildVisitScheduledUpdate(job, { visitIndex: p.visitIndex, nowIso: new Date().toISOString() }),
+              });
+            } catch (err) {
+              if (err.name === 'VisitError') {
+                try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'wrong_status' }); }
+                catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+                await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} is no longer awaiting this approval — our team will follow up if anything is needed.`);
+                return res.status(200).json({ received: true, processed: false, reason: 'second visit approve on wrong state' });
+              }
+              throw err;
+            }
+
+            // applyScheduleChange resolves (rather than throws) its internal
+            // WRONG_STATUS case — see the schedule_approval sibling at
+            // ~2914. Without this check a job whose status changed between
+            // proposal and approval would fall through to "applied" below.
+            if (changeResult.outcome === 'wrong_status') {
+              try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'wrong_status' }); }
+              catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+              await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} is no longer awaiting this approval — our team will follow up if anything is needed.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'second visit approve on wrong state' });
+            }
+
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'applied' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            const displayDate = new Date(p.proposedDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' });
+            await sendTwilioMessage(From, `✅ Second visit confirmed for Job #${jobShortId}: ${displayDate}, ${p.proposedTime}. See you then!`);
+            // Handyman did not just reply → template-first confirmation.
+            try {
+              const changedJob = changeResult.job;
+              if (changedJob && changedJob.handymanId) {
+                const hmSnap = await admin.firestore().collection('handymen').doc(changedJob.handymanId).get();
+                const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+                if (hmPhone) {
+                  await sendTwilioTemplateMessage(
+                    formatPhoneToWhatsApp(hmPhone),
+                    process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                    { '1': jobShortId, '2': displayDate, '3': String(p.proposedTime) },
+                    `✅ Second visit approved — Job #${jobShortId} is now scheduled for ${displayDate}, ${p.proposedTime}.`
+                  );
+                }
+              }
+            } catch (notifyErr) {
+              console.error('⚠️ Handyman second-visit confirmation failed:', notifyErr);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'second_visit_scheduled', via: 'prompt' });
+          }
+
+          if (verdict.action === 'decline') {
+            // Spec: Decline → F3/admin mediates (often becomes price talk
+            // or a cancel). Mark entry declined + flag attention; NO
+            // automated renegotiation round.
+            const db = admin.firestore();
+            const nowIso = new Date().toISOString();
+            try {
+              await db.runTransaction(async (tx) => {
+                const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
+                if (!snap.exists) return;
+                const upd = buildVisitDeclinedUpdate(snap.data(), { visitIndex: p.visitIndex, nowIso });
+                Object.assign(upd, buildAttentionUpdate('second_visit_declined', { detail: `reason: ${p.reason || 'unspecified'}`, promptId: verdict.prompt.id, nowIso }));
+                tx.update(snap.ref, upd);
+              });
+            } catch (txErr) {
+              if (txErr.name === 'VisitError') {
+                // Stale entry — already resolved elsewhere, nothing was
+                // written. The admin email below is still the right
+                // signal to send.
+                console.error('⚠️ second-visit decline write skipped — stale entry (admin email still goes out):', txErr);
+              } else {
+                // A real infrastructure failure — do not report false
+                // success below; let the webhook's outer error handling
+                // deal with it.
+                throw txErr;
+              }
+            }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'declined' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(
+              `🔁 Second visit declined — Job #${jobShortId}`,
+              `<p>The customer declined a second visit for job <b>${escapeHtml(verdict.prompt.jobId)}</b> (proposed ${escapeHtml(p.proposedDate)}, ${escapeHtml(String(p.proposedTime))}; reason: ${escapeHtml(p.reason || 'unspecified')}). Please mediate — this often becomes a price discussion or a cancellation.</p>`
+            );
+            await sendTwilioMessage(From, `👍 Understood — no second visit is booked for Job #${jobShortId}. Our team will contact you shortly to sort out next steps.`);
+            return res.status(200).json({ received: true, processed: true, action: 'second_visit_declined', via: 'prompt' });
+          }
         }
 
         // A prompt type this deploy doesn't know how to dispatch —
@@ -3797,6 +4096,10 @@ exports.autoTriggerCompletionPoll = functions.pubsub
           continue;
         }
 
+        // Scenario 11: a pending second visit means the job is knowingly
+        // incomplete — polling "is it done?" would be nonsense.
+        if (hasPendingSecondVisit(job)) { skipped++; continue; }
+
         // Skip if no preferred date set
         if (!job.preferredDate) {
           continue;
@@ -3823,25 +4126,16 @@ exports.autoTriggerCompletionPoll = functions.pubsub
         const toWhatsApp = formatPhoneToWhatsApp(job.customerPhone);
         const templateSid = process.env.TWILIO_TEMPLATE_JOB_COMPLETION;
 
-        // Fallback freeform message for sandbox testing
-        const fallbackMessage = `Hello ${job.customerName}! 👋
-
-Your scheduled job has passed its appointment date:
-
-📋 *Service:* ${job.serviceType}
-🔖 *Job ID:* ${jobId}
-📅 *Scheduled Date:* ${new Date(job.preferredDate).toLocaleDateString('en-SG')}
-
-Please confirm if the work has been completed to your satisfaction.
-
-👉 Reply *YES* to confirm completion
-👉 Reply *NO* to report an issue`;
-
         // Template variables: {{1}} customerName, {{2}} handymanName, {{3}} serviceType, {{4}} jobId
         // For auto-trigger, handyman name comes from the job's acceptedBy field
         const handymanName = (job.completedBy && job.completedBy.name)
           || (job.acceptedBy && job.acceptedBy.name)
           || 'your handyman';
+
+        // Fallback freeform message for sandbox testing / unset template SID —
+        // carries all three quick-reply options (Scenario 11 Door 3) until the
+        // owner swaps TWILIO_TEMPLATE_JOB_COMPLETION for the approved v2 template.
+        const fallbackMessage = `Hello ${job.customerName}! 👋\n\nHas ${handymanName} completed the ${job.serviceType} job?\n\n👉 Reply *1* — Yes, all done\n👉 Reply *2* — No\n👉 Reply *3* — He's coming back for another visit\n\nJob ID: ${jobId}`;
 
         const sendResult = await sendTwilioTemplateMessage(
           toWhatsApp,
@@ -3870,6 +4164,11 @@ Please confirm if the work has been completed to your satisfaction.
           console.error(`⚠️ openPrompt failed for job ${jobId} (auto poll):`, promptErr);
         }
 
+        // The customer poll is now the live question; retire the handyman's
+        // unanswered evening disposition link (Door 2 → Door 3 hand-off).
+        try { await supersedeOpenPrompts(admin.firestore(), jobId, ['visit_disposition']); }
+        catch (e) { console.error('⚠️ visit_disposition supersede failed (continuing):', e); }
+
         // Mark the poll as sent to prevent duplicates
         await admin.firestore().collection('jobs').doc(jobId).update({
           completionPollSentAt: new Date().toISOString(),
@@ -3891,6 +4190,66 @@ Please confirm if the work has been completed to your satisfaction.
       console.error('❌ Error in auto-trigger completion poll:', error);
       throw error;
     }
+  });
+
+// ===================================
+// EVENING VISIT DISPOSITION — Scenario 11 Door 2. On the evening of the
+// visit day, ask any silent handyman how it went via a deep link into
+// the app's disposition sheet. Runs 19:00 SGT; the 10:00 completion
+// poll next morning is the customer-side backstop for continued silence.
+// ===================================
+exports.eveningVisitDisposition = functions.pubsub
+  .schedule('every day 19:00')
+  .timeZone('Asia/Singapore')
+  .onRun(async () => {
+    const db = admin.firestore();
+    const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+    let sent = 0; let skipped = 0;
+
+    const snapshot = await db.collection('jobs')
+      .where('status', '==', 'in_progress')
+      .where('preferredTiming', '==', 'Schedule')
+      .limit(300)
+      .get();
+    if (snapshot.size === 300) console.warn('⚠️ eveningVisitDisposition hit the 300-job cap — some jobs not inspected');
+
+    for (const doc of snapshot.docs) {
+      try {
+        const job = doc.data();
+        if (!shouldSendDisposition(job, todaySgt)) { skipped++; continue; }
+
+        const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+        const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+        if (!hmPhone) { skipped++; continue; }
+
+        const jobShortId = doc.id.slice(-6);
+        const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+        const sendResult = await sendTwilioTemplateMessage(
+          formatPhoneToWhatsApp(hmPhone),
+          process.env.TWILIO_TEMPLATE_VISIT_DISPOSITION,
+          { '1': job.serviceType || 'job', '2': jobShortId, '3': link },
+          `👷 How did today's job go — ${job.serviceType || 'job'} (#${jobShortId})?\n\nTap to update (done / needs another visit / problem):\n${link}`
+        );
+        if (!sendResult.success) { console.error(`⚠️ disposition send failed for ${doc.id}:`, sendResult.error); skipped++; continue; }
+
+        // Prompt record for audit + sweep visibility. No reply options:
+        // the link is the answer path; text replies fall through to F3.
+        await openPrompt({
+          db, jobId: doc.id, type: 'visit_disposition',
+          toPhone: hmPhone, toRole: 'handyman',
+          question: `How did today's visit go? (#${jobShortId})`,
+          options: {},
+          payload: { link },
+          expiresInHours: 17,
+        });
+        await doc.ref.update({ visitDispositionSentFor: job.preferredDate });
+        sent++;
+      } catch (docErr) {
+        console.error(`❌ eveningVisitDisposition failed for ${doc.id} (continuing):`, docErr);
+      }
+    }
+    console.log(`🌆 eveningVisitDisposition: ${sent} sent, ${skipped} skipped`);
+    return null;
   });
 
 /**
@@ -3917,7 +4276,7 @@ exports.stuckStateSweep = functions.pubsub
     // admin resolves, the sweep must not re-flag the same stall the next
     // morning (prompt/link types are naturally once-only: escalation
     // mutates their doc out of the query).
-    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled'];
+    const ONCE_ONLY_TYPES = ['asap_no_time', 'unclaimed', 'reclaim_stalled', 'second_visit_no_date'];
 
     const escalate = async (jobId, type, detail, promptId = null) => {
       try {
@@ -3961,6 +4320,14 @@ exports.stuckStateSweep = functions.pubsub
         const p = doc.data();
         const verdict = evaluatePrompt(p, nowMs);
         const jobShortId = String(p.jobId || '').slice(-6);
+        if (verdict === 'expire_silent') {
+          try {
+            await doc.ref.update({ status: 'expired', expiredAt: nowIso });
+          } catch (err) {
+            console.error(`⚠️ Prompt silent-expire write failed for ${doc.ref.path}:`, err);
+          }
+          continue; // Door 2 prompts: the morning poll is the backstop — no nudge, no escalation
+        }
         if (verdict === 'nudge') {
           try {
             const isPoll = p.type === 'completion_confirmation';
@@ -3986,6 +4353,24 @@ exports.stuckStateSweep = functions.pubsub
             await doc.ref.update({ status: 'expired', expiredAt: nowIso });
           } catch (err) {
             console.error(`⚠️ Prompt expire write failed for ${doc.ref.path}:`, err);
+          }
+          // A dead second_visit_approval prompt leaves behind a DATED
+          // pending visits[] entry that matches no ladder (evaluateSecondVisit
+          // is dateless-only) and would permanently wedge hasPendingSecondVisit.
+          // Strip the dead proposal's date so it re-enters that ladder.
+          if (p.type === 'second_visit_approval' && p.payload && typeof p.payload.visitIndex === 'number') {
+            try {
+              const jobRef = db.collection('jobs').doc(p.jobId);
+              await db.runTransaction(async (tx) => {
+                const jobSnap = await tx.get(jobRef);
+                if (!jobSnap.exists) return;
+                const jobData = jobSnap.data();
+                const reset = buildVisitProposalReset(jobData, { visitIndex: p.payload.visitIndex, nowIso });
+                if (reset) tx.update(jobRef, reset);
+              });
+            } catch (err) {
+              console.error(`⚠️ Second-visit proposal reset failed for job ${p.jobId}:`, err);
+            }
           }
           await escalate(p.jobId, 'prompt_expired',
             `${p.type} to ${p.toRole} unanswered after nudge`, doc.id);
@@ -4051,6 +4436,33 @@ exports.stuckStateSweep = functions.pubsub
       if (inProgress.size === 300) console.warn('⚠️ Sweep in_progress query hit the 300 cap — rerun tomorrow covers the rest');
       for (const doc of inProgress.docs) {
         const job = doc.data();
+
+        // ---- Ladder 2c — Scenario 11: second visit flagged, no date proposed ----
+        // Runs for every in-progress job (before the ASAP-only filter below),
+        // since a pending second visit is almost always preferredTiming === 'Schedule'.
+        const svVerdict = evaluateSecondVisit(job, nowMs);
+        if (svVerdict === 'nudge') {
+          try {
+            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+              await sendTwilioTemplateMessage(
+                formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+                { '1': 'Set a date for the second visit so the customer can approve it', '2': doc.id.slice(-6) },
+                `⏰ Job #${doc.id.slice(-6)} needs a second visit but no time is set. Propose one here:\n${link}`,
+              );
+            }
+            await doc.ref.update({ 'sweepNudges.second_visit_no_date': nowIso });
+            counts.nudged++;
+          } catch (nudgeErr) {
+            console.error(`⚠️ second-visit nudge failed for ${doc.id}:`, nudgeErr);
+          }
+        } else if (svVerdict === 'escalate') {
+          await escalate(doc.id, 'second_visit_no_date', 'second visit flagged but no date proposed for 48h+');
+        }
+
         if (job.preferredTiming === 'Schedule' || job.scheduledFromAsapAt) continue;
         // Anything already in flight?
         const openPrompts = await doc.ref.collection('prompts')
@@ -4284,7 +4696,19 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
 
       // ---- Side effects: best-effort, awaited, individually caught ----
 
-      // 1. Repeat-canceller signal on the handyman profile (display only).
+      // 1. Close every open channel tied to the cancelled assignment —
+      //    mirrors adminUnassignJob's cleanup so a stale open prompt
+      //    (schedule_approval, second_visit_approval, ...) can't apply
+      //    the outgoing handyman's proposal after re-accept.
+      try {
+        const openPrompts = await jobRef.collection('prompts').where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs.map((d) =>
+          d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+      } catch (cleanupErr) {
+        console.error('⚠️ cancelJobAssignment prompt cleanup failed (continuing):', cleanupErr);
+      }
+
+      // 2. Repeat-canceller signal on the handyman profile (display only).
       try {
         await admin.firestore().collection('handymen').doc(decodedToken.uid)
           .update({ cancellationCount: admin.firestore.FieldValue.increment(1) });
@@ -4292,7 +4716,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         console.error(`⚠️ cancellationCount increment failed for ${decodedToken.uid}:`, err);
       }
 
-      // 2. Tell the customer we're finding a replacement.
+      // 3. Tell the customer we're finding a replacement.
       if (jobData.customerPhone) {
         try {
           const shortId = jobId.slice(-6);
@@ -4312,7 +4736,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         }
       }
 
-      // 3. Re-notify eligible handymen for the new round, excluding
+      // 4. Re-notify eligible handymen for the new round, excluding
       //    everyone who previously cancelled this job.
       try {
         await runHandymanFanOut({
@@ -4329,7 +4753,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         console.error(`⚠️ Reassignment fan-out failed for job ${jobId}:`, err);
       }
 
-      // 4. Audit trail.
+      // 5. Audit trail.
       await writeAuditLog('job_cancelled_by_handyman', decodedToken, {
         jobId,
         reason,
@@ -4463,6 +4887,217 @@ exports.proposeSchedule = functions.https.onRequest(async (req, res) => {
         return res.status(401).json({ error: error.message });
       }
       return res.status(500).json({ error: 'Failed to propose schedule' });
+    }
+  });
+});
+
+// ===================================
+// SECOND VISIT — Scenario 11 Door 1 (and the disposition sheet's
+// "Needs another visit"). Opens a second_visit_approval prompt to the
+// customer; the schedule only moves when they approve (Task 4 branch).
+// ===================================
+exports.requestSecondVisit = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, proposedDate, proposedTime, reason, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`second_visit_${decodedToken.uid}`, 10, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      try {
+        validateScheduleProposal({ date: proposedDate, time: proposedTime });
+      } catch (schedErr) {
+        if (schedErr.name === 'ScheduleError') return res.status(400).json({ error: schedErr.message, code: schedErr.code });
+        throw schedErr;
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+      let visitIndex;
+      let jobData;
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateSecondVisitRequest(job, decodedToken.uid, reason, note);
+          if (!job.customerPhone) throw new VisitError('no_customer_phone', 'Job has no customer phone on file');
+          const result = upsertPendingVisit(job, {
+            proposedDate, proposedTime: String(proposedTime), reason, note,
+            reportedVia: 'app', promptId: null, nowIso,
+          });
+          visitIndex = result.visitIndex;
+          jobData = job;
+          tx.update(snap.ref, { visits: result.visits, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        });
+      } catch (visitErr) {
+        if (visitErr.name === 'VisitError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_reason: 400, note_required: 400, no_customer_phone: 400 };
+          return res.status(statusMap[visitErr.code] || 400).json({ error: visitErr.message, code: visitErr.code });
+        }
+        throw visitErr;
+      }
+
+      // The visit request answers both "how did the visit go?" and any
+      // not-yet-answered completion poll — close them so a later customer
+      // reply can't race the new proposal. Best-effort after the commit.
+      try {
+        await supersedeOpenPrompts(db, jobId, ['visit_disposition', 'completion_confirmation']);
+      } catch (supErr) {
+        console.error('⚠️ supersedeOpenPrompts failed (continuing):', supErr);
+      }
+
+      // Customer approval ask — template-first (business may be outside
+      // the 24h session window), freeform fallback until T13 is approved.
+      const jobShortId = jobId.slice(-6);
+      const displayDate = new Date(proposedDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' });
+      const handymanName = (jobData.acceptedBy && jobData.acceptedBy.name) || 'Your handyman';
+      const fallback = `🔁 ${handymanName} says another visit is needed for Job #${jobShortId} and proposes ${displayDate}, ${proposedTime}.\n\n👉 Reply *YES* to approve\n👉 Reply *NO* to decline`;
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(jobData.customerPhone),
+        process.env.TWILIO_TEMPLATE_SECOND_VISIT_PROPOSAL,
+        { '1': handymanName, '2': jobShortId, '3': displayDate, '4': String(proposedTime) },
+        fallback
+      );
+      if (!sendResult.success) {
+        console.error('❌ requestSecondVisit: WhatsApp send failed', { jobId, sendResult });
+        return res.status(502).json({ error: 'Failed to send the WhatsApp request to the customer. Please try again.', code: 'send_failed' });
+      }
+
+      const { promptId } = await openPrompt({
+        db, jobId, type: 'second_visit_approval',
+        toPhone: jobData.customerPhone, toRole: 'customer',
+        question: `Approve a second visit on ${displayDate}, ${proposedTime}? (Job #${jobShortId})`,
+        options: SCHEDULE_APPROVAL_OPTIONS,
+        payload: { proposedDate, proposedTime: String(proposedTime), visitIndex, reason },
+      });
+
+      // Spec: >2 visits alerts the admin (repeatable but admin-visible).
+      // visits[] holds RETURN visits; visitIndex >= 1 means this is at
+      // least the 3rd visit overall (booking + 2 returns).
+      if (visitIndex >= 1) {
+        await sendAdminEmail(
+          `👀 Visit ${visitIndex + 2} requested — Job #${jobShortId}`,
+          `<p>Job <b>${escapeHtml(jobId)}</b> is on return visit #${visitIndex + 1} (visit ${visitIndex + 2} overall). Worth a look — repeated visits often mean a scope problem (Scenario 10).</p>`
+        );
+      }
+
+      await writeAuditLog('second_visit_requested', decodedToken, { jobId, proposedDate, reason });
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ requestSecondVisit error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to request second visit' });
+    }
+  });
+});
+
+// ===================================
+// VISIT ISSUE — Scenario 8 (customer not home / no access) and the
+// disposition sheet's "Problem — can't finish". Logged on the job,
+// admin alerted; no_access additionally prompts the customer
+// (reschedule / support). No fees in v1.
+// ===================================
+exports.reportVisitIssue = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, kind, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`visit_issue_${decodedToken.uid}`, 5, 86400);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many reports today', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+      const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+      let jobData;
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateVisitIssueReport(job, decodedToken.uid, kind, todaySgt);
+          // no_access must reach the customer to be useful — cannot_finish
+          // tolerates a missing phone since its customer notice is best-effort.
+          if (kind === 'no_access' && !job.customerPhone) throw new VisitError('no_customer_phone', 'Job has no customer phone on file');
+          jobData = job;
+          const issues = Array.isArray(job.accessIssues) ? job.accessIssues.slice() : [];
+          issues.push(buildVisitIssueEntry({ kind, note, reportedBy: decodedToken.uid, nowIso }));
+          const upd = { accessIssues: issues, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+          if (kind === 'cannot_finish') {
+            Object.assign(upd, buildAttentionUpdate('visit_problem', { detail: String(note || '').slice(0, 200) || 'handyman reported a problem', promptId: null, nowIso }));
+          }
+          tx.update(snap.ref, upd);
+        });
+      } catch (visitErr) {
+        if (visitErr.name === 'VisitError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_kind: 400, not_visit_day: 409, no_customer_phone: 400 };
+          return res.status(statusMap[visitErr.code] || 400).json({ error: visitErr.message, code: visitErr.code });
+        }
+        throw visitErr;
+      }
+
+      try { await supersedeOpenPrompts(db, jobId, ['visit_disposition']); }
+      catch (e) { console.error('⚠️ supersedeOpenPrompts failed (continuing):', e); }
+
+      const jobShortId = jobId.slice(-6);
+      const handymanName = (jobData.acceptedBy && jobData.acceptedBy.name) || 'Your handyman';
+      await sendAdminEmail(
+        kind === 'no_access' ? `🚪 Access issue — Job #${jobShortId}` : `⚠️ Visit problem — Job #${jobShortId}`,
+        `<p>Handyman <b>${escapeHtml(handymanName)}</b> reported <b>${escapeHtml(kind)}</b> on job <b>${escapeHtml(jobId)}</b>.</p><p>Note: ${escapeHtml(String(note || '(none)'))}</p>`
+      );
+
+      if (kind === 'no_access') {
+        const fallback = `😕 ${handymanName} couldn't reach you today for Job #${jobShortId}.\n\n👉 Reply *1* — Reschedule the visit\n👉 Reply *2* — Contact support`;
+        const sendResult = await sendTwilioTemplateMessage(
+          formatPhoneToWhatsApp(jobData.customerPhone),
+          process.env.TWILIO_TEMPLATE_ACCESS_ISSUE,
+          { '1': handymanName, '2': jobShortId },
+          fallback
+        );
+        if (!sendResult.success) {
+          console.error('❌ reportVisitIssue: WhatsApp send failed', { jobId, sendResult });
+          return res.status(502).json({ error: 'Failed to send WhatsApp message to customer. Please try again.', code: 'send_failed' });
+        }
+        await openPrompt({
+          db, jobId, type: 'access_issue_choice',
+          toPhone: jobData.customerPhone, toRole: 'customer',
+          question: `${handymanName} couldn't reach you — reschedule or contact support? (Job #${jobShortId})`,
+          options: ACCESS_ISSUE_OPTIONS,
+          payload: null,
+        });
+      } else {
+        // cannot_finish: customer gets a holding notice; admin mediates
+        // (often becomes Scenario 6 swap or Scenario 10 price talk). A
+        // failed send here is non-fatal — the admin is already alerted.
+        try {
+          const sendResult = await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(jobData.customerPhone),
+            process.env.TWILIO_TEMPLATE_VISIT_PROBLEM,
+            { '1': jobShortId },
+            `ℹ️ There's a snag with Job #${jobShortId} — our team is looking into it and will contact you shortly. Your payment stays protected.`
+          );
+          if (!sendResult.success) console.error('⚠️ reportVisitIssue: cannot_finish notice send failed (continuing):', { jobId, sendResult });
+        } catch (notifyErr) {
+          console.error('⚠️ reportVisitIssue: cannot_finish notice send threw (continuing):', notifyErr);
+        }
+      }
+
+      await writeAuditLog('visit_issue_reported', decodedToken, { jobId, kind });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ reportVisitIssue error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to report visit issue' });
     }
   });
 });

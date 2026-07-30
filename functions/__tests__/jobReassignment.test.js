@@ -134,4 +134,42 @@ describe('buildCancelUpdate', () => {
     });
     expect(update.assignmentHistory[0].cancelNote).toHaveLength(500);
   });
+
+  test('voids a pending second-visit entry, leaves a scheduled entry untouched', () => {
+    const job = {
+      ...baseJob(),
+      visits: [
+        { status: 'scheduled', proposedDate: '2026-07-15', scheduledAt: '2026-07-09T01:00:00.000Z' },
+        { status: 'pending_schedule', proposedDate: '2026-07-20', proposedTime: '10:00 AM' },
+      ],
+    };
+    const update = buildCancelUpdate(job, 'hm_1', {
+      reason: 'schedule_conflict', note: '', nowIso: NOW,
+    });
+    expect(update.visits).toHaveLength(2);
+    expect(update.visits[0]).toEqual(job.visits[0]); // scheduled entry untouched
+    expect(update.visits[1]).toEqual({
+      ...job.visits[1], status: 'cancelled_assignment', cancelledAt: NOW,
+    });
+    // Stale open second-visit approval prompt must not survive into the new era.
+    expect(update.visitDispositionSentFor).toBeDefined();
+  });
+
+  test('omits visits from the update when there are no pending entries', () => {
+    const job = {
+      ...baseJob(),
+      visits: [{ status: 'declined', proposedDate: '2026-07-15' }],
+    };
+    const update = buildCancelUpdate(job, 'hm_1', {
+      reason: 'schedule_conflict', note: '', nowIso: NOW,
+    });
+    expect(update).not.toHaveProperty('visits');
+  });
+
+  test('omits visits from the update when job has no visits at all', () => {
+    const update = buildCancelUpdate(baseJob(), 'hm_1', {
+      reason: 'schedule_conflict', note: '', nowIso: NOW,
+    });
+    expect(update).not.toHaveProperty('visits');
+  });
 });

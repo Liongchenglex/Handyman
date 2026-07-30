@@ -208,8 +208,24 @@ Flow: `[HM-A] cancels an in-progress job from the job page (reason picklist)`
 
 ## Known gaps (do NOT file as bugs)
 
-- Scenarios 5, 6 (self-serve relaxation), 7, 8, 10, 11 are not built.
+- Scenarios 5, 6 (self-serve relaxation), 7, 10 are not built.
 - A persistently failing nudge send (bad phone) retries daily and never escalates — follow-up backlog.
 - `resolveAttention(markCancelled)` doesn't supersede leftover prompts/revoke links on the refunded job — one spurious re-flag possible; follow-up backlog.
 - The `refund_orphaned` recovery state is per-browser (client state); navigating away before "Finish cancelling" leaves recovery to the flagged row / refreshed queue.
 - Silent stalls are only caught at the sweep's daily granularity — a "24h" threshold fires at the first 10:30 run after it's due.
+
+---
+
+## Second visit + access issue (plan 2026-07-29)
+- [ ] Door 1: handyman taps "Needs another visit" → customer gets proposal on WA → YES → both confirmed, preferredDate moved, visits[0].status='scheduled', poll re-armed (completionPollSentAt cleared)
+- [ ] Door 1 decline: customer NO → visits[0].status='declined', job flagged needsAttention (second_visit_declined), admin email received, customer acked
+- [ ] Door 2: job with preferredDate=today, no action by 19:00 SGT → handyman gets deep-link WA; link opens /job-details/{id}?action=disposition with the sheet auto-open (incl. after login bounce)
+- [ ] Sheet → Job's done = existing Mark Complete flow; sheet → Problem = admin email + customer holding notice + attention flag
+- [ ] Door 3: poll shows 3 options; reply 3 → visits[] pending entry, handyman pinged with link; reply 3 after handyman marked complete → status back to in_progress
+- [ ] Poll reply 2 → follow-up question; follow-up 1 → disputed (unchanged tail); follow-up 2 → noShowReports[] + attention (no_show_reported) + admin email
+- [ ] Sweep: pending second visit with no date >24h → handyman nudged once; >48h → attention queue (second_visit_no_date), only once
+- [ ] Sweep: unanswered visit_disposition prompt past expiry → marked expired, NO nudge sent
+- [ ] Morning poll on a job with an open visit_disposition prompt → disposition prompt superseded
+- [ ] Scenario 8: "Customer not home" visible only on the visit day → customer gets 1/2 choice; reply 1 → pick-time link (single-use, revokes priors); pick → handyman schedule_pick_approval (Scenario 3 rails); reply 2 → admin email + ack
+- [ ] reportVisitIssue rejected: wrong handyman (403), not visit day (409), job not in_progress (409)
+- [ ] Rules: client write to visits/accessIssues/noShowReports/visitDispositionSentFor denied for the assigned handyman

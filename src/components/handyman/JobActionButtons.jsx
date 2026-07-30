@@ -4,6 +4,9 @@ import { useAuth } from '../../context/AuthContext';
 import { sendJobCompletionNotification } from '../../services/whatsappService';
 import CancelJobModal from './CancelJobModal';
 import ProposeTimeModal from './ProposeTimeModal';
+import SecondVisitModal from './SecondVisitModal';
+import VisitIssueModal from './VisitIssueModal';
+import Modal from '../common/Modal';
 
 /**
  * JobActionButtons Component
@@ -22,7 +25,8 @@ const JobActionButtons = ({
   onStatusChange,
   variant = 'compact',  // 'compact' for lists, 'full' for detail pages
   showViewDetails = true,
-  completionFlow = 'pending_confirmation' // 'pending_confirmation' (sends WhatsApp) or 'direct' (no notification)
+  completionFlow = 'pending_confirmation', // 'pending_confirmation' (sends WhatsApp) or 'direct' (no notification)
+  initialAction // optional deep-link hint, e.g. 'disposition' — opens the disposition sheet once on mount
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -32,6 +36,13 @@ const JobActionButtons = ({
   const [justCompleted, setJustCompleted] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showProposeModal, setShowProposeModal] = useState(false);
+  const [showSecondVisitModal, setShowSecondVisitModal] = useState(false);
+  const [visitIssueKind, setVisitIssueKind] = useState(null); // null | 'no_access' | 'cannot_finish'
+  // Lazy-init: only opens the sheet from a fresh deep link (?action=disposition)
+  // on an actionable job — never reopens on re-renders.
+  const [showDisposition, setShowDisposition] = useState(
+    () => initialAction === 'disposition' && job.status === 'in_progress'
+  );
 
   // Synchronous re-entrancy guard. React state updates (setIsProcessing) are
   // asynchronous, so a rapid double-click can fire two completion writes before
@@ -89,6 +100,16 @@ const JobActionButtons = ({
     preferredDate.setHours(0, 0, 0, 0);
 
     return today >= preferredDate;
+  };
+
+  // Exact-day check for the "Customer not home" report — you can only be
+  // standing at the door ON the visit day (isJobDateReached is >=, which
+  // is right for Mark Complete but too loose here).
+  const isVisitDay = () => {
+    if (!job.preferredDate) return false;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const visit = new Date(job.preferredDate); visit.setHours(0, 0, 0, 0);
+    return today.getTime() === visit.getTime();
   };
 
   /**
@@ -271,6 +292,10 @@ const JobActionButtons = ({
   // Determine if the date gate blocks completion
   const dateReached = isJobDateReached();
 
+  // Gate for the "Needs another visit" action: only while actively working
+  // an in-progress job on/after its scheduled date, and not already completed.
+  const canSecondVisit = job.status === 'in_progress' && dateReached && !isCompleted;
+
   // Full width variant for job detail pages
   if (variant === 'full') {
     return (
@@ -311,6 +336,26 @@ const JobActionButtons = ({
             : 'Mark this job as complete to notify the customer'}
         </p>
 
+        {canSecondVisit && (
+          <button
+            onClick={() => setShowSecondVisitModal(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 bg-orange-500 text-white px-6 py-3 rounded-xl hover:bg-orange-600 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined">event_repeat</span>
+            Needs another visit
+          </button>
+        )}
+
+        {job.status === 'in_progress' && isVisitDay() && (
+          <button
+            onClick={() => setVisitIssueKind('no_access')}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 px-6 py-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined">door_front</span>
+            Customer not home
+          </button>
+        )}
+
         {canPropose && (
           <button
             onClick={() => setShowProposeModal(true)}
@@ -344,6 +389,39 @@ const JobActionButtons = ({
           onClose={() => setShowCancelModal(false)}
           onCancelled={handleCancelled}
         />
+
+        {/* Disposition sheet — "How did today's visit go?" — opens via the
+            ?action=disposition deep link on an actionable in-progress job. */}
+        <Modal isOpen={showDisposition} onClose={() => setShowDisposition(false)} title="How did today's visit go?" size="small">
+          <div className="flex flex-col gap-3 p-1">
+            <button
+              onClick={() => { setShowDisposition(false); handleMarkCompleted(); }}
+              className="w-full flex items-center gap-3 bg-primary/10 dark:bg-primary/20 hover:bg-primary/20 dark:hover:bg-primary/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            >
+              <span className="material-symbols-outlined text-primary">check_circle</span>
+              <span>Job's done<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Mark complete — the customer confirms on WhatsApp</span></span>
+            </button>
+            <button
+              onClick={() => { setShowDisposition(false); setShowSecondVisitModal(true); }}
+              className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            >
+              <span className="material-symbols-outlined text-orange-500">event_repeat</span>
+              <span>Needs another visit<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Propose a return time for the customer to approve</span></span>
+            </button>
+            <button
+              onClick={() => { setShowDisposition(false); setVisitIssueKind('cannot_finish'); }}
+              className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            >
+              <span className="material-symbols-outlined text-red-500">report_problem</span>
+              <span>Problem — can't finish<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Tell us what's wrong; our team steps in</span></span>
+            </button>
+          </div>
+        </Modal>
+
+        <SecondVisitModal job={job} isOpen={showSecondVisitModal}
+          onClose={() => setShowSecondVisitModal(false)} onRequested={onStatusChange} />
+        <VisitIssueModal job={job} kind={visitIssueKind || 'no_access'} isOpen={!!visitIssueKind}
+          onClose={() => setVisitIssueKind(null)} onReported={onStatusChange} />
       </div>
     );
   }
@@ -393,6 +471,26 @@ const JobActionButtons = ({
         </button>
       )}
 
+      {canSecondVisit && (
+        <button
+          onClick={() => setShowSecondVisitModal(true)}
+          className="flex items-center justify-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors font-medium"
+        >
+          <span className="material-symbols-outlined text-sm">event_repeat</span>
+          Needs another visit
+        </button>
+      )}
+
+      {job.status === 'in_progress' && isVisitDay() && (
+        <button
+          onClick={() => setVisitIssueKind('no_access')}
+          className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+        >
+          <span className="material-symbols-outlined text-sm">door_front</span>
+          Customer not home
+        </button>
+      )}
+
       {/* View Details button - conditionally shown */}
       {showViewDetails && (
         <button
@@ -437,6 +535,39 @@ const JobActionButtons = ({
         onClose={() => setShowCancelModal(false)}
         onCancelled={handleCancelled}
       />
+
+      {/* Disposition sheet — "How did today's visit go?" — opens via the
+          ?action=disposition deep link on an actionable in-progress job. */}
+      <Modal isOpen={showDisposition} onClose={() => setShowDisposition(false)} title="How did today's visit go?" size="small">
+        <div className="flex flex-col gap-3 p-1">
+          <button
+            onClick={() => { setShowDisposition(false); handleMarkCompleted(); }}
+            className="w-full flex items-center gap-3 bg-primary/10 dark:bg-primary/20 hover:bg-primary/20 dark:hover:bg-primary/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+          >
+            <span className="material-symbols-outlined text-primary">check_circle</span>
+            <span>Job's done<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Mark complete — the customer confirms on WhatsApp</span></span>
+          </button>
+          <button
+            onClick={() => { setShowDisposition(false); setShowSecondVisitModal(true); }}
+            className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+          >
+            <span className="material-symbols-outlined text-orange-500">event_repeat</span>
+            <span>Needs another visit<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Propose a return time for the customer to approve</span></span>
+          </button>
+          <button
+            onClick={() => { setShowDisposition(false); setVisitIssueKind('cannot_finish'); }}
+            className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+          >
+            <span className="material-symbols-outlined text-red-500">report_problem</span>
+            <span>Problem — can't finish<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Tell us what's wrong; our team steps in</span></span>
+          </button>
+        </div>
+      </Modal>
+
+      <SecondVisitModal job={job} isOpen={showSecondVisitModal}
+        onClose={() => setShowSecondVisitModal(false)} onRequested={onStatusChange} />
+      <VisitIssueModal job={job} kind={visitIssueKind || 'no_access'} isOpen={!!visitIssueKind}
+        onClose={() => setVisitIssueKind(null)} onReported={onStatusChange} />
     </div>
   );
 };

@@ -339,7 +339,8 @@ Job ID: {{4}}
 
 Please review the work and confirm completion, or report any issues.
 ```
-Quick replies: **✅ Confirm Complete** / **⚠️ Report Issue** / **🚫 Handyman never came**.
+Quick replies: **✅ Confirm Complete** / **⚠️ Report Issue** / **🔁 He's coming back**.
+Third button maps to `COMPLETION_PROMPT_OPTIONS['3'] = 'coming_back'` (`functions/index.js:142`) — records second-visit intent directly. "Handyman never came" is no longer a top-level button; it now lives one level down, as option 2 of the `COMPLETION_NO_FOLLOWUP_OPTIONS` follow-up question asked after a bare "Report Issue"/NO reply (`functions/index.js:147`).
 
 #### T6. `no_show_choice` — customer (Scenario 7)
 ```
@@ -354,10 +355,13 @@ Hi {{1}}, the customer has reported that nobody arrived for job #{{2}} scheduled
 
 #### T8. `access_issue_choice` — customer (Scenario 8)
 Triggered by a handyman app action, so the customer is outside the session window. Different copy and button set from `no_show_choice`, so it's a separate template.
+
+⚠️ Corrected from an earlier 3-var draft (`{{1}}` customer name, `{{2}}` handyman name, `{{3}}` job id): the shipped code (`reportVisitIssue`, `functions/index.js:5030`) sends only 2 `contentVariables` — no customer-name variable — matching its freeform fallback `😕 {{handymanName}} couldn't reach you today for Job #{{jobShortId}}.`
 ```
-Hi {{1}}, your handyman {{2}} couldn't reach you during today's visit for job #{{3}}. How would you like to proceed?
+Hi there, your handyman {{1}} couldn't reach you today for job #{{2}}. How would you like to proceed?
 ```
-Quick replies: **Reschedule** / **Contact support**.
+`{{1}}` handyman name · `{{2}}` job short id.
+Quick replies: **Reschedule** / **Contact support** (router: `ACCESS_ISSUE_OPTIONS`, `functions/index.js:162`).
 
 #### T9. `customer_cancel_confirm` — customer (Scenario 9)
 ⚠️ Blocked on owner decision §6.1 (refund policy copy) — either settle the copy first or keep the policy line as variable `{{4}}` as below.
@@ -393,16 +397,16 @@ Please approve or decline this adjustment.
 ```
 Quick replies: **Approve** / **Decline**.
 
-#### T13. `second_visit_proposal` — customer (Scenario 11)
-```
-Hi {{1}}, your handyman {{2}} needs another visit to finish your {{3}} job (#{{4}}).
+#### T13. `second_visit_proposal` — customer (Scenario 11 Door 1)
 
-Reason: {{5}}
-Proposed date and time: {{6}}
+⚠️ Corrected from an earlier 6-var draft (customer name, service type, reason, and a combined date+time were dropped). The shipped code (`requestSecondVisit`, `functions/index.js:4930`) sends exactly 4 `contentVariables` — no customer name, no service type, no reason, and date/time as two separate variables — matching its freeform fallback `🔁 {{handymanName}} says another visit is needed for Job #{{jobShortId}} and proposes {{displayDate}}, {{proposedTime}}.`
+```
+Hi there, your handyman {{1}} says another visit is needed to finish job #{{2}}. Proposed date and time: {{3}}, {{4}}.
 
 Please let us know if this works for you.
 ```
-Quick replies: **Approve** / **Decline**.
+`{{1}}` handyman name · `{{2}}` job short id · `{{3}}` display date (e.g. "Tuesday, 15 July") · `{{4}}` time.
+Quick replies: **Approve** / **Decline** (router accepts YES/NO too — `SCHEDULE_APPROVAL_OPTIONS`, `functions/index.js:156`; prompt type `second_visit_approval`).
 
 #### T14. `job_not_complete` — customer (Scenario 6 corrective notice)
 Supersedes an open completion poll when the handyman cancels post-inspection.
@@ -425,10 +429,39 @@ Hi {{1}}, a gentle reminder — we're still waiting for your reply on job #{{2}}
 Please respond when you can so we can keep things moving. Thank you!
 ```
 
+#### T17. `visit_disposition` — handyman (Scenario 11 Door 2, evening sweep)
+Body copy is the freeform fallback from `eveningVisitDisposition` (`functions/index.js:4226`) verbatim, converted to variables.
+```
+👷 How did today's job go — {{1}} (#{{2}})?
+
+Tap to update (done / needs another visit / problem):
+{{3}}
+```
+`{{1}}` service type · `{{2}}` job short id · `{{3}}` link (`${APP_URL}/job-details/{id}?action=disposition`, full URL).
+⚠️ Body ends with a variable (the link), which breaks this pack's own "must not end with a variable" rule (see top of section) and the T1 "bare token, not a full URL" guidance — the shipped fallback sends the complete URL as-is, so documenting as shipped rather than reshaping; owner should weigh a CTA URL button (T1-style) before submitting.
+No quick-reply buttons — the deep link is the answer path; text replies fall through to the generic F3 router.
+
+#### T18. `second_visit_needed` — handyman (Scenario 11 Door 1, handyman ping after customer says "coming back")
+Body copy is the freeform fallback from the `coming_back` poll-reply handler (`functions/index.js:2939`), minus the conditional Mark-Complete-conflict clause (that clause only exists in the fallback, not as a template variable).
+```
+🔁 The customer says job #{{1}} needs another visit. Propose the return time here:
+{{2}}
+```
+`{{1}}` job short id · `{{2}}` link (`${APP_URL}/job-details/{id}?action=disposition`, full URL — same URL caveat as T17).
+No quick-reply buttons — the deep link is the answer path.
+
+#### T19. `visit_problem` — customer (Scenario 8 `cannot_finish` holding notice)
+Body copy is the freeform fallback from `reportVisitIssue`'s `cannot_finish` branch (`functions/index.js:5052`) verbatim.
+```
+ℹ️ There's a snag with job #{{1}} — our team is looking into it and will contact you shortly. Your payment stays protected.
+```
+`{{1}}` job short id.
+No quick-reply buttons — informational only; admin mediates separately (often becomes Scenario 6 swap or Scenario 10 price talk).
+
 ### Messages that do NOT need templates
 These always ride the free 24h session window because the recipient just messaged us: the decline→link send in Scenarios 3/4 (customer just replied Decline — though `schedule_link` covers the admin-triggered case anyway), the cancel-confirmation prompt when the customer texts "cancel", numbered job-picker disambiguation replies, and the Stripe payment link sent right after a price-adjustment Approve.
 
 ---
 
-**Last Updated:** 2026-07-13
-**Status:** 🔄 Job lifecycle pack (T1–T16) drafted — pending Twilio Content Editor creation and WhatsApp approval
+**Last Updated:** 2026-07-30
+**Status:** 🔄 Job lifecycle pack (T1–T19) drafted — pending Twilio Content Editor creation and WhatsApp approval. T5, T8, T13 corrected 2026-07-30 to match the shipped `contentVariables`; T17–T19 added for `visit_disposition` / `second_visit_needed` / `visit_problem` (plan `2026-07-29-second-visit-and-access-issue.md`).

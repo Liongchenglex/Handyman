@@ -5,6 +5,7 @@ const {
   evaluateLink,
   evaluateAsapJob,
   evaluateUnclaimedJob,
+  evaluateSecondVisit,
   buildAttentionUpdate,
 } = require('../sweepService');
 
@@ -119,5 +120,41 @@ describe('buildAttentionUpdate', () => {
         needsAttention: true,
         attentionNeeded: { type: 'asap_no_time', at: nowIso, detail: 'no confirmed time', promptId: null },
       });
+  });
+});
+
+describe('evaluateSecondVisit', () => {
+  const jobWithVisit = (over = {}, visitOver = {}) => ({
+    status: 'in_progress',
+    visits: [{ status: 'pending_schedule', proposedDate: null, createdAt: new Date(hoursAgo(30)).toISOString(), ...visitOver }],
+    ...over,
+  });
+  test('ok when no pending dateless visit', () => {
+    expect(evaluateSecondVisit({ status: 'in_progress' }, NOW_MS)).toBe('ok');
+    expect(evaluateSecondVisit(jobWithVisit({}, { proposedDate: '2026-08-02' }), NOW_MS)).toBe('ok');
+    expect(evaluateSecondVisit(jobWithVisit({}, { status: 'scheduled' }), NOW_MS)).toBe('ok');
+  });
+  test('ok under 24h', () => {
+    expect(evaluateSecondVisit(jobWithVisit({}, { createdAt: new Date(hoursAgo(10)).toISOString() }), NOW_MS)).toBe('ok');
+  });
+  test('nudge between 24h and 48h when not yet nudged', () => {
+    expect(evaluateSecondVisit(jobWithVisit(), NOW_MS)).toBe('nudge');
+  });
+  test('ok between 24h and 48h when already nudged', () => {
+    expect(evaluateSecondVisit(jobWithVisit({ sweepNudges: { second_visit_no_date: new Date(hoursAgo(5)).toISOString() } }), NOW_MS)).toBe('ok');
+  });
+  test('escalate past 48h', () => {
+    expect(evaluateSecondVisit(jobWithVisit({}, { createdAt: new Date(hoursAgo(50)).toISOString() }), NOW_MS)).toBe('escalate');
+  });
+});
+
+describe('evaluatePrompt — visit_disposition', () => {
+  test('expires silently instead of nudging', () => {
+    const p = { type: 'visit_disposition', status: 'open', expiresAt: new Date(hoursAgo(1)).toISOString() };
+    expect(evaluatePrompt(p, NOW_MS)).toBe('expire_silent');
+  });
+  test('still ok before expiry', () => {
+    const p = { type: 'visit_disposition', status: 'open', expiresAt: new Date(NOW_MS + 3600000).toISOString() };
+    expect(evaluatePrompt(p, NOW_MS)).toBe('ok');
   });
 });
