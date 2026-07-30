@@ -87,6 +87,13 @@ function findLastPendingVisitIndex(job) {
  * failure) likewise FILLS the existing pending entry rather than
  * appending a duplicate — a new proposal supersedes an open one,
  * regardless of whether that open entry already carries a date.
+ *
+ * Caveat: the fill targets the LAST pending_schedule entry regardless of
+ * its proposedDate, and proposedDate/proposedTime are overwritten
+ * unconditionally (a dateless call nulls out a previously proposed
+ * date) while reason/note/promptId merely fall back to the existing
+ * entry's values — callers must ensure at most one open pending-visit
+ * flow is live per job before calling.
  */
 function upsertPendingVisit(job, { proposedDate, proposedTime, reason, note, reportedVia, promptId, nowIso }) {
   const visits = visitsOf(job).slice();
