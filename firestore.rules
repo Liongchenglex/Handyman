@@ -283,7 +283,8 @@ service cloud.firestore {
                         'verified', 'status',
                         'stripeConnectedAccountId',
                         'stripeOnboardingCompleted', 'stripeAccountStatus',
-                        'stripeDetailsSubmitted', 'stripeChargesEnabled', 'stripePayoutsEnabled'
+                        'stripeDetailsSubmitted', 'stripeChargesEnabled', 'stripePayoutsEnabled',
+                        'cancellationCount', 'noShowCount'
                       ]));
 
       // Admins can update anything, including verified/status. The email

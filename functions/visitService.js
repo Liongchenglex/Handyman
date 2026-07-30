@@ -140,6 +140,13 @@ function buildVisitDeclinedUpdate(job, { visitIndex, nowIso }) {
   return transitionVisit(job, visitIndex, 'declined', 'declinedAt', nowIso);
 }
 
+// Scenario 10: a job mid-price-talk must not be asked "how did it go?" —
+// the pending adjustment already owns the conversation. Local check on
+// the job shape (visitService stays independent of pricingService).
+function hasPendingAdjustment(job) {
+  return !!(job && job.priceAdjustment && job.priceAdjustment.status === 'pending_payment');
+}
+
 /**
  * Door 2 candidate check: visit day ended with the handyman silent.
  * `todaySgt` is 'YYYY-MM-DD' in Asia/Singapore, computed by the caller.
@@ -153,6 +160,7 @@ function shouldSendDisposition(job, todaySgt) {
   if (!job.preferredDate || job.preferredDate !== todaySgt) return false;
   if (job.completionPollSentAt) return false;
   if (hasPendingSecondVisit(job)) return false;
+  if (hasPendingAdjustment(job)) return false;
   if (job.visitDispositionSentFor === job.preferredDate) return false;
   return true;
 }

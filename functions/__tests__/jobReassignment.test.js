@@ -172,4 +172,17 @@ describe('buildCancelUpdate', () => {
     });
     expect(update).not.toHaveProperty('visits');
   });
+
+  test('voids a pending price adjustment on cancel', () => {
+    const jobWithAdj = { ...baseJob(), priceAdjustment: { status: 'pending_payment', deltaServiceFee: 30 } };
+    const update = buildCancelUpdate(jobWithAdj, 'hm_1', { reason: 'personal_emergency', note: '', nowIso: NOW });
+    expect(update.priceAdjustment.status).toBe('cancelled_assignment');
+    expect(update.priceAdjustment.cancelledAt).toBe(NOW);
+  });
+
+  test('leaves a paid adjustment untouched on cancel', () => {
+    const jobWithPaid = { ...baseJob(), priceAdjustment: { status: 'paid', deltaServiceFee: 30 } };
+    const update = buildCancelUpdate(jobWithPaid, 'hm_1', { reason: 'personal_emergency', note: '', nowIso: NOW });
+    expect(update.priceAdjustment).toBeUndefined(); // key absent — no write
+  });
 });

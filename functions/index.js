@@ -91,6 +91,17 @@ const {
   buildVisitProposalReset,
 } = require('./visitService');
 
+// Post-inspection price adjustment domain logic (Scenario 10,
+// approve-by-paying). See functions/pricingService.js.
+const {
+  PricingError,
+  validateAdjustmentRequest,
+  buildAdjustmentEntry,
+  hasPendingPriceAdjustment,
+  buildAdjustmentTransition,
+  applyPaidAdjustment,
+} = require('./pricingService');
+
 // Secure schedule links (F6) — token hashing + link issuance/revocation.
 // See functions/scheduleLinkService.js.
 const {
@@ -163,6 +174,20 @@ const SCHEDULE_APPROVAL_OPTIONS = {
 const ACCESS_ISSUE_OPTIONS = {
   '1': 'reschedule', 'RESCHEDULE': 'reschedule',
   '2': 'support', 'SUPPORT': 'support', 'CONTACT SUPPORT': 'support', 'HELP': 'support',
+};
+
+// Scenario 10 — decline-only: paying the Checkout link IS the approval,
+// so the prompt has no approve keys (mirrors visit_disposition, whose
+// deep link is its answer path).
+const PRICE_ADJUSTMENT_CHOICE_OPTIONS = {
+  'NO': 'decline', 'DECLINE': 'decline', 'N': 'decline', '2': 'decline',
+};
+
+// Scenario 7 — customer's three-way choice after reporting a no-show.
+const NO_SHOW_CHOICE_OPTIONS = {
+  '1': 'reschedule', 'RESCHEDULE': 'reschedule',
+  '2': 'new_handyman', 'NEW HANDYMAN': 'new_handyman', 'NEW': 'new_handyman',
+  '3': 'cancel_refund', 'CANCEL': 'cancel_refund', 'REFUND': 'cancel_refund',
 };
 
 // ===================================
@@ -1797,6 +1822,59 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         throw transferErr;
       }
 
+      // ── Scenario 10: pay out a PAID delta as a second transfer. The
+      // original transfer is source_transaction-pinned to the original
+      // charge, so the delta MUST ride its own charge (Stripe caps a
+      // pinned transfer at that charge's balance) — two deposits for the
+      // handyman, each with correct per-charge fee math. Runs before the
+      // final state write (same as the original transfer above); a
+      // failure here mirrors that transfer's release_failed handling,
+      // keeping the endpoint retry-safe via deterministic idempotency
+      // keys on both transfers.
+      let deltaTransfer = null;
+      let deltaBreakdown = null;
+      const paidAdjustment = jobData.priceAdjustment && jobData.priceAdjustment.status === 'paid' ? jobData.priceAdjustment : null;
+      if (paidAdjustment && paidAdjustment.deltaPaymentIntentId) {
+        try {
+          const deltaPi = await stripe.paymentIntents.retrieve(paidAdjustment.deltaPaymentIntentId);
+          const deltaChargeId = deltaPi.latest_charge;
+          const deltaCharge = await stripe.charges.retrieve(deltaChargeId);
+          const deltaBt = await stripe.balanceTransactions.retrieve(deltaCharge.balance_transaction);
+          const deltaNet = deltaBt.net / 100;
+          const deltaStripeFee = deltaBt.fee / 100;
+          const deltaPlatformFee = deltaNet * platformFeePercentage / (1 + platformFeePercentage);
+          const deltaPayout = deltaNet - deltaPlatformFee;
+          deltaTransfer = await stripe.transfers.create({
+            amount: Math.round(deltaPayout * 100),
+            currency: 'sgd',
+            destination: handymanAccountId,
+            source_transaction: deltaChargeId,
+            description: `Price adjustment payout for job #${jobId}`,
+            metadata: { jobId, type: 'price_adjustment_delta', deltaServiceFee: String(paidAdjustment.deltaServiceFee) },
+          }, { idempotencyKey: `transfer-delta-${deltaChargeId}` });
+          deltaBreakdown = { deltaGross: paidAdjustment.deltaServiceFee, deltaStripeFee, deltaNet, deltaPayout };
+        } catch (deltaTransferErr) {
+          // Same failure handling as the original transfer above: mark
+          // release_failed and release the lock so an admin can retry.
+          // The retry is safe — the original transfer's idempotency key
+          // makes it a no-op, and this delta transfer's own key makes
+          // IT a no-op too.
+          console.error('❌ Delta transfer failed for job', jobId, deltaTransferErr);
+          try {
+            await jobRef.update({
+              paymentStatus: 'release_failed',
+              paymentReleaseError: deltaTransferErr.message || 'Delta transfer failed',
+              paymentReleaseFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+              releaseLockedAt: admin.firestore.FieldValue.delete(),
+              releaseLockedBy: admin.firestore.FieldValue.delete(),
+            });
+          } catch (markErr) {
+            console.error('Failed to mark job release_failed:', markErr);
+          }
+          throw deltaTransferErr;
+        }
+      }
+
       // Final state write: flip the lock to 'released' and record the
       // payout breakdown. This is the only path that transitions a
       // 'release_pending' job to 'released'.
@@ -1807,12 +1885,16 @@ exports.releaseEscrowSimple = functions.https.onRequest((req, res) => {
         paymentReleasedBy: decodedToken.email,
         transferId: transfer.id,
         chargeId: chargeId,
+        ...(deltaTransfer ? {
+          priceAdjustment: buildAdjustmentTransition(jobData, { to: 'released', stamps: { releasedAt: new Date().toISOString(), transferId: deltaTransfer.id } }).priceAdjustment,
+        } : {}),
         paymentBreakdown: {
           grossAmount: totalAmount,
           stripeFee: stripeFee,
           netAmount: netAmount,
           handymanPayout: handymanPayout,
           platformFee: platformFeeFromNet,
+          ...(deltaBreakdown || {}),
         },
         releaseLockedAt: admin.firestore.FieldValue.delete(),
         releaseLockedBy: admin.firestore.FieldValue.delete(),
@@ -1949,6 +2031,41 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         });
       }
 
+      // ── Scenario 10: refunding a DELTA PaymentIntent directly.
+      // Side-effects scope to priceAdjustment; the job's own paymentStatus
+      // and the original escrow are untouched.
+      if (paymentIntent.metadata && paymentIntent.metadata.type === 'price_adjustment_delta') {
+        const adjJobId = paymentIntent.metadata.jobId;
+        const adjChargeId = paymentIntent.latest_charge || (paymentIntent.charges && paymentIntent.charges.data[0] && paymentIntent.charges.data[0].id);
+        if (!adjChargeId) return res.status(400).json({ error: 'No charge found on this PaymentIntent' });
+        const adjJobSnap = adjJobId ? await admin.firestore().collection('jobs').doc(adjJobId).get() : null;
+        const adjData = adjJobSnap && adjJobSnap.exists ? adjJobSnap.data() : null;
+        // If the delta was already released to the handyman, reverse that
+        // transfer first (mirrors the original-pot ordering below).
+        if (adjData && adjData.priceAdjustment && adjData.priceAdjustment.status === 'released' && adjData.priceAdjustment.transferId) {
+          try {
+            await stripe.transfers.createReversal(adjData.priceAdjustment.transferId, { metadata: { jobId: adjJobId, reason: 'delta_refund' } }, { idempotencyKey: `reversal-${adjData.priceAdjustment.transferId}` });
+          } catch (revErr) {
+            console.error('❌ delta transfer reversal failed:', revErr);
+            return res.status(409).json({ error: 'Delta transfer reversal failed — manual review required', requiresManualReview: true });
+          }
+        }
+        const refund = await stripe.refunds.create(
+          { charge: adjChargeId, reason: reason || 'requested_by_customer', metadata: { jobId: adjJobId || '', type: 'price_adjustment_delta', refundedBy: 'platform' } },
+          { idempotencyKey: `refund-${adjChargeId}` }
+        );
+        // Job-side stamp is best-effort; the charge.refunded webhook (Task 3)
+        // is the durable writer of the adjustment's refunded state.
+        if (adjJobSnap && adjJobSnap.exists) {
+          try {
+            const upd = buildAdjustmentTransition(adjJobSnap.data(), { to: 'refunded', stamps: { refundedAt: new Date().toISOString(), refundId: refund.id } });
+            await adjJobSnap.ref.update(upd);
+          } catch (e) { if (e.name !== 'PricingError') console.error('⚠️ adjustment refund stamp failed (webhook will catch up):', e); }
+        }
+        await writeAuditLog('refund_price_adjustment', decodedToken, { jobId: adjJobId, paymentIntentId, refundId: refund.id });
+        return res.status(200).json({ success: true, refundId: refund.id, scope: 'price_adjustment_delta' });
+      }
+
       // Get charge ID. Newer Stripe SDKs don't populate `paymentIntent.charges`
       // by default; `latest_charge` is the canonical field. Fall back to
       // the legacy charges array for older SDK versions.
@@ -2027,6 +2144,31 @@ exports.refundPayment = functions.https.onRequest((req, res) => {
         };
         if (transferReversalId) update.transferReversalId = transferReversalId;
         await jobRef.update(update);
+      }
+
+      // ── Scenario 10 cascade: a full job refund must return the delta too.
+      if (jobData && jobData.priceAdjustment && ['paid', 'released'].includes(jobData.priceAdjustment.status) && jobData.priceAdjustment.deltaPaymentIntentId) {
+        try {
+          const deltaPi = await stripe.paymentIntents.retrieve(jobData.priceAdjustment.deltaPaymentIntentId);
+          const deltaChargeId = deltaPi.latest_charge || (deltaPi.charges && deltaPi.charges.data[0] && deltaPi.charges.data[0].id);
+          if (jobData.priceAdjustment.status === 'released' && jobData.priceAdjustment.transferId) {
+            await stripe.transfers.createReversal(jobData.priceAdjustment.transferId, { metadata: { jobId, reason: 'cascade_delta_refund' } }, { idempotencyKey: `reversal-${jobData.priceAdjustment.transferId}` });
+          }
+          if (deltaChargeId) {
+            await stripe.refunds.create(
+              { charge: deltaChargeId, reason: reason || 'requested_by_customer', metadata: { jobId, type: 'price_adjustment_delta', refundedBy: 'platform' } },
+              { idempotencyKey: `refund-${deltaChargeId}` }
+            );
+          }
+        } catch (cascadeErr) {
+          console.error('❌ delta cascade refund failed — flagging admin:', cascadeErr);
+          try {
+            await admin.firestore().collection('jobs').doc(jobId).update(
+              buildAttentionUpdate('delta_refund_failed', { detail: 'original refunded but the paid delta refund failed — refund the delta PI manually', promptId: null, nowIso: new Date().toISOString() })
+            );
+          } catch (e) { console.error('⚠️ attention flag failed:', e); }
+          await sendAdminEmail(`🚨 Delta refund failed — Job #${jobId.slice(-6)}`, `<p>The original charge for job <b>${escapeHtml(jobId)}</b> was refunded but the +S$ delta refund failed. Refund the delta PaymentIntent manually in Stripe.</p>`);
+        }
       }
 
       await writeAuditLog('refund', decodedToken, {
@@ -2138,7 +2280,14 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // is idempotency-keyed, so a redelivery re-running it is safe — but
   // writing the marker up front would let a mid-capture crash get
   // permanently swallowed as a "duplicate" on Stripe's retry.
-  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated';
+  // checkout.session.completed joins the deferral too (Scenario 10 price-
+  // adjustment delta): applyPaidAdjustment is domain-idempotent (guarded by
+  // priceAdjustment.status/sessionId), so a crash mid-apply must not be
+  // permanently swallowed as a "duplicate" on Stripe's retry — same
+  // reasoning as the booking-time capture case above.
+  const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated'
+    || event.type === 'checkout.session.completed'
+    || event.type === 'checkout.session.expired';
   try {
     const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
@@ -2257,6 +2406,14 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
 
       case 'payment_intent.succeeded': {
         const paymentIntent = event.data.object;
+        // Scenario 10: delta charges have their own lifecycle — the
+        // checkout.session.completed case owns them. Without this guard the
+        // delta PI (which carries metadata.jobId) would re-run the booking
+        // paymentStatus writer below.
+        if (paymentIntent.metadata && paymentIntent.metadata.type === 'price_adjustment_delta') {
+          console.log(`ℹ️ delta PI succeeded for job ${paymentIntent.metadata.jobId} — handled via checkout.session.completed`);
+          break;
+        }
         const jobId = paymentIntent.metadata?.jobId;
         if (jobId) {
           const jobRef = admin.firestore().collection('jobs').doc(jobId);
@@ -2302,6 +2459,176 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         break;
       }
 
+      case 'checkout.session.completed': {
+        // Scenario 10: the customer paid the price-adjustment delta
+        // Checkout link. This is the single writer of priceAdjustment
+        // status 'paid' — the delta PaymentIntent's own
+        // payment_intent.succeeded event is a no-op (guarded above).
+        const session = event.data.object;
+        const meta = session.metadata || {};
+        if (meta.type !== 'price_adjustment_delta' || !meta.jobId) break; // not ours
+
+        const nowIso = new Date().toISOString();
+        let applied = false;
+        let appliedDelta = 0;
+        // True idempotent no-op: a redelivery of this same event lands
+        // after a prior delivery already marked the adjustment 'paid'.
+        // Tracked separately from `applied` so the notification branch
+        // below neither re-notifies nor mistakes this for an orphan.
+        let alreadyApplied = false;
+        await admin.firestore().runTransaction(async (tx) => {
+          applied = false; // reset per attempt (Firestore retries re-run this)
+          alreadyApplied = false;
+          const snap = await tx.get(admin.firestore().collection('jobs').doc(meta.jobId));
+          if (!snap.exists) return;
+          const job = snap.data();
+          const sessionPaymentIntentId = typeof session.payment_intent === 'string'
+            ? session.payment_intent
+            : (session.payment_intent && session.payment_intent.id) || null;
+          // Deviation from the task brief (controller-approved): on a pure
+          // event redelivery the adjustment is already 'paid' with this
+          // same delta PaymentIntent stamped on it. applyPaidAdjustment
+          // would throw PricingError for that state (it requires
+          // 'pending_payment'), which — without this pre-check — would
+          // incorrectly write an "orphaned payment" attention flag for a
+          // payment that in fact succeeded normally. Detect that case and
+          // return silently: no write, no flag.
+          if (job.priceAdjustment
+            && job.priceAdjustment.status === 'paid'
+            && job.priceAdjustment.deltaPaymentIntentId === sessionPaymentIntentId) {
+            alreadyApplied = true;
+            return;
+          }
+          try {
+            const result = applyPaidAdjustment(job, {
+              nowIso,
+              deltaPaymentIntentId: sessionPaymentIntentId,
+              sessionId: session.id,
+            });
+            // Money arrived but the job left in_progress (cancelled/completed
+            // meanwhile): don't apply — flag for a manual delta refund.
+            if (job.status !== 'in_progress') throw new PricingError('bad_transition', 'job no longer in progress');
+            appliedDelta = job.priceAdjustment.deltaServiceFee;
+            tx.update(snap.ref, { ...result, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+            applied = true;
+          } catch (e) {
+            if (e.name !== 'PricingError') throw e;
+            tx.update(snap.ref, buildAttentionUpdate('adjustment_payment_orphaned', {
+              detail: `payment received for session ${session.id} but no matching pending adjustment / job inactive — refund the delta`,
+              promptId: null, nowIso,
+            }));
+          }
+        });
+
+        if (applied) {
+          try { await supersedeOpenPrompts(admin.firestore(), meta.jobId, ['price_adjustment_choice']); }
+          catch (e) { console.error('⚠️ adjustment prompt supersede failed (continuing):', e); }
+          // Confirm both parties (business-initiated → template-first).
+          try {
+            const jobSnap = await admin.firestore().collection('jobs').doc(meta.jobId).get();
+            const jobData = jobSnap.exists ? jobSnap.data() : null;
+            const shortId = meta.jobId.slice(-6);
+            const amountDisplay = (appliedDelta * (1 + getPlatformFeePercentage())).toFixed(2);
+            if (jobData && jobData.customerPhone) {
+              await sendTwilioTemplateMessage(formatPhoneToWhatsApp(jobData.customerPhone),
+                process.env.TWILIO_TEMPLATE_ADJUSTMENT_PAID,
+                { '1': amountDisplay, '2': shortId },
+                `✅ Payment received — the +S$${amountDisplay} adjustment for Job #${shortId} is confirmed. Thank you!`);
+            }
+            const hmSnap = jobData && jobData.handymanId ? await admin.firestore().collection('handymen').doc(jobData.handymanId).get() : null;
+            const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioTemplateMessage(formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_ADJUSTMENT_PAID,
+                { '1': amountDisplay, '2': shortId },
+                `✅ The customer paid the +S$${amountDisplay} adjustment for Job #${shortId} — you're clear to proceed.`);
+            }
+          } catch (notifyErr) {
+            console.error('⚠️ adjustment-paid notifications failed (continuing):', notifyErr);
+          }
+          await sendAdminEmail(`💰 Price adjustment paid — Job #${meta.jobId.slice(-6)}`,
+            `<p>Delta paid for job <b>${escapeHtml(meta.jobId)}</b> (session ${escapeHtml(session.id)}). Held with the original pot until release.</p>`);
+        } else if (!alreadyApplied) {
+          await sendAdminEmail(`🚨 Orphaned adjustment payment — Job #${meta.jobId.slice(-6)}`,
+            `<p>A delta payment arrived for job <b>${escapeHtml(meta.jobId)}</b> but no matching pending adjustment (stale session or job closed). Refund it via refundPayment with the delta PaymentIntent.</p>`);
+        }
+        break;
+      }
+
+      case 'checkout.session.expired': {
+        // Scenario 10: the customer never paid or declined the delta
+        // Checkout link within its validity window. Re-issue once (F5-style
+        // automated nudge); on the second expiry, go terminal and unwedge
+        // the job (handyman told to proceed at original scope or cancel).
+        const session = event.data.object;
+        const meta = session.metadata || {};
+        if (meta.type !== 'price_adjustment_delta' || !meta.jobId) break;
+
+        const nowIso = new Date().toISOString();
+        const db = admin.firestore();
+        const jobRef = db.collection('jobs').doc(meta.jobId);
+        const snap = await jobRef.get();
+        if (!snap.exists) break;
+        const job = snap.data();
+        const adj = job.priceAdjustment;
+        // Only act on the CURRENT pending session — stale sessions expire silently.
+        if (!adj || adj.status !== 'pending_payment' || adj.sessionId !== session.id) break;
+
+        if (!adj.reissued && job.status === 'in_progress' && job.customerPhone) {
+          // One automated re-issue = the F5 nudge for this flow.
+          const shortId = meta.jobId.slice(-6);
+          const totalDisplay = (adj.deltaServiceFee * (1 + getPlatformFeePercentage())).toFixed(2);
+          const fresh = await stripe.checkout.sessions.create({
+            mode: 'payment',
+            line_items: [{ price_data: { currency: 'sgd', unit_amount: dollarsToCents(adj.deltaServiceFee * (1 + getPlatformFeePercentage())), product_data: { name: `Price adjustment — ${job.serviceType} job #${shortId}`, description: (adj.reason || '').slice(0, 200) } }, quantity: 1 }],
+            client_reference_id: meta.jobId,
+            metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '' },
+            payment_intent_data: { description: `Price adjustment for ${job.serviceType} - Job #${meta.jobId}`, metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '', customerId: job.customerId || '', serviceType: job.serviceType || '', platform: 'handyman-platform' } },
+            expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
+            success_url: `${APP_URL}/?adjustment=paid&job=${shortId}`,
+            cancel_url: `${APP_URL}/?adjustment=cancelled&job=${shortId}`,
+          }, { idempotencyKey: `adjsession-reissue-${meta.jobId}-${session.id}` });
+          await jobRef.update({
+            'priceAdjustment.sessionId': fresh.id,
+            'priceAdjustment.checkoutUrl': fresh.url,
+            'priceAdjustment.reissued': true,
+          });
+          await sendTwilioTemplateMessage(formatPhoneToWhatsApp(job.customerPhone),
+            process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
+            { '1': totalDisplay, '2': (adj.reason || '').slice(0, 150), '3': shortId, '4': fresh.url },
+            `⏰ Reminder — the +S$${totalDisplay} adjustment for Job #${shortId} is still awaiting your decision.\n\n👉 Pay here to approve (fresh link, valid 24h):\n${fresh.url}\n\n👉 Reply *NO* to decline`);
+        } else {
+          // Second expiry (or job inactive): terminal. Unwedges the
+          // Mark-Complete/poll gates deterministically.
+          try {
+            const upd = buildAdjustmentTransition(job, { to: 'expired', stamps: { expiredAt: nowIso } });
+            Object.assign(upd, buildAttentionUpdate('adjustment_expired', { detail: `customer never paid or declined (+S$${adj.deltaServiceFee})`, promptId: null, nowIso }));
+            await jobRef.update(upd);
+          } catch (e) {
+            if (e.name !== 'PricingError') throw e;
+          }
+          try { await supersedeOpenPrompts(db, meta.jobId, ['price_adjustment_choice']); }
+          catch (e) { console.error('⚠️ prompt supersede failed (continuing):', e); }
+          // Plain (non-template) WhatsApp to the handyman — this branch is
+          // business-initiated but low-stakes/informational (app remains
+          // the source of truth for the handyman's next action), so we
+          // skip the template-approval overhead rather than reuse
+          // TWILIO_TEMPLATE_PROMPT_NUDGE's two-var shape for a message
+          // that doesn't fit it well.
+          try {
+            const hmSnap = job.handymanId ? await db.collection('handymen').doc(job.handymanId).get() : null;
+            const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              await sendTwilioMessage(formatPhoneToWhatsApp(hmPhone),
+                `ℹ️ The customer didn't respond to the +S$${adj.deltaServiceFee} adjustment for Job #${meta.jobId.slice(-6)}. You can proceed at the original scope, or cancel the job from the app. Our team has been notified.`);
+            }
+          } catch (e) { console.error('⚠️ handyman expiry notice failed (continuing):', e); }
+          await sendAdminEmail(`⏳ Price adjustment expired — Job #${meta.jobId.slice(-6)}`,
+            `<p>Adjustment on job <b>${escapeHtml(meta.jobId)}</b> expired unanswered after a re-issue. Handyman told to proceed or cancel.</p>`);
+        }
+        break;
+      }
+
       case 'account.updated': {
         const account = event.data.object;
         const firebaseUid = account.metadata?.firebaseUid;
@@ -2334,10 +2661,38 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
         // Fired whenever a charge is refunded (full or partial), including
         // refunds initiated manually from the Stripe Dashboard.
         const charge = event.data.object;
-        const jobId = charge.metadata?.jobId
-          || (charge.payment_intent
-            ? (await stripe.paymentIntents.retrieve(charge.payment_intent)).metadata?.jobId
-            : null);
+        // Retrieved once and reused below both as the jobId fallback and
+        // (for delta charges, whose metadata.type lives on the PI rather
+        // than the charge) as the source of refundMeta.
+        const refundedPI = charge.payment_intent
+          ? await stripe.paymentIntents.retrieve(charge.payment_intent)
+          : null;
+        const jobId = charge.metadata?.jobId || refundedPI?.metadata?.jobId || null;
+
+        // Scenario 10: a refunded DELTA charge must mark only the
+        // adjustment — a fully-refunded delta would otherwise compute
+        // fullyRefunded=true and stamp paymentStatus:'refunded' on a job
+        // whose original escrow is untouched.
+        const refundMeta = (charge.metadata && charge.metadata.type)
+          ? charge.metadata
+          : (refundedPI && refundedPI.metadata) || {};
+        if (refundMeta.type === 'price_adjustment_delta') {
+          const adjJobId = refundMeta.jobId;
+          if (adjJobId) {
+            await admin.firestore().runTransaction(async (tx) => {
+              const snap = await tx.get(admin.firestore().collection('jobs').doc(adjJobId));
+              if (!snap.exists) return;
+              try {
+                const upd = buildAdjustmentTransition(snap.data(), { to: 'refunded', stamps: { refundedAt: new Date().toISOString(), refundId: charge.refunds && charge.refunds.data && charge.refunds.data[0] ? charge.refunds.data[0].id : null } });
+                tx.update(snap.ref, upd);
+              } catch (e) {
+                if (e.name !== 'PricingError') throw e; // already refunded/other state: no-op
+              }
+            });
+          }
+          break; // never touch the job's own paymentStatus for a delta charge
+        }
+
         if (jobId) {
           const fullyRefunded = charge.amount_refunded >= charge.amount;
           await admin.firestore().collection('jobs').doc(jobId).update({
@@ -2721,6 +3076,81 @@ async function supersedeOpenPrompts(db, jobId, types) {
 }
 
 /**
+ * Scenario 7 — record a handyman no-show and open the customer's
+ * choice prompt. Shared by the poll follow-up branch and the free-text
+ * intent path; `via` distinguishes them in the report entry.
+ * Returns { reported:false } when the job is missing or not in a
+ * reportable state (callers ack accordingly).
+ */
+async function runNoShowReport({ db, jobId, via, promptId }) {
+  const nowIso = new Date().toISOString();
+  let jobData = null;
+  await db.runTransaction(async (tx) => {
+    jobData = null;
+    const snap = await tx.get(db.collection('jobs').doc(jobId));
+    if (!snap.exists) return;
+    const job = snap.data();
+    if (!['in_progress', 'pending_confirmation'].includes(job.status)) return;
+    const reports = Array.isArray(job.noShowReports) ? job.noShowReports.slice() : [];
+    reports.push({ reportedAt: nowIso, via, promptId: promptId || null });
+    tx.update(snap.ref, { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    jobData = job;
+  });
+  if (!jobData) return { reported: false, promptId: null };
+
+  const jobShortId = jobId.slice(-6);
+  const displayDate = jobData.preferredDate
+    ? new Date(jobData.preferredDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' })
+    : 'the scheduled date';
+
+  // Repeat-offender signal (display-only, mirrors cancellationCount).
+  if (jobData.handymanId) {
+    try {
+      await admin.firestore().collection('handymen').doc(jobData.handymanId)
+        .update({ noShowCount: admin.firestore.FieldValue.increment(1) });
+    } catch (err) {
+      console.error(`⚠️ noShowCount increment failed for ${jobData.handymanId}:`, err);
+    }
+    // Notify the handyman — they can dispute by replying (F3 → admin).
+    try {
+      const hmSnap = await admin.firestore().collection('handymen').doc(jobData.handymanId).get();
+      const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+      if (hmPhone) {
+        await sendTwilioTemplateMessage(formatPhoneToWhatsApp(hmPhone),
+          process.env.TWILIO_TEMPLATE_NO_SHOW_REPORTED,
+          { '1': jobShortId, '2': displayDate },
+          `⚠️ The customer reported that nobody arrived for Job #${jobShortId} (${displayDate}). If this was reported in error, reply here and our team will look into it.`);
+      }
+    } catch (notifyErr) {
+      console.error('⚠️ no-show handyman notice failed (continuing):', notifyErr);
+    }
+  }
+
+  await sendAdminEmail(`🚨 No-show reported — Job #${jobShortId}`,
+    `<p>Customer reports the handyman never came for job <b>${escapeHtml(jobId)}</b> (via ${escapeHtml(via)}). They've been offered reschedule / new handyman / refund — watch the queue for their pick.</p>`);
+
+  // Choice prompt. Both entry points are customer replies, so the
+  // question itself may ride the session window; the template covers
+  // robustness if this is ever called outside one.
+  let choicePromptId = null;
+  if (jobData.customerPhone) {
+    await sendTwilioTemplateMessage(formatPhoneToWhatsApp(jobData.customerPhone),
+      process.env.TWILIO_TEMPLATE_NO_SHOW_CHOICE,
+      { '1': jobShortId, '2': displayDate },
+      `😔 We're very sorry — we've recorded that your handyman didn't turn up for Job #${jobShortId} (${displayDate}). How would you like to proceed?\n\n👉 Reply *1* — Reschedule with the same handyman\n👉 Reply *2* — Get a new handyman\n👉 Reply *3* — Cancel and get a refund`);
+    const opened = await openPrompt({
+      db, jobId, type: 'no_show_choice',
+      toPhone: jobData.customerPhone, toRole: 'customer',
+      question: `No-show on Job #${jobShortId}: 1 reschedule / 2 new handyman / 3 cancel & refund`,
+      options: NO_SHOW_CHOICE_OPTIONS,
+      payload: null,
+    });
+    choicePromptId = opened.promptId;
+  }
+  return { reported: true, promptId: choicePromptId };
+}
+
+/**
  * Apply a schedule change to a job, atomically (F4 single writer).
  *
  * Used by the webhook's schedule_approval dispatch (customer approved
@@ -2967,26 +3397,17 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
           }
           if (verdict.action === 'never_came') {
-            // Scenario 7 stub (full no-show choice flow ships at stage 5):
-            // record the report, flag the queue, email the admin.
-            const db = admin.firestore();
-            const nowIso = new Date().toISOString();
-            await db.runTransaction(async (tx) => {
-              const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
-              if (!snap.exists) return;
-              const reports = Array.isArray(snap.data().noShowReports) ? snap.data().noShowReports.slice() : [];
-              reports.push({ reportedAt: nowIso, via: 'poll_followup', promptId: verdict.prompt.id });
-              const upd = { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-              Object.assign(upd, buildAttentionUpdate('no_show_reported', { detail: 'customer replied "never came" on the poll follow-up', promptId: verdict.prompt.id, nowIso }));
-              tx.update(snap.ref, upd);
+            const result = await runNoShowReport({
+              db: admin.firestore(), jobId: verdict.prompt.jobId,
+              via: 'poll_followup', promptId: verdict.prompt.id,
             });
-            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'no_show_reported' }); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: result.reported ? 'no_show_reported' : 'already_processed' }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
-            await sendAdminEmail(
-              `🚨 No-show reported — Job #${jobShortId}`,
-              `<p>The customer reports the handyman never came for job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Money is held; please call both parties and resolve (reschedule / reassign / refund).</p>`
-            );
-            await sendTwilioMessage(From, `😔 We're very sorry about that. Our team has been alerted and will contact you shortly to make this right (Job #${jobShortId}).`);
+            if (!result.reported) {
+              await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} has already been handled separately. If something still needs fixing, please contact easydonehandyman@gmail.com.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'no-show on inactive job' });
+            }
+            // The choice prompt (sent inside runNoShowReport) IS the reply.
             return res.status(200).json({ received: true, processed: true, action: 'no_show_reported', via: 'prompt' });
           }
         }
@@ -3015,6 +3436,113 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             await sendAdminEmail(`☎️ Support requested — Job #${jobShortId}`, `<p>The customer asked for support after an access issue on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Please contact them.</p>`);
             await sendTwilioMessage(From, `👍 Our team will contact you shortly about Job #${jobShortId}.`);
             return res.status(200).json({ received: true, processed: true, action: 'access_support', via: 'prompt' });
+          }
+        }
+
+        if (verdict.prompt.type === 'price_adjustment_choice') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'decline') {
+            // Note: the payload's sessionId is intentionally not required
+            // here — the transaction reads the authoritative one off the
+            // job doc — so no invalid-payload guard is necessary.
+            const db = admin.firestore();
+            const nowIso = new Date().toISOString();
+            let declined = false;
+            let deltaAmount = 0;
+            let sessionToExpire = null;
+            await db.runTransaction(async (tx) => {
+              declined = false;
+              const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
+              if (!snap.exists) return;
+              const job = snap.data();
+              try {
+                const upd = buildAdjustmentTransition(job, { to: 'declined', stamps: { declinedAt: nowIso } });
+                deltaAmount = job.priceAdjustment.deltaServiceFee;
+                sessionToExpire = job.priceAdjustment.sessionId || null;
+                tx.update(snap.ref, { ...upd, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+                declined = true;
+              } catch (e) {
+                if (e.name !== 'PricingError') throw e; // already paid/terminal → race, handled below
+              }
+            });
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: declined ? 'declined' : 'already_processed' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            if (!declined) {
+              await sendTwilioMessage(From, `ℹ️ The adjustment for Job #${jobShortId} has already been settled — no changes were made. Contact easydonehandyman@gmail.com if something looks wrong.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'decline on non-pending adjustment' });
+            }
+            // Kill the payable link so a decline can't be "un-declined" by paying.
+            if (sessionToExpire) {
+              try { await stripe.checkout.sessions.expire(sessionToExpire); }
+              catch (e) { console.error('⚠️ session expire on decline failed (webhook guard still protects):', e); }
+            }
+            await sendTwilioMessage(From, `👍 Understood — the +S$${deltaAmount} adjustment for Job #${jobShortId} is declined. Your handyman will continue at the original price, or our team will help sort out next steps.`);
+            try {
+              const jobSnap = await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).get();
+              const hmId = jobSnap.exists ? jobSnap.data().handymanId : null;
+              const hmSnap = hmId ? await admin.firestore().collection('handymen').doc(hmId).get() : null;
+              const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
+              if (hmPhone) {
+                await sendTwilioMessage(formatPhoneToWhatsApp(hmPhone),
+                  `ℹ️ The customer declined the +S$${deltaAmount} adjustment for Job #${jobShortId}. You can proceed at the original scope, or cancel the job from the app if it's not viable.`);
+              }
+            } catch (e) { console.error('⚠️ handyman decline notice failed (continuing):', e); }
+            await sendAdminEmail(`💬 Price adjustment declined — Job #${jobShortId}`,
+              `<p>Customer declined +S$${deltaAmount} on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Handyman told: proceed at original scope or cancel. Often becomes a Scenario 2 cancel — keep an eye out.</p>`);
+            return res.status(200).json({ received: true, processed: true, action: 'adjustment_declined', via: 'prompt' });
+          }
+        }
+
+        if (verdict.prompt.type === 'no_show_choice') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'reschedule') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'link_sent' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            try {
+              const { token } = await issueScheduleLink({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                customerPhone: verdict.prompt.toPhone, createdBy: 'system_no_show',
+              });
+              await sendTwilioMessage(From, `👍 Let's find a new time — pick one that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`);
+            } catch (linkErr) {
+              console.error('⚠️ no-show reschedule link failed:', linkErr);
+              await sendTwilioMessage(From, `👍 Our team will arrange a new time with you shortly (Job #${jobShortId}).`);
+              await sendAdminEmail(`⚠️ No-show reschedule link failed — Job #${jobShortId}`, `<p>Send a schedule link manually for job <b>${escapeHtml(verdict.prompt.jobId)}</b>.</p>`);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_reschedule_link', via: 'prompt' });
+          }
+          if (verdict.action === 'new_handyman') {
+            // Spec §6.4 (resolved): one WhatsApp reply never strips a job —
+            // the admin confirms via the existing force-unassign queue action.
+            const nowIso = new Date().toISOString();
+            try {
+              await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update(
+                buildAttentionUpdate('no_show_new_handyman', { detail: 'customer requested a replacement after a no-show — confirm force-unassign', promptId: verdict.prompt.id, nowIso })
+              );
+            } catch (e) { console.error('⚠️ attention flag failed (admin email still goes out):', e); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'new_handyman_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`🔁 No-show → new handyman requested — Job #${jobShortId}`,
+              `<p>Customer wants a replacement on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Use the queue's force-unassign to confirm — the job then re-releases to the board.</p>`);
+            await sendTwilioMessage(From, `👍 Understood — we're finding you a new handyman for Job #${jobShortId}. Our team will confirm shortly and the new handyman will arrange the visit time with you.`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_new_handyman', via: 'prompt' });
+          }
+          if (verdict.action === 'cancel_refund') {
+            // Scenario 9 is deferred-manual: flag the queue; the admin
+            // executes via the existing Refund button.
+            const nowIso = new Date().toISOString();
+            try {
+              await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update(
+                buildAttentionUpdate('no_show_refund_requested', { detail: 'customer chose cancel & refund after a no-show — execute via the queue Refund button', promptId: verdict.prompt.id, nowIso })
+              );
+            } catch (e) { console.error('⚠️ attention flag failed (admin email still goes out):', e); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'refund_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`💸 No-show → refund requested — Job #${jobShortId}`,
+              `<p>Customer chose cancel &amp; refund on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Execute via the attention queue's Refund button (refund-then-cancel).</p>`);
+            await sendTwilioMessage(From, `👍 Understood — our team will process your refund for Job #${jobShortId} shortly. You'll get a confirmation once it's done (refunds take 5–10 business days to reach your card).`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_refund_requested', via: 'prompt' });
           }
         }
 
@@ -3444,6 +3972,48 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
       return res.status(200).json({ received: true, processed: false, reason: 'Unmatched with open prompts — forwarded to admin' });
     }
     // ------- end prompt-first routing -------
+
+    // ── Scenario 7: free-text no-show intent ("no show", "never came",
+    // "didn't come"). MUST run before the YES/NO regexes — "NO SHOW"
+    // contains \bNO\b and would otherwise be misread as a completion
+    // rejection.
+    const NO_SHOW_INTENT_RE = /\b(no[\s-]?show|never (came|showed|arrived|turned up)|did\s?n[o']?t (come|show|arrive|turn up)|nobody (came|arrived|showed))\b/i;
+    if (NO_SHOW_INTENT_RE.test(Body)) {
+      const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+      // in_progress jobs by phone: the customerPhone+createdAt index with
+      // an in-memory status filter (same trick as forwardUnmatchedInbound)
+      // — no new composite index needed.
+      const noShowCandidates = [];
+      const phoneFormatsNS = [customerPhone, `+${customerPhone}`, customerPhone.startsWith('65') ? customerPhone.substring(2) : customerPhone];
+      for (const pf of phoneFormatsNS) {
+        const snap = await admin.firestore().collection('jobs')
+          .where('customerPhone', '==', pf)
+          .orderBy('createdAt', 'desc')
+          .limit(20)
+          .get();
+        for (const doc of snap.docs) {
+          const j = doc.data();
+          if (['in_progress', 'pending_confirmation'].includes(j.status)
+              && j.preferredDate && j.preferredDate <= todaySgt
+              && !noShowCandidates.some((c) => c.id === doc.id)) {
+            noShowCandidates.push({ id: doc.id, data: j });
+          }
+        }
+      }
+      if (noShowCandidates.length > 0) {
+        // Most recent eligible job. Multi-job customers are rare; the ack
+        // names the job id so a mismatch is immediately visible, and the
+        // admin email (inside runNoShowReport) carries the full context.
+        const target = noShowCandidates[0];
+        const result = await runNoShowReport({ db: admin.firestore(), jobId: target.id, via: 'freetext', promptId: null });
+        if (result.reported) {
+          return res.status(200).json({ received: true, processed: true, action: 'no_show_reported', via: 'freetext' });
+        }
+      }
+      // Intent matched but no eligible job → F3 with the raw message.
+      await forwardUnmatchedInbound({ from: From, body: Body, mediaUrls, reason: 'no_open_prompt' });
+      return res.status(200).json({ received: true, processed: false, reason: 'no-show intent, no eligible job — forwarded' });
+    }
 
     // Process confirmation replies — supports both text replies (YES/NO)
     // and quick reply button taps (e.g., "Confirm Complete", "Report Issue")
@@ -4100,6 +4670,9 @@ exports.autoTriggerCompletionPoll = functions.pubsub
         // incomplete — polling "is it done?" would be nonsense.
         if (hasPendingSecondVisit(job)) { skipped++; continue; }
 
+        // Scenario 10: pending adjustment — the job is knowingly mid-price-talk.
+        if (hasPendingPriceAdjustment(job)) { skipped++; continue; }
+
         // Skip if no preferred date set
         if (!job.preferredDate) {
           continue;
@@ -4708,6 +5281,20 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         console.error('⚠️ cancelJobAssignment prompt cleanup failed (continuing):', cleanupErr);
       }
 
+      // 1b. Scenario 10: the pre-cancel job's adjustment (captured in
+      //     jobData, before buildCancelUpdate voided it) had an open
+      //     Checkout link — kill it so the outgoing conversation can't
+      //     be "paid into" after the job has moved on. Best-effort: the
+      //     webhook's sessionId match already guards a stale/expired
+      //     session from applying, so a failure here is not fatal.
+      const pendingAdj = jobData && jobData.priceAdjustment;
+      const sessionToExpire = pendingAdj && pendingAdj.status === 'pending_payment'
+        ? pendingAdj.sessionId : null;
+      if (sessionToExpire) {
+        try { await stripe.checkout.sessions.expire(sessionToExpire); }
+        catch (err) { console.error('⚠️ session expire on cancel failed (webhook guard still protects):', err); }
+      }
+
       // 2. Repeat-canceller signal on the handyman profile (display only).
       try {
         await admin.firestore().collection('handymen').doc(decodedToken.uid)
@@ -5098,6 +5685,152 @@ exports.reportVisitIssue = functions.https.onRequest((req, res) => {
       console.error('❌ reportVisitIssue error:', error);
       if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
       return res.status(500).json({ error: 'Failed to report visit issue' });
+    }
+  });
+});
+
+// ===================================
+// PRICE ADJUSTMENT — Scenario 10 (approve-by-paying). Creates a Stripe
+// Checkout Session for the delta; the customer's payment IS the
+// approval (webhook Task 3 applies it). Decline is the only reply.
+// Money: delta lands in the platform balance as a second held pot —
+// released/refunded only by the existing admin paths.
+// ===================================
+exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, deltaDollars, reason, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`price_adjust_${decodedToken.uid}`, 5, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+
+      // Validate against a fresh read BEFORE creating any Stripe object
+      // (no orphan sessions for requests that would fail validation).
+      const preSnap = await db.collection('jobs').doc(jobId).get();
+      const preJob = preSnap.exists ? preSnap.data() : null;
+      const priceMax = preJob ? getServicePriceMax(preJob.serviceType) : 0;
+      try {
+        validateAdjustmentRequest(preJob, decodedToken.uid, deltaDollars, reason, priceMax);
+        if (!preJob.customerPhone) throw new PricingError('no_customer_phone', 'Job has no customer phone on file');
+      } catch (pricingErr) {
+        if (pricingErr.name === 'PricingError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_amount: 400, over_cap: 400, reason_required: 400, adjustment_pending: 409, adjustment_already_paid: 409, no_customer_phone: 400 };
+          return res.status(statusMap[pricingErr.code] || 400).json({ error: pricingErr.message, code: pricingErr.code });
+        }
+        throw pricingErr;
+      }
+
+      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, priceMax, nowIso });
+      const adjustmentId = db.collection('_ids').doc().id; // firestore auto-id as an opaque unique token
+      const jobShortId = jobId.slice(-6);
+      const deltaChargeCents = dollarsToCents(entry.deltaServiceFee * (1 + getPlatformFeePercentage()));
+
+      // Checkout Session (not a Payment Link: this SDK/API version has no
+      // inline price_data on Payment Links, and sessions.expire() is the
+      // natural decline semantic). 24h expiry; Task 3 re-issues once.
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: [{
+          price_data: {
+            currency: 'sgd',
+            unit_amount: deltaChargeCents,
+            product_data: {
+              name: `Price adjustment — ${preJob.serviceType} job #${jobShortId}`,
+              description: entry.reason.slice(0, 200),
+            },
+          },
+          quantity: 1,
+        }],
+        client_reference_id: jobId,
+        metadata: { type: 'price_adjustment_delta', jobId, adjustmentId },
+        payment_intent_data: {
+          description: `Price adjustment for ${preJob.serviceType} - Job #${jobId}`,
+          metadata: {
+            type: 'price_adjustment_delta', jobId, adjustmentId,
+            customerId: preJob.customerId || '', serviceType: preJob.serviceType || '',
+            platform: 'handyman-platform',
+          },
+        },
+        expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
+        success_url: `${APP_URL}/?adjustment=paid&job=${jobShortId}`,
+        cancel_url: `${APP_URL}/?adjustment=cancelled&job=${jobShortId}`,
+      }, { idempotencyKey: `adjsession-${jobId}-${adjustmentId}` });
+
+      // Transactional write with a re-validation against fresh data (the
+      // pre-read above only prevented pointless Stripe calls).
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateAdjustmentRequest(job, decodedToken.uid, deltaDollars, reason, priceMax);
+          tx.update(snap.ref, {
+            priceAdjustment: { ...entry, adjustmentId, sessionId: session.id, checkoutUrl: session.url },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (txErr) {
+        // Lost the race (e.g. double-submit): kill the fresh session so no
+        // payable orphan link survives, then surface the domain error.
+        try { await stripe.checkout.sessions.expire(session.id); } catch (e) { console.error('⚠️ orphan session expire failed:', e); }
+        if (txErr.name === 'PricingError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_amount: 400, over_cap: 400, reason_required: 400, adjustment_pending: 409, adjustment_already_paid: 409 };
+          return res.status(statusMap[txErr.code] || 400).json({ error: txErr.message, code: txErr.code });
+        }
+        throw txErr;
+      }
+
+      // A price talk answers the evening "how did it go?" question.
+      try { await supersedeOpenPrompts(db, jobId, ['visit_disposition']); }
+      catch (e) { console.error('⚠️ supersedeOpenPrompts failed (continuing):', e); }
+
+      const totalDisplay = (entry.deltaServiceFee * (1 + getPlatformFeePercentage())).toFixed(2);
+      const fallback = `💰 Your handyman has requested a price adjustment of +S$${totalDisplay} for Job #${jobShortId}.\n\nReason: ${entry.reason}\n\n👉 Pay here to approve (valid 24h):\n${session.url}\n\n👉 Reply *NO* to decline`;
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(preJob.customerPhone),
+        process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
+        { '1': totalDisplay, '2': entry.reason.slice(0, 150), '3': jobShortId, '4': session.url },
+        fallback
+      );
+      if (!sendResult.success) {
+        console.error('❌ price-adjustment send failed:', sendResult.error);
+        // Roll back: kill the payable link and clear the pending entry so
+        // the handyman can simply retry — otherwise adjustment_pending
+        // blocks them until the session's 24h expiry re-issue.
+        try { await stripe.checkout.sessions.expire(session.id); }
+        catch (e) { console.error('⚠️ rollback session expire failed (webhook sessionId guard still protects):', e); }
+        try {
+          await db.collection('jobs').doc(jobId).update({
+            priceAdjustment: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (e) { console.error('⚠️ rollback adjustment clear failed:', e); }
+        return res.status(502).json({ error: 'Failed to send the WhatsApp request to the customer. Please try again.', code: 'send_failed' });
+      }
+
+      const { promptId } = await openPrompt({
+        db, jobId, type: 'price_adjustment_choice',
+        toPhone: preJob.customerPhone, toRole: 'customer',
+        question: `Pay +S$${totalDisplay} adjustment for Job #${jobShortId}, or decline?`,
+        options: PRICE_ADJUSTMENT_CHOICE_OPTIONS,
+        payload: { sessionId: session.id },
+        expiresInHours: 24,
+      });
+
+      await writeAuditLog('price_adjustment_requested', decodedToken, { jobId, deltaServiceFee: entry.deltaServiceFee, sessionId: session.id });
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ requestPriceAdjustment error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to request price adjustment' });
     }
   });
 });
@@ -5581,15 +6314,19 @@ exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
       if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
 
       const jobRef = admin.firestore().collection('jobs').doc(jobId);
-      let jobData; let updatePayload; let removedHandymanId;
+      let jobData; let updatePayload; let removedHandymanId; let pendingAdjustmentSessionId;
       try {
         await admin.firestore().runTransaction(async (tx) => {
+          pendingAdjustmentSessionId = null; // reset per retry
           const snap = await tx.get(jobRef);
           if (!snap.exists) throw new Error('NOT_FOUND');
           const job = snap.data();
           if (job.status !== 'in_progress' || !job.handymanId) throw new Error('WRONG_STATUS');
           jobData = job;
           removedHandymanId = job.handymanId;
+          if (job.priceAdjustment?.status === 'pending_payment' && job.priceAdjustment.sessionId) {
+            pendingAdjustmentSessionId = job.priceAdjustment.sessionId;
+          }
           updatePayload = buildCancelUpdate(job, job.handymanId, {
             reason: 'admin_forced',
             note: String(note || '').trim(),
@@ -5601,6 +6338,13 @@ exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
         if (err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Job not found' });
         if (err.message === 'WRONG_STATUS') return res.status(409).json({ error: 'Job is not in progress with an assigned handyman' });
         throw err;
+      }
+
+      // 1b. A voided pending adjustment must not leave a payable link alive
+      // (mirror of cancelJobAssignment; webhook sessionId guard is the backstop).
+      if (pendingAdjustmentSessionId) {
+        try { await stripe.checkout.sessions.expire(pendingAdjustmentSessionId); }
+        catch (e) { console.error('⚠️ force-unassign session expire failed (webhook guard still protects):', e); }
       }
 
       // Close every open channel tied to the removed assignment.

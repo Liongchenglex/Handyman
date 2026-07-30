@@ -29,10 +29,10 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 | 4 | ASAP job: fixing the visit time | **Built** (2026-07-13 — accept-with-proposal, decline→link, admin doors) |
 | 5 | Same-day "running late" notice | New |
 | 6 | Handyman swap after inspection (late lifecycle) | Partial — self-serve cancel still blocked once completion poll sent; admin force-unassign (stage 4) covers the wedge |
-| 7 | Handyman no-show | New — design finalized 2026-07-30 (§6.4 resolved: admin-confirmed un-assign; option 3 routes to manual-refund queue) |
+| 7 | Handyman no-show | ✅ **DONE** 2026-07-30 (plan `2026-07-30-no-show-and-price-adjustment.md`) |
 | 8 | Customer no-show / no access | New |
 | 9 | Customer cancellation + refund | **Deferred — manual via admin** (owner decision 2026-07-13; queue Refund button / Stripe Dashboard) |
-| 10 | Price/scope change after inspection | Design finalized 2026-07-30 (§6.2 resolved: approve-by-paying; this spec now governs, superseding parts of `price-adjustment-flow.md`) |
+| 10 | Price/scope change after inspection | ✅ **DONE** 2026-07-30 (plan `2026-07-30-no-show-and-price-adjustment.md`) |
 | 11 | Second visit needed | New — design expanded 2026-07-25, rev 2026-07-29 (disposition prompt; poll 3rd button + NO follow-up) |
 | 12 | Stuck-state timeouts | **Built** (2026-07-13, stage 4 — sweep ladders + attention queue with forcing actions) |
 
@@ -345,7 +345,7 @@ Customer [WA] "cancel"
 
 *(Rev 2026-07-30 — owner decision §6.2 resolved: **approve-by-paying**. Supersedes `price-adjustment-flow.md`'s locked decisions 1 and 3 — the magic-link breakdown page and off-session saved-card charge are dropped; that doc's range-cap rule (decision 2: delta capped at the service's published `priceMax`) and its reason-required rule survive. Chosen for least downstream problems: payment and approval are one event, so an "approved but unpaid" limbo state can never exist and needs no ladder; no card-on-file compliance surface; rides existing rails (template send, F2 prompt, `stripeWebhook`).)*
 
-**Solution.** The customer's payment IS the approval. Handyman taps "Request price adjustment" in-app (delta amount + mandatory reason + optional note; server validates `job.status === 'in_progress'`, delta > 0, and original + delta ≤ the service's `priceMax`) → `requestPriceAdjustment` [F] creates a Stripe **Payment Link / Checkout Session** for the delta (metadata: `jobId`, `adjustmentId`; line item named for the reason), appends a `priceAdjustments[]` entry (`status: 'pending_payment'`), sends the customer the `price_adjustment_approval` template (amount, reason, link), and opens an F2 prompt (`type: 'price_adjustment_choice'`, **decline-only options** — the pay-link is the approve path, mirroring how `visit_disposition`'s deep link is its answer path).
+**Solution.** The customer's payment IS the approval. Handyman taps "Request price adjustment" in-app (delta amount + mandatory reason + optional note; server validates `job.status === 'in_progress'`, delta > 0, and original + delta ≤ the service's `priceMax`) → `requestPriceAdjustment` [F] creates a Stripe **Payment Link / Checkout Session** for the delta (metadata: `jobId`, `adjustmentId`; line item named for the reason), sets a `priceAdjustment` entry (`status: 'pending_payment'`) — singular object, not an array (plan 2026-07-30: singular, one adjustment at a time in v1) — sends the customer the `price_adjustment` template (amount, reason, link), and opens an F2 prompt (`type: 'price_adjustment_choice'`, **decline-only options** — the pay-link is the approve path, mirroring how `visit_disposition`'s deep link is its answer path).
 
 - **Customer pays** → `stripeWebhook` (`checkout.session.completed`, matched by metadata) → transaction: adjustment `status: 'paid'` (+ delta PaymentIntent id recorded), job amount increased, decline prompt superseded → both parties confirmed [WA], admin FYI email. The delta sits in the platform balance as a **second held pot** (§2b row 10 unchanged): released together with the original at admin release, refundable before it.
 - **Customer replies Decline** → adjustment `status: 'declined'`, payment link deactivated, handyman notified [WA]: proceed at the original scope (no action needed — just do the work) or cancel via Scenario 2 (reason `job_bigger_than_expected`, existing button); admin FYI. No automated renegotiation round.
@@ -358,7 +358,7 @@ Customer [WA] "cancel"
 Visit 1: inspection → bigger than booked
       → handyman [A] "Request price adjustment" (+amount ≤ priceMax, reason)
       → [F] requestPriceAdjustment: Stripe payment link created,
-            priceAdjustments[] entry 'pending_payment', Mark-Complete gate on
+            priceAdjustment entry 'pending_payment' (singular), Mark-Complete gate on
       → [WA] customer: "+$120 — corroded pipe replacement.
              Pay here to approve: <link> — or reply NO to decline"
       ├─ Pays → [F] stripeWebhook checkout.session.completed:
@@ -498,8 +498,8 @@ All on branch `feature/job-lifecycle-flows` (stacks on `feature/job-reassignment
 | 3b | **F6** — schedule links, `/pick-time`, `schedule_pick_approval`, decline→link, admin send-link | ✅ **DONE** 2026-07-13 (plan `2026-07-13-schedule-links.md`) |
 | 4 | **Scenario 12** — stuck-state sweep ladders, attention queue + forcing actions (set time / force-unassign / refund / resolve), inert auto-poll fix | ✅ **DONE** 2026-07-13 (plan `2026-07-13-stuck-state-sweep.md`, machinery spec `2026-07-13-stuck-state-sweep-design.md`) |
 | — | **Scenario 9** — customer cancel + refund | ⛔ **DEFERRED — manual via admin** (owner decision 2026-07-13; see Scenario 9 note) |
-| 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Scenario 8 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenarios 7 + 5 not started |
-| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits, incl. visit-disposition prompt (Door 2), poll 3rd button + NO follow-up (Door 3), conflict handling + sweep rows | Scenario 11 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenario 10 not started |
+| 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Scenario 8 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenario 7 ✅ **DONE** 2026-07-30 (plan `2026-07-30-no-show-and-price-adjustment.md`); Scenario 5 not started |
+| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits, incl. visit-disposition prompt (Door 2), poll 3rd button + NO follow-up (Door 3), conflict handling + sweep rows | Scenario 11 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenario 10 ✅ **DONE** 2026-07-30 (plan `2026-07-30-no-show-and-price-adjustment.md`) — **stage complete** |
 | 7 | **Scenario 6** — late-lifecycle swap window relaxation (self-serve; admin force-unassign already covers the wedge) | Not started |
 
 Owner gates before the built stages are live: Stripe webhook subscriptions (`payment_intent.amount_capturable_updated` + `payment_intent.canceled`, both endpoints); Meta templates `schedule_proposal`, `schedule_link`, `prompt_nudge` (+ env SIDs; freeform fallback until approved); deploy functions + rules + **indexes** together; run the consolidated E2E plan.

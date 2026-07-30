@@ -230,7 +230,7 @@ const AdminFundRelease = () => {
     const reassignedNote = (job.reassignmentCount || 0) > 0
       ? `\n⚠️ This job was reassigned ${job.reassignmentCount} time(s) — check the history before releasing.`
       : '';
-    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}\nReleasing to: ${job.handymanName || 'N/A'}${reassignedNote}\n\nThis will transfer the service fee to the handyman's Stripe account.`)) {
+    if (!window.confirm(`Are you sure you want to release funds for job "${job.serviceType}"?\n\nAmount: $${job.estimatedBudget}\nCustomer: ${job.customerName}\nReleasing to: ${job.handymanName || 'N/A'}${reassignedNote}\n\nThis will transfer the service fee to the handyman's Stripe account.` + (job.priceAdjustment?.status === 'paid' ? `\n(includes a +$${job.priceAdjustment.deltaServiceFee} paid adjustment — two transfers will be sent)` : ''))) {
       return;
     }
 
@@ -469,6 +469,11 @@ const AdminFundRelease = () => {
                             <p className="font-bold text-lg text-green-600 dark:text-green-400">
                               ${job.estimatedBudget}
                             </p>
+                            {['paid', 'released'].includes(job.priceAdjustment?.status) && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400">
+                                includes +${job.priceAdjustment.deltaServiceFee} adjustment — {job.priceAdjustment.reason}
+                              </p>
+                            )}
                           </div>
                         </div>
 
@@ -575,6 +580,11 @@ const AdminFundRelease = () => {
                             <p className="font-bold text-lg text-gray-900 dark:text-white">
                               ${job.estimatedBudget}
                             </p>
+                            {['paid', 'released'].includes(job.priceAdjustment?.status) && (
+                              <p className="text-xs text-blue-600 dark:text-blue-400">
+                                includes +${job.priceAdjustment.deltaServiceFee} adjustment — {job.priceAdjustment.reason}
+                              </p>
+                            )}
                           </div>
                         </div>
 
@@ -603,6 +613,18 @@ const AdminFundRelease = () => {
                                 <span className="text-gray-500 dark:text-gray-400">Platform:</span>
                                 <p className="font-medium text-blue-600">${job.paymentBreakdown.platformFee?.toFixed(2)}</p>
                               </div>
+                              {job.paymentBreakdown?.deltaPayout != null && (
+                                <>
+                                  <div>
+                                    <span className="text-gray-500 dark:text-gray-400">Delta Net:</span>
+                                    <p className="font-medium">${job.paymentBreakdown.deltaNet?.toFixed(2)}</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500 dark:text-gray-400">Delta Payout:</span>
+                                    <p className="font-medium text-green-600">${job.paymentBreakdown.deltaPayout?.toFixed(2)}</p>
+                                  </div>
+                                </>
+                              )}
                             </div>
                           </div>
                         )}
