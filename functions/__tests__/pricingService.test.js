@@ -102,6 +102,11 @@ describe('buildAdjustmentTransition', () => {
     try { buildAdjustmentTransition(pending(), { to: 'refunded', stamps: {} }); }
     catch (e) { expect(e.code).toBe('bad_transition'); }
   });
+  test('released → refunded allowed (post-release delta refund)', () => {
+    const released = job({ priceAdjustment: { status: 'released', deltaServiceFee: 30 } });
+    const { priceAdjustment } = buildAdjustmentTransition(released, { to: 'refunded', stamps: { refundedAt: NOW_ISO } });
+    expect(priceAdjustment.status).toBe('refunded');
+  });
   test('throws bad_transition when no adjustment exists', () => {
     expect.assertions(1);
     try { buildAdjustmentTransition(job(), { to: 'declined', stamps: {} }); }

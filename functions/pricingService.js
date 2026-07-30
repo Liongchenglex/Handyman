@@ -74,17 +74,17 @@ function hasPendingPriceAdjustment(job) {
 }
 
 const TRANSITIONS = {
-  declined: 'pending_payment',
-  expired: 'pending_payment',
-  cancelled_assignment: 'pending_payment',
-  refunded: 'paid',
-  released: 'paid',
+  declined: ['pending_payment'],
+  expired: ['pending_payment'],
+  cancelled_assignment: ['pending_payment'],
+  refunded: ['paid', 'released'], // released → refunded: transfer reversed, then charge refunded
+  released: ['paid'],
 };
 
 function buildAdjustmentTransition(job, { to, stamps }) {
   const current = job && job.priceAdjustment;
-  const requiredFrom = TRANSITIONS[to];
-  if (!current || !requiredFrom || current.status !== requiredFrom) {
+  const allowedFrom = TRANSITIONS[to];
+  if (!current || !allowedFrom || !allowedFrom.includes(current.status)) {
     throw new PricingError('bad_transition', `Cannot move adjustment to '${to}' from '${current ? current.status : 'none'}'`);
   }
   return { priceAdjustment: { ...current, status: to, ...(stamps || {}) } };
