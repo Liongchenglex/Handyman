@@ -208,7 +208,7 @@ Flow: `[HM-A] cancels an in-progress job from the job page (reason picklist)`
 
 ## Known gaps (do NOT file as bugs)
 
-- Scenarios 5, 6 (self-serve relaxation), 7, 10 are not built.
+- Scenarios 5, 6 (self-serve relaxation) are not built. (Scenarios 7 and 10 shipped 2026-07-30 — see the "No-show + price adjustment" suite below.)
 - A persistently failing nudge send (bad phone) retries daily and never escalates — follow-up backlog.
 - `resolveAttention(markCancelled)` doesn't supersede leftover prompts/revoke links on the refunded job — one spurious re-flag possible; follow-up backlog.
 - The `refund_orphaned` recovery state is per-browser (client state); navigating away before "Finish cancelling" leaves recovery to the flagged row / refreshed queue.
@@ -229,3 +229,24 @@ Flow: `[HM-A] cancels an in-progress job from the job page (reason picklist)`
 - [ ] Scenario 8: "Customer not home" visible only on the visit day → customer gets 1/2 choice; reply 1 → pick-time link (single-use, revokes priors); pick → handyman schedule_pick_approval (Scenario 3 rails); reply 2 → admin email + ack
 - [ ] reportVisitIssue rejected: wrong handyman (403), not visit day (409), job not in_progress (409)
 - [ ] Rules: client write to visits/accessIssues/noShowReports/visitDispositionSentFor denied for the assigned handyman
+
+---
+
+## No-show + price adjustment (plan 2026-07-30)
+- [ ] Adjustment happy path: handyman requests +$X (within cap) → customer gets WA with Checkout link → pays → job estimatedBudget += X, priceAdjustment.status='paid', both parties confirmed, prompt superseded
+- [ ] Cap enforced: request putting total above priceMax → 400 over_cap with the cap named
+- [ ] Second request blocked while one is pending (409) and after one is paid (409)
+- [ ] Decline: customer replies NO → adjustment 'declined', session no longer payable, handyman notified
+- [ ] Session expiry: no action 24h → fresh link re-sent once; second 24h → adjustment 'expired', handyman told to proceed/cancel, attention flag
+- [ ] Gates: pending adjustment blocks Mark Complete (app), auto-poll skips, evening disposition skips; all release after paid/declined/expired
+- [ ] Cancel with pending adjustment → adjustment 'cancelled_assignment', session dead, next handyman unwedged
+- [ ] Release with paid adjustment → TWO transfers (original + delta), priceAdjustment 'released' + transferId, breakdown shows delta columns
+- [ ] Admin full refund on a job with a paid delta → BOTH charges refunded (cascade); delta-only refund via refundPayment(deltaPI) touches only the adjustment
+- [ ] Stripe events: delta PI succeeded does NOT rewrite job paymentStatus; delta charge.refunded does NOT mark the job refunded
+- [ ] No-show via poll: NO → follow-up 2 → report recorded, noShowCount+1, handyman notified, customer gets 3-way choice
+- [ ] No-show via free text ("he never came") on/after visit date → same flow; "no show" NOT misread as a completion NO
+- [ ] Choice 1 → pick-time link → handyman approves pick (Scenario 3 rails)
+- [ ] Choice 2 → attention 'no_show_new_handyman' → admin force-unassign re-releases
+- [ ] Choice 3 → attention 'no_show_refund_requested' → admin Refund button works
+- [ ] Handyman cannot write his own noShowCount/cancellationCount (rules)
+- [ ] Choice prompt ignored 48h → nudge → admin queue (generic ladder)

@@ -343,15 +343,26 @@ Quick replies: **✅ Confirm Complete** / **⚠️ Report Issue** / **🔁 He's 
 Third button maps to `COMPLETION_PROMPT_OPTIONS['3'] = 'coming_back'` (`functions/index.js:142`) — records second-visit intent directly. "Handyman never came" is no longer a top-level button; it now lives one level down, as option 2 of the `COMPLETION_NO_FOLLOWUP_OPTIONS` follow-up question asked after a bare "Report Issue"/NO reply (`functions/index.js:147`).
 
 #### T6. `no_show_choice` — customer (Scenario 7)
+
+⚠️ Corrected from an earlier 4-var draft (`{{1}}` greeting name, `{{2}}` service type, `{{3}}` job id, `{{4}}` date). The shipped code (`runNoShowReport`, `functions/index.js:3136`) sends only 2 `contentVariables` — no name, no service type — matching its freeform fallback verbatim.
 ```
-Hi {{1}}, we're sorry — we've recorded that your handyman didn't turn up for your {{2}} job (#{{3}}) scheduled on {{4}}. How would you like to proceed?
+😔 We're very sorry — we've recorded that your handyman didn't turn up for Job #{{1}} ({{2}}). How would you like to proceed?
+
+👉 Reply *1* — Reschedule with the same handyman
+👉 Reply *2* — Get a new handyman
+👉 Reply *3* — Cancel and get a refund
 ```
-Quick replies: **Reschedule** / **New handyman** / **Cancel & refund**.
+`{{1}}` job short id · `{{2}}` display date (e.g. "Tuesday, 15 July").
+Quick replies (exactly 3 — within the button cap, no overflow): **Reschedule** / **New handyman** / **Cancel & refund**, matching `NO_SHOW_CHOICE_OPTIONS` keys (`functions/index.js:187`).
 
 #### T7. `no_show_reported` — handyman (Scenario 7)
+
+⚠️ Corrected from an earlier 3-var draft (`{{1}}` handyman name, `{{2}}` job id, `{{3}}` date). The shipped code (`runNoShowReport`, `functions/index.js:3118`) sends only 2 `contentVariables` — the handyman-name variable was dropped (the body doesn't greet by name) — matching its freeform fallback verbatim.
 ```
-Hi {{1}}, the customer has reported that nobody arrived for job #{{2}} scheduled on {{3}}. If you believe this was reported in error, please reply here and our team will look into it.
+⚠️ The customer reported that nobody arrived for Job #{{1}} ({{2}}). If this was reported in error, reply here and our team will look into it.
 ```
+`{{1}}` job short id · `{{2}}` display date.
+No quick-reply buttons — a text reply (dispute) falls through to F3.
 
 #### T8. `access_issue_choice` — customer (Scenario 8)
 Triggered by a handyman app action, so the customer is outside the session window. Different copy and button set from `no_show_choice`, so it's a separate template.
@@ -386,16 +397,27 @@ Admin executes the refund days later — always outside the session window.
 Hi {{1}}, your refund of {{2}} for job #{{3}} has been processed. The funds should reach your original payment method within 5–10 business days. Thank you for using EazyDone!
 ```
 
-#### T12. `price_adjustment_approval` — customer (Scenario 10)
-Triggered by a handyman app action after inspection.
-```
-Hi {{1}}, after inspecting your {{2}} job (#{{3}}), your handyman {{4}} has requested a price adjustment of {{5}}.
+#### T12. `price_adjustment` — customer (Scenario 10)
 
-Reason: {{6}}
+*(Renamed from an earlier `price_adjustment_approval` draft — Scenario 10's design was revised 2026-07-30 to **approve-by-paying**: the Stripe Checkout link IS the approve path, so there's no separate "Approve" reply/button, only Decline.)*
 
-Please approve or decline this adjustment.
+⚠️ Corrected from the earlier 6-var draft above (customer name, service type, handyman name, and a combined amount+reason were reshaped). The shipped code (`requestPriceAdjustment`, `functions/index.js:5796`) sends exactly 4 `contentVariables`, matching its freeform fallback verbatim.
 ```
-Quick replies: **Approve** / **Decline**.
+💰 Your handyman has requested a price adjustment of +S${{1}} for Job #{{3}}.
+
+Reason: {{2}}
+
+👉 Pay here to approve (valid 24h):
+{{4}}
+
+👉 Reply *NO* to decline
+```
+`{{1}}` total amount (delta + platform fee, 2dp) · `{{2}}` reason (truncated to 150 chars) · `{{3}}` job short id · `{{4}}` Stripe Checkout URL.
+Quick replies: **ONE** button, **Decline** only (router: `PRICE_ADJUSTMENT_CHOICE_OPTIONS`, `functions/index.js:182` — NO/DECLINE/N/2).
+
+⚠️ Body ends with a variable (the Checkout URL), same caveat as T17/T18 — this pack's "must not end with a variable" rule and T1's "bare token, not a full URL" guidance are both broken here because the shipped fallback sends the complete URL as-is. Owner should weigh the CTA URL button escape hatch (T1-style, dynamic suffix on a fixed domain) before submitting; until then, document as shipped.
+
+Also sent on `checkout.session.expired` re-issue (`functions/index.js:2596`, same SID, same 4 vars, fresh `{{4}}` link) — one automatic re-send before the adjustment goes terminal.
 
 #### T13. `second_visit_proposal` — customer (Scenario 11 Door 1)
 
@@ -458,10 +480,20 @@ Body copy is the freeform fallback from `reportVisitIssue`'s `cannot_finish` bra
 `{{1}}` job short id.
 No quick-reply buttons — informational only; admin mediates separately (often becomes Scenario 6 swap or Scenario 10 price talk).
 
+#### T20. `price_adjustment_paid` — both parties (Scenario 10)
+Same content SID sent to both the customer (`functions/index.js:2533`) and the handyman (`functions/index.js:2541`) on `checkout.session.completed`, with identical `{{1}}`/`{{2}}` values — only the **freeform fallback** text differs by role, so the approved template body below stays neutral enough for both audiences.
+```
+✅ The +S${{1}} adjustment for Job #{{2}} has been paid.
+```
+`{{1}}` amount (2dp) · `{{2}}` job short id.
+Freeform fallback (customer): `✅ Payment received — the +S${{1}} adjustment for Job #{{2}} is confirmed. Thank you!`
+Freeform fallback (handyman): `✅ The customer paid the +S${{1}} adjustment for Job #{{2}} — you're clear to proceed.`
+No quick-reply buttons — informational only.
+
 ### Messages that do NOT need templates
 These always ride the free 24h session window because the recipient just messaged us: the decline→link send in Scenarios 3/4 (customer just replied Decline — though `schedule_link` covers the admin-triggered case anyway), the cancel-confirmation prompt when the customer texts "cancel", numbered job-picker disambiguation replies, and the Stripe payment link sent right after a price-adjustment Approve.
 
 ---
 
 **Last Updated:** 2026-07-30
-**Status:** 🔄 Job lifecycle pack (T1–T19) drafted — pending Twilio Content Editor creation and WhatsApp approval. T5, T8, T13 corrected 2026-07-30 to match the shipped `contentVariables`; T17–T19 added for `visit_disposition` / `second_visit_needed` / `visit_problem` (plan `2026-07-29-second-visit-and-access-issue.md`).
+**Status:** 🔄 Job lifecycle pack (T1–T20) drafted — pending Twilio Content Editor creation and WhatsApp approval. T5, T8, T13 corrected 2026-07-30 to match the shipped `contentVariables`; T17–T19 added for `visit_disposition` / `second_visit_needed` / `visit_problem` (plan `2026-07-29-second-visit-and-access-issue.md`). T6, T7 corrected and T12 renamed/rewritten (`price_adjustment_approval` → `price_adjustment`, approve-by-paying) + T20 `price_adjustment_paid` added 2026-07-30 (plan `2026-07-30-no-show-and-price-adjustment.md`).
