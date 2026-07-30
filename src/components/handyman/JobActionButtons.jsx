@@ -474,11 +474,11 @@ const JobActionButtons = ({
       {(job.status === 'in_progress' || isCompleted) && (
         <button
           onClick={handleMarkCompleted}
-          disabled={!dateReached || isProcessing || isCompleted}
+          disabled={!dateReached || isProcessing || isCompleted || adjustmentPending}
           className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium disabled:cursor-not-allowed ${
             isCompleted
               ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-              : dateReached
+              : dateReached && !adjustmentPending
               ? 'bg-green-600 text-white hover:bg-green-700'
               : 'bg-gray-300 text-gray-500 cursor-not-allowed'
           }`}
@@ -487,6 +487,8 @@ const JobActionButtons = ({
               ? 'This job has already been marked as completed'
               : !dateReached
               ? `Scheduled for ${formatPreferredDate()}`
+              : adjustmentPending
+              ? "Awaiting the customer's decision on the requested price adjustment"
               : 'Mark this job as complete'
           }
         >
@@ -500,12 +502,20 @@ const JobActionButtons = ({
               <span className="material-symbols-outlined text-sm">check_circle</span>
               Marked as Completed
             </>
+          ) : !dateReached ? (
+            <>
+              <span className="material-symbols-outlined text-sm">event_busy</span>
+              {`Scheduled: ${formatPreferredDate()}`}
+            </>
+          ) : adjustmentPending ? (
+            <>
+              <span className="material-symbols-outlined text-sm">hourglass_empty</span>
+              Awaiting price decision
+            </>
           ) : (
             <>
-              <span className="material-symbols-outlined text-sm">
-                {dateReached ? 'check_circle' : 'event_busy'}
-              </span>
-              {dateReached ? 'Mark Complete' : `Scheduled: ${formatPreferredDate()}`}
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              Mark Complete
             </>
           )}
         </button>
