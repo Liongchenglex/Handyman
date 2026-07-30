@@ -4417,6 +4417,33 @@ exports.stuckStateSweep = functions.pubsub
       if (inProgress.size === 300) console.warn('⚠️ Sweep in_progress query hit the 300 cap — rerun tomorrow covers the rest');
       for (const doc of inProgress.docs) {
         const job = doc.data();
+
+        // ---- Ladder 2c — Scenario 11: second visit flagged, no date proposed ----
+        // Runs for every in-progress job (before the ASAP-only filter below),
+        // since a pending second visit is almost always preferredTiming === 'Schedule'.
+        const svVerdict = evaluateSecondVisit(job, nowMs);
+        if (svVerdict === 'nudge') {
+          try {
+            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
+            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+            if (hmPhone) {
+              const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+              await sendTwilioTemplateMessage(
+                formatPhoneToWhatsApp(hmPhone),
+                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
+                { '1': 'Set a date for the second visit so the customer can approve it', '2': doc.id.slice(-6) },
+                `⏰ Job #${doc.id.slice(-6)} needs a second visit but no time is set. Propose one here:\n${link}`,
+              );
+            }
+            await doc.ref.update({ 'sweepNudges.second_visit_no_date': nowIso });
+            counts.nudged++;
+          } catch (nudgeErr) {
+            console.error(`⚠️ second-visit nudge failed for ${doc.id}:`, nudgeErr);
+          }
+        } else if (svVerdict === 'escalate') {
+          await escalate(doc.id, 'second_visit_no_date', 'second visit flagged but no date proposed for 48h+');
+        }
+
         if (job.preferredTiming === 'Schedule' || job.scheduledFromAsapAt) continue;
         // Anything already in flight?
         const openPrompts = await doc.ref.collection('prompts')
@@ -4446,30 +4473,6 @@ exports.stuckStateSweep = functions.pubsub
           }
         } else if (verdict === 'escalate') {
           await escalate(doc.id, 'asap_no_time', 'ASAP job accepted but no visit time confirmed');
-        }
-
-        // ---- Ladder 2c — Scenario 11: second visit flagged, no date proposed ----
-        const svVerdict = evaluateSecondVisit(job, nowMs);
-        if (svVerdict === 'nudge') {
-          try {
-            const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
-            const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
-            if (hmPhone) {
-              const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
-              await sendTwilioTemplateMessage(
-                formatPhoneToWhatsApp(hmPhone),
-                process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,
-                { '1': 'Set a date for the second visit so the customer can approve it', '2': doc.id.slice(-6) },
-                `⏰ Job #${doc.id.slice(-6)} needs a second visit but no time is set. Propose one here:\n${link}`,
-              );
-            }
-            await doc.ref.update({ 'sweepNudges.second_visit_no_date': nowIso });
-            counts.nudged++;
-          } catch (nudgeErr) {
-            console.error(`⚠️ second-visit nudge failed for ${doc.id}:`, nudgeErr);
-          }
-        } else if (svVerdict === 'escalate') {
-          await escalate(doc.id, 'second_visit_no_date', 'second visit flagged but no date proposed for 48h+');
         }
       }
     } catch (err) {
