@@ -183,6 +183,13 @@ const PRICE_ADJUSTMENT_CHOICE_OPTIONS = {
   'NO': 'decline', 'DECLINE': 'decline', 'N': 'decline', '2': 'decline',
 };
 
+// Scenario 7 — customer's three-way choice after reporting a no-show.
+const NO_SHOW_CHOICE_OPTIONS = {
+  '1': 'reschedule', 'RESCHEDULE': 'reschedule',
+  '2': 'new_handyman', 'NEW HANDYMAN': 'new_handyman', 'NEW': 'new_handyman',
+  '3': 'cancel_refund', 'CANCEL': 'cancel_refund', 'REFUND': 'cancel_refund',
+};
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -3068,6 +3075,81 @@ async function supersedeOpenPrompts(db, jobId, types) {
 }
 
 /**
+ * Scenario 7 — record a handyman no-show and open the customer's
+ * choice prompt. Shared by the poll follow-up branch and the free-text
+ * intent path; `via` distinguishes them in the report entry.
+ * Returns { reported:false } when the job is missing or not in a
+ * reportable state (callers ack accordingly).
+ */
+async function runNoShowReport({ db, jobId, via, promptId }) {
+  const nowIso = new Date().toISOString();
+  let jobData = null;
+  await db.runTransaction(async (tx) => {
+    jobData = null;
+    const snap = await tx.get(db.collection('jobs').doc(jobId));
+    if (!snap.exists) return;
+    const job = snap.data();
+    if (!['in_progress', 'pending_confirmation'].includes(job.status)) return;
+    const reports = Array.isArray(job.noShowReports) ? job.noShowReports.slice() : [];
+    reports.push({ reportedAt: nowIso, via, promptId: promptId || null });
+    tx.update(snap.ref, { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    jobData = job;
+  });
+  if (!jobData) return { reported: false, promptId: null };
+
+  const jobShortId = jobId.slice(-6);
+  const displayDate = jobData.preferredDate
+    ? new Date(jobData.preferredDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' })
+    : 'the scheduled date';
+
+  // Repeat-offender signal (display-only, mirrors cancellationCount).
+  if (jobData.handymanId) {
+    try {
+      await admin.firestore().collection('handymen').doc(jobData.handymanId)
+        .update({ noShowCount: admin.firestore.FieldValue.increment(1) });
+    } catch (err) {
+      console.error(`⚠️ noShowCount increment failed for ${jobData.handymanId}:`, err);
+    }
+    // Notify the handyman — they can dispute by replying (F3 → admin).
+    try {
+      const hmSnap = await admin.firestore().collection('handymen').doc(jobData.handymanId).get();
+      const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+      if (hmPhone) {
+        await sendTwilioTemplateMessage(formatPhoneToWhatsApp(hmPhone),
+          process.env.TWILIO_TEMPLATE_NO_SHOW_REPORTED,
+          { '1': jobShortId, '2': displayDate },
+          `⚠️ The customer reported that nobody arrived for Job #${jobShortId} (${displayDate}). If this was reported in error, reply here and our team will look into it.`);
+      }
+    } catch (notifyErr) {
+      console.error('⚠️ no-show handyman notice failed (continuing):', notifyErr);
+    }
+  }
+
+  await sendAdminEmail(`🚨 No-show reported — Job #${jobShortId}`,
+    `<p>Customer reports the handyman never came for job <b>${escapeHtml(jobId)}</b> (via ${escapeHtml(via)}). They've been offered reschedule / new handyman / refund — watch the queue for their pick.</p>`);
+
+  // Choice prompt. Both entry points are customer replies, so the
+  // question itself may ride the session window; the template covers
+  // robustness if this is ever called outside one.
+  let choicePromptId = null;
+  if (jobData.customerPhone) {
+    await sendTwilioTemplateMessage(formatPhoneToWhatsApp(jobData.customerPhone),
+      process.env.TWILIO_TEMPLATE_NO_SHOW_CHOICE,
+      { '1': jobShortId, '2': displayDate },
+      `😔 We're very sorry — we've recorded that your handyman didn't turn up for Job #${jobShortId} (${displayDate}). How would you like to proceed?\n\n👉 Reply *1* — Reschedule with the same handyman\n👉 Reply *2* — Get a new handyman\n👉 Reply *3* — Cancel and get a refund`);
+    const opened = await openPrompt({
+      db, jobId, type: 'no_show_choice',
+      toPhone: jobData.customerPhone, toRole: 'customer',
+      question: `No-show on Job #${jobShortId}: 1 reschedule / 2 new handyman / 3 cancel & refund`,
+      options: NO_SHOW_CHOICE_OPTIONS,
+      payload: null,
+    });
+    choicePromptId = opened.promptId;
+  }
+  return { reported: true, promptId: choicePromptId };
+}
+
+/**
  * Apply a schedule change to a job, atomically (F4 single writer).
  *
  * Used by the webhook's schedule_approval dispatch (customer approved
@@ -3314,26 +3396,17 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
           }
           if (verdict.action === 'never_came') {
-            // Scenario 7 stub (full no-show choice flow ships at stage 5):
-            // record the report, flag the queue, email the admin.
-            const db = admin.firestore();
-            const nowIso = new Date().toISOString();
-            await db.runTransaction(async (tx) => {
-              const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
-              if (!snap.exists) return;
-              const reports = Array.isArray(snap.data().noShowReports) ? snap.data().noShowReports.slice() : [];
-              reports.push({ reportedAt: nowIso, via: 'poll_followup', promptId: verdict.prompt.id });
-              const upd = { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
-              Object.assign(upd, buildAttentionUpdate('no_show_reported', { detail: 'customer replied "never came" on the poll follow-up', promptId: verdict.prompt.id, nowIso }));
-              tx.update(snap.ref, upd);
+            const result = await runNoShowReport({
+              db: admin.firestore(), jobId: verdict.prompt.jobId,
+              via: 'poll_followup', promptId: verdict.prompt.id,
             });
-            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'no_show_reported' }); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: result.reported ? 'no_show_reported' : 'already_processed' }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
-            await sendAdminEmail(
-              `🚨 No-show reported — Job #${jobShortId}`,
-              `<p>The customer reports the handyman never came for job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Money is held; please call both parties and resolve (reschedule / reassign / refund).</p>`
-            );
-            await sendTwilioMessage(From, `😔 We're very sorry about that. Our team has been alerted and will contact you shortly to make this right (Job #${jobShortId}).`);
+            if (!result.reported) {
+              await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} has already been handled separately. If something still needs fixing, please contact easydonehandyman@gmail.com.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'no-show on inactive job' });
+            }
+            // The choice prompt (sent inside runNoShowReport) IS the reply.
             return res.status(200).json({ received: true, processed: true, action: 'no_show_reported', via: 'prompt' });
           }
         }
