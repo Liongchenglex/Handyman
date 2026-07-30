@@ -157,6 +157,12 @@ const SCHEDULE_APPROVAL_OPTIONS = {
   'NO': 'decline', 'N': 'decline', 'DECLINE': 'decline',
 };
 
+// Scenario 8 — customer prompt after a handyman "no access" report.
+const ACCESS_ISSUE_OPTIONS = {
+  '1': 'reschedule', 'RESCHEDULE': 'reschedule',
+  '2': 'support', 'SUPPORT': 'support', 'CONTACT SUPPORT': 'support', 'HELP': 'support',
+};
+
 // ===================================
 // CORS CONFIGURATION (Security Fix Phase 0.1)
 // ===================================
@@ -2983,6 +2989,33 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           }
         }
 
+        if (verdict.prompt.type === 'access_issue_choice') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'reschedule') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'link_sent' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            try {
+              const { token } = await issueScheduleLink({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                customerPhone: verdict.prompt.toPhone, createdBy: 'system_access_issue',
+              });
+              await sendTwilioMessage(From, `👍 No problem — pick a new time that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`);
+            } catch (linkErr) {
+              console.error('⚠️ access-issue link send failed:', linkErr);
+              await sendTwilioMessage(From, `👍 Our team will arrange a new time with you shortly (Job #${jobShortId}).`);
+              await sendAdminEmail(`⚠️ Access-issue reschedule link failed — Job #${jobShortId}`, `<p>Send a schedule link manually for job <b>${escapeHtml(verdict.prompt.jobId)}</b>.</p>`);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'access_reschedule_link', via: 'prompt' });
+          }
+          if (verdict.action === 'support') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'support_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`☎️ Support requested — Job #${jobShortId}`, `<p>The customer asked for support after an access issue on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Please contact them.</p>`);
+            await sendTwilioMessage(From, `👍 Our team will contact you shortly about Job #${jobShortId}.`);
+            return res.status(200).json({ received: true, processed: true, action: 'access_support', via: 'prompt' });
+          }
+        }
+
         if (verdict.prompt.type === 'schedule_approval') {
           const proposal = verdict.prompt.payload || {};
           const jobShortId = String(verdict.prompt.jobId).slice(-6);
@@ -4893,6 +4926,111 @@ exports.requestSecondVisit = functions.https.onRequest((req, res) => {
       console.error('❌ requestSecondVisit error:', error);
       if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
       return res.status(500).json({ error: 'Failed to request second visit' });
+    }
+  });
+});
+
+// ===================================
+// VISIT ISSUE — Scenario 8 (customer not home / no access) and the
+// disposition sheet's "Problem — can't finish". Logged on the job,
+// admin alerted; no_access additionally prompts the customer
+// (reschedule / support). No fees in v1.
+// ===================================
+exports.reportVisitIssue = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, kind, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`visit_issue_${decodedToken.uid}`, 5, 86400);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many reports today', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+      const todaySgt = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+      let jobData;
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateVisitIssueReport(job, decodedToken.uid, kind, todaySgt);
+          // no_access must reach the customer to be useful — cannot_finish
+          // tolerates a missing phone since its customer notice is best-effort.
+          if (kind === 'no_access' && !job.customerPhone) throw new VisitError('no_customer_phone', 'Job has no customer phone on file');
+          jobData = job;
+          const issues = Array.isArray(job.accessIssues) ? job.accessIssues.slice() : [];
+          issues.push(buildVisitIssueEntry({ kind, note, reportedBy: decodedToken.uid, nowIso }));
+          const upd = { accessIssues: issues, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+          if (kind === 'cannot_finish') {
+            Object.assign(upd, buildAttentionUpdate('visit_problem', { detail: String(note || '').slice(0, 200) || 'handyman reported a problem', promptId: null, nowIso }));
+          }
+          tx.update(snap.ref, upd);
+        });
+      } catch (visitErr) {
+        if (visitErr.name === 'VisitError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_kind: 400, not_visit_day: 409, no_customer_phone: 400 };
+          return res.status(statusMap[visitErr.code] || 400).json({ error: visitErr.message, code: visitErr.code });
+        }
+        throw visitErr;
+      }
+
+      try { await supersedeOpenPrompts(db, jobId, ['visit_disposition']); }
+      catch (e) { console.error('⚠️ supersedeOpenPrompts failed (continuing):', e); }
+
+      const jobShortId = jobId.slice(-6);
+      const handymanName = (jobData.acceptedBy && jobData.acceptedBy.name) || 'Your handyman';
+      await sendAdminEmail(
+        kind === 'no_access' ? `🚪 Access issue — Job #${jobShortId}` : `⚠️ Visit problem — Job #${jobShortId}`,
+        `<p>Handyman <b>${escapeHtml(handymanName)}</b> reported <b>${escapeHtml(kind)}</b> on job <b>${escapeHtml(jobId)}</b>.</p><p>Note: ${escapeHtml(String(note || '(none)'))}</p>`
+      );
+
+      if (kind === 'no_access') {
+        const fallback = `😕 ${handymanName} couldn't reach you today for Job #${jobShortId}.\n\n👉 Reply *1* — Reschedule the visit\n👉 Reply *2* — Contact support`;
+        const sendResult = await sendTwilioTemplateMessage(
+          formatPhoneToWhatsApp(jobData.customerPhone),
+          process.env.TWILIO_TEMPLATE_ACCESS_ISSUE,
+          { '1': handymanName, '2': jobShortId },
+          fallback
+        );
+        if (!sendResult.success) {
+          console.error('❌ reportVisitIssue: WhatsApp send failed', { jobId, sendResult });
+          return res.status(502).json({ error: 'Failed to send WhatsApp message to customer. Please try again.', code: 'send_failed' });
+        }
+        await openPrompt({
+          db, jobId, type: 'access_issue_choice',
+          toPhone: jobData.customerPhone, toRole: 'customer',
+          question: `${handymanName} couldn't reach you — reschedule or contact support? (Job #${jobShortId})`,
+          options: ACCESS_ISSUE_OPTIONS,
+          payload: null,
+        });
+      } else {
+        // cannot_finish: customer gets a holding notice; admin mediates
+        // (often becomes Scenario 6 swap or Scenario 10 price talk). A
+        // failed send here is non-fatal — the admin is already alerted.
+        try {
+          const sendResult = await sendTwilioTemplateMessage(
+            formatPhoneToWhatsApp(jobData.customerPhone),
+            process.env.TWILIO_TEMPLATE_VISIT_PROBLEM,
+            { '1': jobShortId },
+            `ℹ️ There's a snag with Job #${jobShortId} — our team is looking into it and will contact you shortly. Your payment stays protected.`
+          );
+          if (!sendResult.success) console.error('⚠️ reportVisitIssue: cannot_finish notice send failed (continuing):', { jobId, sendResult });
+        } catch (notifyErr) {
+          console.error('⚠️ reportVisitIssue: cannot_finish notice send threw (continuing):', notifyErr);
+        }
+      }
+
+      await writeAuditLog('visit_issue_reported', decodedToken, { jobId, kind });
+      return res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('❌ reportVisitIssue error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to report visit issue' });
     }
   });
 });
