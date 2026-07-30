@@ -5233,6 +5233,17 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
       );
       if (!sendResult.success) {
         console.error('❌ price-adjustment send failed:', sendResult.error);
+        // Roll back: kill the payable link and clear the pending entry so
+        // the handyman can simply retry — otherwise adjustment_pending
+        // blocks them until the session's 24h expiry re-issue.
+        try { await stripe.checkout.sessions.expire(session.id); }
+        catch (e) { console.error('⚠️ rollback session expire failed (webhook sessionId guard still protects):', e); }
+        try {
+          await db.collection('jobs').doc(jobId).update({
+            priceAdjustment: admin.firestore.FieldValue.delete(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (e) { console.error('⚠️ rollback adjustment clear failed:', e); }
         return res.status(502).json({ error: 'Failed to send the WhatsApp request to the customer. Please try again.', code: 'send_failed' });
       }
 
@@ -5242,6 +5253,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
         question: `Pay +S$${totalDisplay} adjustment for Job #${jobShortId}, or decline?`,
         options: PRICE_ADJUSTMENT_CHOICE_OPTIONS,
         payload: { sessionId: session.id },
+        expiresInHours: 24,
       });
 
       await writeAuditLog('price_adjustment_requested', decodedToken, { jobId, deltaServiceFee: entry.deltaServiceFee, sessionId: session.id });
