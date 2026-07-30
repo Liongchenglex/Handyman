@@ -4445,6 +4445,9 @@ exports.autoTriggerCompletionPoll = functions.pubsub
         // incomplete — polling "is it done?" would be nonsense.
         if (hasPendingSecondVisit(job)) { skipped++; continue; }
 
+        // Scenario 10: pending adjustment — the job is knowingly mid-price-talk.
+        if (hasPendingPriceAdjustment(job)) { skipped++; continue; }
+
         // Skip if no preferred date set
         if (!job.preferredDate) {
           continue;
@@ -5051,6 +5054,20 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
           d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
       } catch (cleanupErr) {
         console.error('⚠️ cancelJobAssignment prompt cleanup failed (continuing):', cleanupErr);
+      }
+
+      // 1b. Scenario 10: the pre-cancel job's adjustment (captured in
+      //     jobData, before buildCancelUpdate voided it) had an open
+      //     Checkout link — kill it so the outgoing conversation can't
+      //     be "paid into" after the job has moved on. Best-effort: the
+      //     webhook's sessionId match already guards a stale/expired
+      //     session from applying, so a failure here is not fatal.
+      const pendingAdj = jobData && jobData.priceAdjustment;
+      const sessionToExpire = pendingAdj && pendingAdj.status === 'pending_payment'
+        ? pendingAdj.sessionId : null;
+      if (sessionToExpire) {
+        try { await stripe.checkout.sessions.expire(sessionToExpire); }
+        catch (err) { console.error('⚠️ session expire on cancel failed (webhook guard still protects):', err); }
       }
 
       // 2. Repeat-canceller signal on the handyman profile (display only).

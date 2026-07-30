@@ -127,6 +127,16 @@ function buildCancelUpdate(job, callerUid, { reason, note, nowIso }) {
     update.visits = nextVisits;
   }
 
+  // Scenario 10: a pending adjustment must not survive the assignment —
+  // it would wedge the NEXT handyman's Mark-Complete/poll gates, and its
+  // Checkout link belongs to a conversation that no longer exists. (A
+  // PAID adjustment survives: the money is real and releases/refunds
+  // with the job regardless of who finishes it.) The endpoint (index.js
+  // cancelJobAssignment) expires the Stripe session post-transaction.
+  if (job.priceAdjustment && job.priceAdjustment.status === 'pending_payment') {
+    update.priceAdjustment = { ...job.priceAdjustment, status: 'cancelled_assignment', cancelledAt: nowIso };
+  }
+
   return update;
 }
 

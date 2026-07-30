@@ -169,8 +169,12 @@ describe('shouldSendDisposition', () => {
     ['poll already sent', job({ completionPollSentAt: NOW_ISO })],
     ['second visit already pending', job({ visits: [{ status: 'pending_schedule' }] })],
     ['already sent for this date', job({ visitDispositionSentFor: TODAY_SGT })],
+    ['price adjustment pending', job({ priceAdjustment: { status: 'pending_payment' } })],
   ])('false when %s', (_label, j) => {
     expect(shouldSendDisposition(j, TODAY_SGT)).toBe(false);
+  });
+  test('true when a price adjustment is terminal (does not block)', () => {
+    expect(shouldSendDisposition(job({ priceAdjustment: { status: 'declined' } }), TODAY_SGT)).toBe(true);
   });
 });
 
