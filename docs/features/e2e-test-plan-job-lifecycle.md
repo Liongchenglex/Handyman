@@ -208,7 +208,7 @@ Flow: `[HM-A] cancels an in-progress job from the job page (reason picklist)`
 
 ## Known gaps (do NOT file as bugs)
 
-- Scenarios 5, 6 (self-serve relaxation), 7, 8, 10, 11 are not built.
+- Scenarios 5, 6 (self-serve relaxation), 7, 10 are not built.
 - A persistently failing nudge send (bad phone) retries daily and never escalates — follow-up backlog.
 - `resolveAttention(markCancelled)` doesn't supersede leftover prompts/revoke links on the refunded job — one spurious re-flag possible; follow-up backlog.
 - The `refund_orphaned` recovery state is per-browser (client state); navigating away before "Finish cancelling" leaves recovery to the flagged row / refreshed queue.

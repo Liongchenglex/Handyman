@@ -83,11 +83,12 @@ const {
 // Second-visit / access-issue domain logic (Scenario 11 + Scenario 8).
 // See functions/visitService.js.
 const {
-  VisitError, SECOND_VISIT_REASONS, VISIT_ISSUE_KINDS,
+  VisitError,
   validateSecondVisitRequest, upsertPendingVisit,
   buildVisitScheduledUpdate, buildVisitDeclinedUpdate,
   hasPendingSecondVisit, shouldSendDisposition,
   validateVisitIssueReport, buildVisitIssueEntry,
+  buildVisitProposalReset,
 } = require('./visitService');
 
 // Secure schedule links (F6) — token hashing + link issuance/revocation.
@@ -4353,6 +4354,24 @@ exports.stuckStateSweep = functions.pubsub
           } catch (err) {
             console.error(`⚠️ Prompt expire write failed for ${doc.ref.path}:`, err);
           }
+          // A dead second_visit_approval prompt leaves behind a DATED
+          // pending visits[] entry that matches no ladder (evaluateSecondVisit
+          // is dateless-only) and would permanently wedge hasPendingSecondVisit.
+          // Strip the dead proposal's date so it re-enters that ladder.
+          if (p.type === 'second_visit_approval' && p.payload && typeof p.payload.visitIndex === 'number') {
+            try {
+              const jobRef = db.collection('jobs').doc(p.jobId);
+              await db.runTransaction(async (tx) => {
+                const jobSnap = await tx.get(jobRef);
+                if (!jobSnap.exists) return;
+                const jobData = jobSnap.data();
+                const reset = buildVisitProposalReset(jobData, { visitIndex: p.payload.visitIndex, nowIso });
+                if (reset) tx.update(jobRef, reset);
+              });
+            } catch (err) {
+              console.error(`⚠️ Second-visit proposal reset failed for job ${p.jobId}:`, err);
+            }
+          }
           await escalate(p.jobId, 'prompt_expired',
             `${p.type} to ${p.toRole} unanswered after nudge`, doc.id);
         }
@@ -4677,7 +4696,19 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
 
       // ---- Side effects: best-effort, awaited, individually caught ----
 
-      // 1. Repeat-canceller signal on the handyman profile (display only).
+      // 1. Close every open channel tied to the cancelled assignment —
+      //    mirrors adminUnassignJob's cleanup so a stale open prompt
+      //    (schedule_approval, second_visit_approval, ...) can't apply
+      //    the outgoing handyman's proposal after re-accept.
+      try {
+        const openPrompts = await jobRef.collection('prompts').where('status', '==', 'open').get();
+        await Promise.all(openPrompts.docs.map((d) =>
+          d.ref.update({ status: 'superseded', supersededAt: new Date().toISOString() })));
+      } catch (cleanupErr) {
+        console.error('⚠️ cancelJobAssignment prompt cleanup failed (continuing):', cleanupErr);
+      }
+
+      // 2. Repeat-canceller signal on the handyman profile (display only).
       try {
         await admin.firestore().collection('handymen').doc(decodedToken.uid)
           .update({ cancellationCount: admin.firestore.FieldValue.increment(1) });
@@ -4685,7 +4716,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         console.error(`⚠️ cancellationCount increment failed for ${decodedToken.uid}:`, err);
       }
 
-      // 2. Tell the customer we're finding a replacement.
+      // 3. Tell the customer we're finding a replacement.
       if (jobData.customerPhone) {
         try {
           const shortId = jobId.slice(-6);
@@ -4705,7 +4736,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         }
       }
 
-      // 3. Re-notify eligible handymen for the new round, excluding
+      // 4. Re-notify eligible handymen for the new round, excluding
       //    everyone who previously cancelled this job.
       try {
         await runHandymanFanOut({
@@ -4722,7 +4753,7 @@ exports.cancelJobAssignment = functions.https.onRequest(async (req, res) => {
         console.error(`⚠️ Reassignment fan-out failed for job ${jobId}:`, err);
       }
 
-      // 4. Audit trail.
+      // 5. Audit trail.
       await writeAuditLog('job_cancelled_by_handyman', decodedToken, {
         jobId,
         reason,

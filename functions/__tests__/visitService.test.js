@@ -15,6 +15,7 @@ const {
   shouldSendDisposition,
   validateVisitIssueReport,
   buildVisitIssueEntry,
+  buildVisitProposalReset,
 } = require('../visitService');
 
 const NOW_ISO = '2026-07-29T11:00:00.000Z';
@@ -206,5 +207,31 @@ describe('buildVisitIssueEntry', () => {
   });
   test('nulls an empty note', () => {
     expect(buildVisitIssueEntry({ kind: 'cannot_finish', note: '', reportedBy: 'hm-1', nowIso: NOW_ISO }).note).toBeNull();
+  });
+});
+
+describe('buildVisitProposalReset', () => {
+  test('resets a dated pending entry, stripping the proposal', () => {
+    const j = job({
+      visits: [{ status: 'pending_schedule', proposedDate: '2026-08-02', proposedTime: '10:00 AM', reason: 'parts_materials', createdAt: NOW_ISO }],
+    });
+    const result = buildVisitProposalReset(j, { visitIndex: 0, nowIso: NOW_ISO });
+    expect(result).not.toBeNull();
+    expect(result.visits[0]).toMatchObject({
+      status: 'pending_schedule', proposedDate: null, proposedTime: null,
+      proposalExpiredAt: NOW_ISO, reason: 'parts_materials',
+    });
+  });
+  test('returns null for a missing index', () => {
+    const j = job({ visits: [{ status: 'pending_schedule', proposedDate: '2026-08-02' }] });
+    expect(buildVisitProposalReset(j, { visitIndex: 3, nowIso: NOW_ISO })).toBeNull();
+  });
+  test('returns null for a non-pending entry', () => {
+    const j = job({ visits: [{ status: 'scheduled', proposedDate: '2026-08-02' }] });
+    expect(buildVisitProposalReset(j, { visitIndex: 0, nowIso: NOW_ISO })).toBeNull();
+  });
+  test('returns null for an already-dateless entry (idempotent)', () => {
+    const j = job({ visits: [{ status: 'pending_schedule', proposedDate: null }] });
+    expect(buildVisitProposalReset(j, { visitIndex: 0, nowIso: NOW_ISO })).toBeNull();
   });
 });

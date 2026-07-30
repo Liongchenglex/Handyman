@@ -181,6 +181,20 @@ function buildVisitIssueEntry({ kind, note, reportedBy, nowIso }) {
   return { kind, note: cleanNote(note), reportedBy, reportedAt: nowIso };
 }
 
+/**
+ * When a second-visit approval prompt dies unanswered, strip the dead
+ * proposal's date so the entry re-enters the dateless "handyman owes a
+ * date" ladder (evaluateSecondVisit) instead of wedging the poll gates.
+ * Returns null when there is nothing to reset (idempotent for sweeps).
+ */
+function buildVisitProposalReset(job, { visitIndex, nowIso }) {
+  const visits = Array.isArray(job && job.visits) ? job.visits.slice() : [];
+  const entry = visits[visitIndex];
+  if (!entry || entry.status !== 'pending_schedule' || !entry.proposedDate) return null;
+  visits[visitIndex] = { ...entry, proposedDate: null, proposedTime: null, proposalExpiredAt: nowIso };
+  return { visits };
+}
+
 module.exports = {
   VisitError,
   SECOND_VISIT_REASONS,
@@ -195,4 +209,5 @@ module.exports = {
   shouldSendDisposition,
   validateVisitIssueReport,
   buildVisitIssueEntry,
+  buildVisitProposalReset,
 };

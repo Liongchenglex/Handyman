@@ -89,7 +89,7 @@ function buildCancelUpdate(job, callerUid, { reason, note, nowIso }) {
 
   const prev = Array.isArray(job.previousHandymanIds) ? job.previousHandymanIds : [];
 
-  return {
+  const update = {
     assignmentHistory: history,
     previousHandymanIds: prev.includes(callerUid) ? prev : [...prev, callerUid],
     reassignmentCount: (job.reassignmentCount || 0) + 1,
@@ -102,9 +102,32 @@ function buildCancelUpdate(job, callerUid, { reason, note, nowIso }) {
     // A new assignment era starts: stale sweep markers from the previous
     // handyman must not suppress nudges/escalations for the next one.
     sweepNudges: admin.firestore.FieldValue.delete(),
+    // A stale open second-visit approval prompt must not survive into the
+    // new era either — it could apply the outgoing handyman's proposal to
+    // whoever picks the job up next (a late customer YES re-applying).
+    visitDispositionSentFor: admin.firestore.FieldValue.delete(),
     cancelledLastBy: callerUid,
     lastCancelledAt: nowIso,
   };
+
+  // Void any second-visit entry still awaiting scheduling: it belonged to
+  // the cancelling handyman's plan and must not suppress the auto-poll or
+  // mis-nudge the next handyman via hasPendingSecondVisit. Scheduled,
+  // declined, and done entries are historical fact and stay untouched.
+  const visits = Array.isArray(job.visits) ? job.visits : [];
+  let visitsChanged = false;
+  const nextVisits = visits.map((entry) => {
+    if (entry && entry.status === 'pending_schedule') {
+      visitsChanged = true;
+      return { ...entry, status: 'cancelled_assignment', cancelledAt: nowIso };
+    }
+    return entry;
+  });
+  if (visitsChanged) {
+    update.visits = nextVisits;
+  }
+
+  return update;
 }
 
 module.exports = {
