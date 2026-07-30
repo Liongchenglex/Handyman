@@ -474,8 +474,8 @@ All on branch `feature/job-lifecycle-flows` (stacks on `feature/job-reassignment
 | 3b | **F6** — schedule links, `/pick-time`, `schedule_pick_approval`, decline→link, admin send-link | ✅ **DONE** 2026-07-13 (plan `2026-07-13-schedule-links.md`) |
 | 4 | **Scenario 12** — stuck-state sweep ladders, attention queue + forcing actions (set time / force-unassign / refund / resolve), inert auto-poll fix | ✅ **DONE** 2026-07-13 (plan `2026-07-13-stuck-state-sweep.md`, machinery spec `2026-07-13-stuck-state-sweep-design.md`) |
 | — | **Scenario 9** — customer cancel + refund | ⛔ **DEFERRED — manual via admin** (owner decision 2026-07-13; see Scenario 9 note) |
-| 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Not started |
-| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits, incl. visit-disposition prompt (Door 2), poll 3rd button + NO follow-up (Door 3), conflict handling + sweep rows | Not started |
+| 5 | **Scenarios 7 + 8 + 5** — no-shows + running late (reporting + choice prompts reusing 3/4) | Scenario 8 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenarios 7 + 5 not started |
+| 6 | **Scenarios 10 + 11** — price adjustment integration + second visits, incl. visit-disposition prompt (Door 2), poll 3rd button + NO follow-up (Door 3), conflict handling + sweep rows | Scenario 11 ✅ **DONE** 2026-07-30 (plan `2026-07-29-second-visit-and-access-issue.md`); Scenario 10 not started |
 | 7 | **Scenario 6** — late-lifecycle swap window relaxation (self-serve; admin force-unassign already covers the wedge) | Not started |
 
 Owner gates before the built stages are live: Stripe webhook subscriptions (`payment_intent.amount_capturable_updated` + `payment_intent.canceled`, both endpoints); Meta templates `schedule_proposal`, `schedule_link`, `prompt_nudge` (+ env SIDs; freeform fallback until approved); deploy functions + rules + **indexes** together; run the consolidated E2E plan.
