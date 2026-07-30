@@ -65,14 +65,32 @@ function findUnproposedVisitIndex(job) {
 }
 
 /**
+ * Find the last visits[] entry still in 'pending_schedule', proposed or
+ * not. Unlike findUnproposedVisitIndex (dateless-only, used by the sweep
+ * detector), this backs upsertPendingVisit's fill-vs-append decision.
+ */
+function findLastPendingVisitIndex(job) {
+  const visits = visitsOf(job);
+  for (let i = visits.length - 1; i >= 0; i--) {
+    const v = visits[i];
+    if (v && v.status === 'pending_schedule') return i;
+  }
+  return -1;
+}
+
+/**
  * Create or fill the pending second-visit entry. A customer-initiated
  * intent (poll option 3) creates a dateless pending entry; when the
  * handyman later proposes, we FILL that entry rather than append —
- * `reportedVia` keeps recording who first raised the visit.
+ * `reportedVia` keeps recording who first raised the visit. A repeated
+ * proposal (re-propose, or an endpoint retry after a post-commit
+ * failure) likewise FILLS the existing pending entry rather than
+ * appending a duplicate — a new proposal supersedes an open one,
+ * regardless of whether that open entry already carries a date.
  */
 function upsertPendingVisit(job, { proposedDate, proposedTime, reason, note, reportedVia, promptId, nowIso }) {
   const visits = visitsOf(job).slice();
-  const existingIdx = findUnproposedVisitIndex(job);
+  const existingIdx = findLastPendingVisitIndex(job);
   if (existingIdx >= 0) {
     visits[existingIdx] = {
       ...visits[existingIdx],

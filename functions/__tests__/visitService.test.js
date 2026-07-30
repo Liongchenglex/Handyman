@@ -95,6 +95,22 @@ describe('upsertPendingVisit', () => {
     expect(visits).toHaveLength(1);
     expect(visits[0].promptId).toBe('poll-prompt-1'); // original preserved
   });
+  test('re-proposing an already-dated pending entry fills it rather than appending (retry idempotency)', () => {
+    const j = job({
+      visits: [{
+        status: 'pending_schedule', proposedDate: '2026-08-01', proposedTime: '9:00 AM',
+        reason: 'parts_materials', reportedVia: 'app', createdAt: '2026-07-28T02:00:00.000Z',
+      }],
+    });
+    const { visits, visitIndex } = upsertPendingVisit(j, {
+      proposedDate: '2026-08-03', proposedTime: '3:00 PM',
+      reason: 'parts_materials', note: '', reportedVia: 'app', promptId: null, nowIso: NOW_ISO,
+    });
+    expect(visitIndex).toBe(0);
+    expect(visits).toHaveLength(1);
+    expect(visits[0].proposedDate).toBe('2026-08-03');
+    expect(visits[0].proposedTime).toBe('3:00 PM');
+  });
   test('truncates the note to 300 chars and nulls empty notes', () => {
     const { visits } = upsertPendingVisit(job(), {
       proposedDate: '2026-08-02', proposedTime: '10:00 AM',

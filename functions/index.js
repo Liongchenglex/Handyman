@@ -4531,6 +4531,7 @@ exports.requestSecondVisit = functions.https.onRequest((req, res) => {
           const snap = await tx.get(db.collection('jobs').doc(jobId));
           const job = snap.exists ? snap.data() : null;
           validateSecondVisitRequest(job, decodedToken.uid, reason, note);
+          if (!job.customerPhone) throw new VisitError('no_customer_phone', 'Job has no customer phone on file');
           const result = upsertPendingVisit(job, {
             proposedDate, proposedTime: String(proposedTime), reason, note,
             reportedVia: 'app', promptId: null, nowIso,
@@ -4541,7 +4542,7 @@ exports.requestSecondVisit = functions.https.onRequest((req, res) => {
         });
       } catch (visitErr) {
         if (visitErr.name === 'VisitError') {
-          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_reason: 400, note_required: 400 };
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_reason: 400, note_required: 400, no_customer_phone: 400 };
           return res.status(statusMap[visitErr.code] || 400).json({ error: visitErr.message, code: visitErr.code });
         }
         throw visitErr;
@@ -4562,12 +4563,16 @@ exports.requestSecondVisit = functions.https.onRequest((req, res) => {
       const displayDate = new Date(proposedDate).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' });
       const handymanName = (jobData.acceptedBy && jobData.acceptedBy.name) || 'Your handyman';
       const fallback = `🔁 ${handymanName} says another visit is needed for Job #${jobShortId} and proposes ${displayDate}, ${proposedTime}.\n\n👉 Reply *YES* to approve\n👉 Reply *NO* to decline`;
-      await sendTwilioTemplateMessage(
+      const sendResult = await sendTwilioTemplateMessage(
         formatPhoneToWhatsApp(jobData.customerPhone),
         process.env.TWILIO_TEMPLATE_SECOND_VISIT_PROPOSAL,
         { '1': handymanName, '2': jobShortId, '3': displayDate, '4': String(proposedTime) },
         fallback
       );
+      if (!sendResult.success) {
+        console.error('❌ requestSecondVisit: WhatsApp send failed', { jobId, sendResult });
+        return res.status(502).json({ error: 'Failed to send the WhatsApp request to the customer. Please try again.', code: 'send_failed' });
+      }
 
       const { promptId } = await openPrompt({
         db, jobId, type: 'second_visit_approval',
