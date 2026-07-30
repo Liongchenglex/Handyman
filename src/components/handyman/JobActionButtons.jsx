@@ -396,21 +396,21 @@ const JobActionButtons = ({
           <div className="flex flex-col gap-3 p-1">
             <button
               onClick={() => { setShowDisposition(false); handleMarkCompleted(); }}
-              className="w-full flex items-center gap-3 bg-primary/10 hover:bg-primary/20 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+              className="w-full flex items-center gap-3 bg-primary/10 dark:bg-primary/20 hover:bg-primary/20 dark:hover:bg-primary/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
             >
               <span className="material-symbols-outlined text-primary">check_circle</span>
               <span>Job's done<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Mark complete — the customer confirms on WhatsApp</span></span>
             </button>
             <button
               onClick={() => { setShowDisposition(false); setShowSecondVisitModal(true); }}
-              className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+              className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
             >
               <span className="material-symbols-outlined text-orange-500">event_repeat</span>
               <span>Needs another visit<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Propose a return time for the customer to approve</span></span>
             </button>
             <button
               onClick={() => { setShowDisposition(false); setVisitIssueKind('cannot_finish'); }}
-              className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+              className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
             >
               <span className="material-symbols-outlined text-red-500">report_problem</span>
               <span>Problem — can't finish<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Tell us what's wrong; our team steps in</span></span>
@@ -542,21 +542,21 @@ const JobActionButtons = ({
         <div className="flex flex-col gap-3 p-1">
           <button
             onClick={() => { setShowDisposition(false); handleMarkCompleted(); }}
-            className="w-full flex items-center gap-3 bg-primary/10 hover:bg-primary/20 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            className="w-full flex items-center gap-3 bg-primary/10 dark:bg-primary/20 hover:bg-primary/20 dark:hover:bg-primary/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
           >
             <span className="material-symbols-outlined text-primary">check_circle</span>
             <span>Job's done<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Mark complete — the customer confirms on WhatsApp</span></span>
           </button>
           <button
             onClick={() => { setShowDisposition(false); setShowSecondVisitModal(true); }}
-            className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
           >
             <span className="material-symbols-outlined text-orange-500">event_repeat</span>
             <span>Needs another visit<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Propose a return time for the customer to approve</span></span>
           </button>
           <button
             onClick={() => { setShowDisposition(false); setVisitIssueKind('cannot_finish'); }}
-            className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
+            className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
           >
             <span className="material-symbols-outlined text-red-500">report_problem</span>
             <span>Problem — can't finish<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Tell us what's wrong; our team steps in</span></span>
