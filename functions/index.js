@@ -2286,7 +2286,8 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
   // permanently swallowed as a "duplicate" on Stripe's retry — same
   // reasoning as the booking-time capture case above.
   const deferDedupWrite = event.type === 'payment_intent.amount_capturable_updated'
-    || event.type === 'checkout.session.completed';
+    || event.type === 'checkout.session.completed'
+    || event.type === 'checkout.session.expired';
   try {
     const isFirstDelivery = await admin.firestore().runTransaction(async (tx) => {
       const snap = await tx.get(eventRef);
@@ -6313,15 +6314,19 @@ exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
       if (!jobId) return res.status(400).json({ error: 'Missing jobId' });
 
       const jobRef = admin.firestore().collection('jobs').doc(jobId);
-      let jobData; let updatePayload; let removedHandymanId;
+      let jobData; let updatePayload; let removedHandymanId; let pendingAdjustmentSessionId;
       try {
         await admin.firestore().runTransaction(async (tx) => {
+          pendingAdjustmentSessionId = null; // reset per retry
           const snap = await tx.get(jobRef);
           if (!snap.exists) throw new Error('NOT_FOUND');
           const job = snap.data();
           if (job.status !== 'in_progress' || !job.handymanId) throw new Error('WRONG_STATUS');
           jobData = job;
           removedHandymanId = job.handymanId;
+          if (job.priceAdjustment?.status === 'pending_payment' && job.priceAdjustment.sessionId) {
+            pendingAdjustmentSessionId = job.priceAdjustment.sessionId;
+          }
           updatePayload = buildCancelUpdate(job, job.handymanId, {
             reason: 'admin_forced',
             note: String(note || '').trim(),
@@ -6333,6 +6338,13 @@ exports.adminUnassignJob = functions.https.onRequest(async (req, res) => {
         if (err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Job not found' });
         if (err.message === 'WRONG_STATUS') return res.status(409).json({ error: 'Job is not in progress with an assigned handyman' });
         throw err;
+      }
+
+      // 1b. A voided pending adjustment must not leave a payable link alive
+      // (mirror of cancelJobAssignment; webhook sessionId guard is the backstop).
+      if (pendingAdjustmentSessionId) {
+        try { await stripe.checkout.sessions.expire(pendingAdjustmentSessionId); }
+        catch (e) { console.error('⚠️ force-unassign session expire failed (webhook guard still protects):', e); }
       }
 
       // Close every open channel tied to the removed assignment.
