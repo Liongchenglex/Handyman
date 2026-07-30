@@ -3188,7 +3188,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
                 extraUpdateFn: (job) => buildVisitScheduledUpdate(job, { visitIndex: p.visitIndex, nowIso: new Date().toISOString() }),
               });
             } catch (err) {
-              if (err.name === 'VisitError' || (err.message && err.message.includes('WRONG_STATUS'))) {
+              if (err.name === 'VisitError') {
                 try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'wrong_status' }); }
                 catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
                 await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} is no longer awaiting this approval — our team will follow up if anything is needed.`);
@@ -3196,6 +3196,18 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
               }
               throw err;
             }
+
+            // applyScheduleChange resolves (rather than throws) its internal
+            // WRONG_STATUS case — see the schedule_approval sibling at
+            // ~2914. Without this check a job whose status changed between
+            // proposal and approval would fall through to "applied" below.
+            if (changeResult.outcome === 'wrong_status') {
+              try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'wrong_status' }); }
+              catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+              await sendTwilioMessage(From, `ℹ️ Job #${jobShortId} is no longer awaiting this approval — our team will follow up if anything is needed.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'second visit approve on wrong state' });
+            }
+
             try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'applied' }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
 
@@ -3203,15 +3215,18 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             await sendTwilioMessage(From, `✅ Second visit confirmed for Job #${jobShortId}: ${displayDate}, ${p.proposedTime}. See you then!`);
             // Handyman did not just reply → template-first confirmation.
             try {
-              const hmSnap = await admin.firestore().collection('handymen').doc(changeResult.job.handymanId).get();
-              const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
-              if (hmPhone) {
-                await sendTwilioTemplateMessage(
-                  formatPhoneToWhatsApp(hmPhone),
-                  process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
-                  { '1': jobShortId, '2': displayDate, '3': String(p.proposedTime) },
-                  `✅ Second visit approved — Job #${jobShortId} is now scheduled for ${displayDate}, ${p.proposedTime}.`
-                );
+              const changedJob = changeResult.job;
+              if (changedJob && changedJob.handymanId) {
+                const hmSnap = await admin.firestore().collection('handymen').doc(changedJob.handymanId).get();
+                const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+                if (hmPhone) {
+                  await sendTwilioTemplateMessage(
+                    formatPhoneToWhatsApp(hmPhone),
+                    process.env.TWILIO_TEMPLATE_SCHEDULE_CONFIRMED,
+                    { '1': jobShortId, '2': displayDate, '3': String(p.proposedTime) },
+                    `✅ Second visit approved — Job #${jobShortId} is now scheduled for ${displayDate}, ${p.proposedTime}.`
+                  );
+                }
               }
             } catch (notifyErr) {
               console.error('⚠️ Handyman second-visit confirmation failed:', notifyErr);
@@ -3234,7 +3249,17 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
                 tx.update(snap.ref, upd);
               });
             } catch (txErr) {
-              console.error('⚠️ second-visit decline write failed (admin email still goes out):', txErr);
+              if (txErr.name === 'VisitError') {
+                // Stale entry — already resolved elsewhere, nothing was
+                // written. The admin email below is still the right
+                // signal to send.
+                console.error('⚠️ second-visit decline write skipped — stale entry (admin email still goes out):', txErr);
+              } else {
+                // A real infrastructure failure — do not report false
+                // success below; let the webhook's outer error handling
+                // deal with it.
+                throw txErr;
+              }
             }
             try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'declined' }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
