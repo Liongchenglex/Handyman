@@ -91,6 +91,17 @@ const {
   buildVisitProposalReset,
 } = require('./visitService');
 
+// Post-inspection price adjustment domain logic (Scenario 10,
+// approve-by-paying). See functions/pricingService.js.
+const {
+  PricingError,
+  validateAdjustmentRequest,
+  buildAdjustmentEntry,
+  hasPendingPriceAdjustment,
+  buildAdjustmentTransition,
+  applyPaidAdjustment,
+} = require('./pricingService');
+
 // Secure schedule links (F6) — token hashing + link issuance/revocation.
 // See functions/scheduleLinkService.js.
 const {
@@ -163,6 +174,13 @@ const SCHEDULE_APPROVAL_OPTIONS = {
 const ACCESS_ISSUE_OPTIONS = {
   '1': 'reschedule', 'RESCHEDULE': 'reschedule',
   '2': 'support', 'SUPPORT': 'support', 'CONTACT SUPPORT': 'support', 'HELP': 'support',
+};
+
+// Scenario 10 — decline-only: paying the Checkout link IS the approval,
+// so the prompt has no approve keys (mirrors visit_disposition, whose
+// deep link is its answer path).
+const PRICE_ADJUSTMENT_CHOICE_OPTIONS = {
+  'NO': 'decline', 'DECLINE': 'decline', 'N': 'decline', '2': 'decline',
 };
 
 // ===================================
@@ -5098,6 +5116,140 @@ exports.reportVisitIssue = functions.https.onRequest((req, res) => {
       console.error('❌ reportVisitIssue error:', error);
       if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
       return res.status(500).json({ error: 'Failed to report visit issue' });
+    }
+  });
+});
+
+// ===================================
+// PRICE ADJUSTMENT — Scenario 10 (approve-by-paying). Creates a Stripe
+// Checkout Session for the delta; the customer's payment IS the
+// approval (webhook Task 3 applies it). Decline is the only reply.
+// Money: delta lands in the platform balance as a second held pot —
+// released/refunded only by the existing admin paths.
+// ===================================
+exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    try {
+      const decodedToken = await verifyAuthToken(req);
+      const { jobId, deltaDollars, reason, note } = req.body || {};
+      if (!jobId) return res.status(400).json({ error: 'jobId is required', code: 'bad_request' });
+
+      const rl = await checkRateLimit(`price_adjust_${decodedToken.uid}`, 5, 3600);
+      if (!rl.allowed) {
+        res.set('Retry-After', String(rl.retryAfterSeconds));
+        return res.status(429).json({ error: 'Too many requests', retryAfterSeconds: rl.retryAfterSeconds });
+      }
+
+      const db = admin.firestore();
+      const nowIso = new Date().toISOString();
+
+      // Validate against a fresh read BEFORE creating any Stripe object
+      // (no orphan sessions for requests that would fail validation).
+      const preSnap = await db.collection('jobs').doc(jobId).get();
+      const preJob = preSnap.exists ? preSnap.data() : null;
+      const priceMax = preJob ? getServicePriceMax(preJob.serviceType) : 0;
+      try {
+        validateAdjustmentRequest(preJob, decodedToken.uid, deltaDollars, reason, priceMax);
+        if (!preJob.customerPhone) throw new PricingError('no_customer_phone', 'Job has no customer phone on file');
+      } catch (pricingErr) {
+        if (pricingErr.name === 'PricingError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_amount: 400, over_cap: 400, reason_required: 400, adjustment_pending: 409, adjustment_already_paid: 409, no_customer_phone: 400 };
+          return res.status(statusMap[pricingErr.code] || 400).json({ error: pricingErr.message, code: pricingErr.code });
+        }
+        throw pricingErr;
+      }
+
+      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, priceMax, nowIso });
+      const adjustmentId = db.collection('_ids').doc().id; // firestore auto-id as an opaque unique token
+      const jobShortId = jobId.slice(-6);
+      const deltaChargeCents = dollarsToCents(entry.deltaServiceFee * (1 + getPlatformFeePercentage()));
+
+      // Checkout Session (not a Payment Link: this SDK/API version has no
+      // inline price_data on Payment Links, and sessions.expire() is the
+      // natural decline semantic). 24h expiry; Task 3 re-issues once.
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        line_items: [{
+          price_data: {
+            currency: 'sgd',
+            unit_amount: deltaChargeCents,
+            product_data: {
+              name: `Price adjustment — ${preJob.serviceType} job #${jobShortId}`,
+              description: entry.reason.slice(0, 200),
+            },
+          },
+          quantity: 1,
+        }],
+        client_reference_id: jobId,
+        metadata: { type: 'price_adjustment_delta', jobId, adjustmentId },
+        payment_intent_data: {
+          description: `Price adjustment for ${preJob.serviceType} - Job #${jobId}`,
+          metadata: {
+            type: 'price_adjustment_delta', jobId, adjustmentId,
+            customerId: preJob.customerId || '', serviceType: preJob.serviceType || '',
+            platform: 'handyman-platform',
+          },
+        },
+        expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
+        success_url: `${APP_URL}/?adjustment=paid&job=${jobShortId}`,
+        cancel_url: `${APP_URL}/?adjustment=cancelled&job=${jobShortId}`,
+      }, { idempotencyKey: `adjsession-${jobId}-${adjustmentId}` });
+
+      // Transactional write with a re-validation against fresh data (the
+      // pre-read above only prevented pointless Stripe calls).
+      try {
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(db.collection('jobs').doc(jobId));
+          const job = snap.exists ? snap.data() : null;
+          validateAdjustmentRequest(job, decodedToken.uid, deltaDollars, reason, priceMax);
+          tx.update(snap.ref, {
+            priceAdjustment: { ...entry, adjustmentId, sessionId: session.id, checkoutUrl: session.url },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (txErr) {
+        // Lost the race (e.g. double-submit): kill the fresh session so no
+        // payable orphan link survives, then surface the domain error.
+        try { await stripe.checkout.sessions.expire(session.id); } catch (e) { console.error('⚠️ orphan session expire failed:', e); }
+        if (txErr.name === 'PricingError') {
+          const statusMap = { not_found: 404, not_assigned: 403, wrong_status: 409, bad_amount: 400, over_cap: 400, reason_required: 400, adjustment_pending: 409, adjustment_already_paid: 409 };
+          return res.status(statusMap[txErr.code] || 400).json({ error: txErr.message, code: txErr.code });
+        }
+        throw txErr;
+      }
+
+      // A price talk answers the evening "how did it go?" question.
+      try { await supersedeOpenPrompts(db, jobId, ['visit_disposition']); }
+      catch (e) { console.error('⚠️ supersedeOpenPrompts failed (continuing):', e); }
+
+      const totalDisplay = (entry.deltaServiceFee * (1 + getPlatformFeePercentage())).toFixed(2);
+      const fallback = `💰 Your handyman has requested a price adjustment of +S$${totalDisplay} for Job #${jobShortId}.\n\nReason: ${entry.reason}\n\n👉 Pay here to approve (valid 24h):\n${session.url}\n\n👉 Reply *NO* to decline`;
+      const sendResult = await sendTwilioTemplateMessage(
+        formatPhoneToWhatsApp(preJob.customerPhone),
+        process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
+        { '1': totalDisplay, '2': entry.reason.slice(0, 150), '3': jobShortId, '4': session.url },
+        fallback
+      );
+      if (!sendResult.success) {
+        console.error('❌ price-adjustment send failed:', sendResult.error);
+        return res.status(502).json({ error: 'Failed to send the WhatsApp request to the customer. Please try again.', code: 'send_failed' });
+      }
+
+      const { promptId } = await openPrompt({
+        db, jobId, type: 'price_adjustment_choice',
+        toPhone: preJob.customerPhone, toRole: 'customer',
+        question: `Pay +S$${totalDisplay} adjustment for Job #${jobShortId}, or decline?`,
+        options: PRICE_ADJUSTMENT_CHOICE_OPTIONS,
+        payload: { sessionId: session.id },
+      });
+
+      await writeAuditLog('price_adjustment_requested', decodedToken, { jobId, deltaServiceFee: entry.deltaServiceFee, sessionId: session.id });
+      return res.status(200).json({ success: true, promptId });
+    } catch (error) {
+      console.error('❌ requestPriceAdjustment error:', error);
+      if (error.message && error.message.includes('Unauthorized')) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(500).json({ error: 'Failed to request price adjustment' });
     }
   });
 });
