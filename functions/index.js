@@ -2888,6 +2888,7 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             const db = admin.firestore();
             const nowIso = new Date().toISOString();
             let hadCompletionClaim = false;
+            let intentRecorded = false;
             await db.runTransaction(async (tx) => {
               const snap = await tx.get(db.collection('jobs').doc(verdict.prompt.jobId));
               if (!snap.exists) return;
@@ -2902,7 +2903,16 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
               const upd = { visits, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
               if (hadCompletionClaim) upd.status = 'in_progress'; // soft conflict: completion claim withdrawn pending the visit
               tx.update(snap.ref, upd);
+              intentRecorded = true;
             });
+
+            if (!intentRecorded) {
+              try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'already_processed' }); }
+              catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+              await sendTwilioMessage(From, `ℹ️ Job #${verdict.prompt.jobId.slice(-6)} has already been handled separately, so no return visit was recorded. If something still needs fixing, please contact easydonehandyman@gmail.com.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'coming_back on inactive job' });
+            }
+
             try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'second_visit_intent' }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
 
@@ -2935,6 +2945,11 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
             const answerResult = await applyCompletionAnswer({ db: admin.firestore(), jobId: verdict.prompt.jobId, isConfirm: false });
             try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: answerResult.outcome }); }
             catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+
+            if (answerResult.outcome === 'already_processed') {
+              await sendTwilioMessage(From, `ℹ️ Your report for Job #${verdict.prompt.jobId} did not go through — this job has already been recorded as: ${answerResult.recordedAs}.\n\nThe outcome cannot be changed here. If it was a mistake, please contact easydonehandyman@gmail.com as soon as possible.`);
+              return res.status(200).json({ received: true, processed: false, reason: 'Follow-up answer on already-processed job' });
+            }
             await sendTwilioMessage(From, `⚠️ We're sorry to hear that.\n\nOur team will contact you with regard to this dispute.\n\nJob ID: ${verdict.prompt.jobId}\n\nIf you reported this by mistake, please contact easydonehandyman@gmail.com as soon as possible.\n\nWe take every feedback seriously and will resolve this promptly.`);
             return res.status(200).json({ received: true, processed: true, action: 'disputed', via: 'prompt' });
           }
