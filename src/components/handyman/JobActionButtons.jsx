@@ -6,6 +6,7 @@ import CancelJobModal from './CancelJobModal';
 import ProposeTimeModal from './ProposeTimeModal';
 import SecondVisitModal from './SecondVisitModal';
 import VisitIssueModal from './VisitIssueModal';
+import RequestAdjustmentModal from './RequestAdjustmentModal';
 import Modal from '../common/Modal';
 
 /**
@@ -38,6 +39,7 @@ const JobActionButtons = ({
   const [showProposeModal, setShowProposeModal] = useState(false);
   const [showSecondVisitModal, setShowSecondVisitModal] = useState(false);
   const [visitIssueKind, setVisitIssueKind] = useState(null); // null | 'no_access' | 'cannot_finish'
+  const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   // Lazy-init: only opens the sheet from a fresh deep link (?action=disposition)
   // on an actionable job — never reopens on re-renders.
   const [showDisposition, setShowDisposition] = useState(
@@ -141,6 +143,14 @@ const JobActionButtons = ({
     // Date gate: block completion before the scheduled preferred date
     if (!isJobDateReached()) {
       alert(`This job is scheduled for ${formatPreferredDate()}. You cannot mark it as complete before the appointment date.`);
+      return;
+    }
+
+    // Price-adjustment gate: block completion while the customer hasn't yet
+    // decided whether to pay for a requested adjustment — the job's final
+    // price isn't settled until they approve (pay) or decline.
+    if (job.priceAdjustment?.status === 'pending_payment') {
+      alert('A price adjustment is awaiting the customer\'s decision. You can mark the job complete once it\'s paid or declined.');
       return;
     }
 
@@ -296,13 +306,24 @@ const JobActionButtons = ({
   // an in-progress job on/after its scheduled date, and not already completed.
   const canSecondVisit = job.status === 'in_progress' && dateReached && !isCompleted;
 
+  // True while a requested price adjustment is awaiting the customer's
+  // pay/decline decision. Blocks both Mark Complete (handled in
+  // handleMarkCompleted) and requesting a second adjustment on top of a
+  // pending one.
+  const adjustmentPending = job.priceAdjustment?.status === 'pending_payment';
+
+  // Gate for "Request price adjustment": only while actively working an
+  // in-progress job on/after its scheduled date (the inspection has
+  // happened), not already completed, and no adjustment already pending.
+  const canRequestAdjustment = job.status === 'in_progress' && dateReached && !isCompleted && !adjustmentPending;
+
   // Full width variant for job detail pages
   if (variant === 'full') {
     return (
       <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
         <button
           onClick={handleMarkCompleted}
-          disabled={isProcessing || isCompleted || !dateReached}
+          disabled={isProcessing || isCompleted || !dateReached || adjustmentPending}
           className="w-full flex items-center justify-center gap-2 bg-green-600 text-white px-6 py-4 rounded-xl hover:bg-green-700 transition-colors font-bold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isProcessing ? (
@@ -320,6 +341,11 @@ const JobActionButtons = ({
               <span className="material-symbols-outlined">event_busy</span>
               Scheduled for {formatPreferredDate()}
             </>
+          ) : adjustmentPending ? (
+            <>
+              <span className="material-symbols-outlined">hourglass_empty</span>
+              Awaiting customer's price decision
+            </>
           ) : (
             <>
               <span className="material-symbols-outlined">check_circle</span>
@@ -333,6 +359,8 @@ const JobActionButtons = ({
             ? 'Customer has been notified to confirm job completion'
             : !dateReached
             ? `You can mark this job as complete on or after ${formatPreferredDate()}`
+            : adjustmentPending
+            ? "Awaiting the customer's decision on the requested price adjustment"
             : 'Mark this job as complete to notify the customer'}
         </p>
 
@@ -353,6 +381,16 @@ const JobActionButtons = ({
           >
             <span className="material-symbols-outlined">door_front</span>
             Customer not home
+          </button>
+        )}
+
+        {canRequestAdjustment && (
+          <button
+            onClick={() => setShowAdjustmentModal(true)}
+            className="w-full mt-3 flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-6 py-3 rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
+          >
+            <span className="material-symbols-outlined">request_quote</span>
+            Request price adjustment
           </button>
         )}
 
@@ -422,6 +460,8 @@ const JobActionButtons = ({
           onClose={() => setShowSecondVisitModal(false)} onRequested={onStatusChange} />
         <VisitIssueModal job={job} kind={visitIssueKind || 'no_access'} isOpen={!!visitIssueKind}
           onClose={() => setVisitIssueKind(null)} onReported={onStatusChange} />
+        <RequestAdjustmentModal job={job} isOpen={showAdjustmentModal}
+          onClose={() => setShowAdjustmentModal(false)} onRequested={onStatusChange} />
       </div>
     );
   }
@@ -488,6 +528,16 @@ const JobActionButtons = ({
         >
           <span className="material-symbols-outlined text-sm">door_front</span>
           Customer not home
+        </button>
+      )}
+
+      {canRequestAdjustment && (
+        <button
+          onClick={() => setShowAdjustmentModal(true)}
+          className="flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
+        >
+          <span className="material-symbols-outlined text-sm">request_quote</span>
+          Request price adjustment
         </button>
       )}
 
@@ -568,6 +618,8 @@ const JobActionButtons = ({
         onClose={() => setShowSecondVisitModal(false)} onRequested={onStatusChange} />
       <VisitIssueModal job={job} kind={visitIssueKind || 'no_access'} isOpen={!!visitIssueKind}
         onClose={() => setVisitIssueKind(null)} onReported={onStatusChange} />
+      <RequestAdjustmentModal job={job} isOpen={showAdjustmentModal}
+        onClose={() => setShowAdjustmentModal(false)} onRequested={onStatusChange} />
     </div>
   );
 };
