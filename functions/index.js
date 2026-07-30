@@ -3493,6 +3493,58 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
           }
         }
 
+        if (verdict.prompt.type === 'no_show_choice') {
+          const jobShortId = verdict.prompt.jobId.slice(-6);
+          if (verdict.action === 'reschedule') {
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'link_sent' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            try {
+              const { token } = await issueScheduleLink({
+                db: admin.firestore(), jobId: verdict.prompt.jobId,
+                customerPhone: verdict.prompt.toPhone, createdBy: 'system_no_show',
+              });
+              await sendTwilioMessage(From, `👍 Let's find a new time — pick one that works for you here (valid 72 hours):\n${APP_URL}/pick-time?t=${token}\n\nYour handyman will confirm the time you choose (Job #${jobShortId}).`);
+            } catch (linkErr) {
+              console.error('⚠️ no-show reschedule link failed:', linkErr);
+              await sendTwilioMessage(From, `👍 Our team will arrange a new time with you shortly (Job #${jobShortId}).`);
+              await sendAdminEmail(`⚠️ No-show reschedule link failed — Job #${jobShortId}`, `<p>Send a schedule link manually for job <b>${escapeHtml(verdict.prompt.jobId)}</b>.</p>`);
+            }
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_reschedule_link', via: 'prompt' });
+          }
+          if (verdict.action === 'new_handyman') {
+            // Spec §6.4 (resolved): one WhatsApp reply never strips a job —
+            // the admin confirms via the existing force-unassign queue action.
+            const nowIso = new Date().toISOString();
+            try {
+              await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update(
+                buildAttentionUpdate('no_show_new_handyman', { detail: 'customer requested a replacement after a no-show — confirm force-unassign', promptId: verdict.prompt.id, nowIso })
+              );
+            } catch (e) { console.error('⚠️ attention flag failed (admin email still goes out):', e); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'new_handyman_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`🔁 No-show → new handyman requested — Job #${jobShortId}`,
+              `<p>Customer wants a replacement on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Use the queue's force-unassign to confirm — the job then re-releases to the board.</p>`);
+            await sendTwilioMessage(From, `👍 Understood — we're finding you a new handyman for Job #${jobShortId}. Our team will confirm shortly and the new handyman will arrange the visit time with you.`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_new_handyman', via: 'prompt' });
+          }
+          if (verdict.action === 'cancel_refund') {
+            // Scenario 9 is deferred-manual: flag the queue; the admin
+            // executes via the existing Refund button.
+            const nowIso = new Date().toISOString();
+            try {
+              await admin.firestore().collection('jobs').doc(verdict.prompt.jobId).update(
+                buildAttentionUpdate('no_show_refund_requested', { detail: 'customer chose cancel & refund after a no-show — execute via the queue Refund button', promptId: verdict.prompt.id, nowIso })
+              );
+            } catch (e) { console.error('⚠️ attention flag failed (admin email still goes out):', e); }
+            try { await markAnswered(verdict.prompt.ref, { answer: verdict.answerText, resultingAction: 'refund_requested' }); }
+            catch (e) { console.error('⚠️ markAnswered failed (continuing):', e); }
+            await sendAdminEmail(`💸 No-show → refund requested — Job #${jobShortId}`,
+              `<p>Customer chose cancel &amp; refund on job <b>${escapeHtml(verdict.prompt.jobId)}</b>. Execute via the attention queue's Refund button (refund-then-cancel).</p>`);
+            await sendTwilioMessage(From, `👍 Understood — our team will process your refund for Job #${jobShortId} shortly. You'll get a confirmation once it's done (refunds take 5–10 business days to reach your card).`);
+            return res.status(200).json({ received: true, processed: true, action: 'no_show_refund_requested', via: 'prompt' });
+          }
+        }
+
         if (verdict.prompt.type === 'schedule_approval') {
           const proposal = verdict.prompt.payload || {};
           const jobShortId = String(verdict.prompt.jobId).slice(-6);
