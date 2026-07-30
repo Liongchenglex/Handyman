@@ -29,10 +29,10 @@ Stripe mechanics behind the rule: an *uncaptured authorization* can always be vo
 | 4 | ASAP job: fixing the visit time | **Built** (2026-07-13 — accept-with-proposal, decline→link, admin doors) |
 | 5 | Same-day "running late" notice | New |
 | 6 | Handyman swap after inspection (late lifecycle) | Partial — self-serve cancel still blocked once completion poll sent; admin force-unassign (stage 4) covers the wedge |
-| 7 | Handyman no-show | New |
+| 7 | Handyman no-show | New — design finalized 2026-07-30 (§6.4 resolved: admin-confirmed un-assign; option 3 routes to manual-refund queue) |
 | 8 | Customer no-show / no access | New |
 | 9 | Customer cancellation + refund | **Deferred — manual via admin** (owner decision 2026-07-13; queue Refund button / Stripe Dashboard) |
-| 10 | Price/scope change after inspection | Spec exists (`price-adjustment-flow.md`); integration defined here |
+| 10 | Price/scope change after inspection | Design finalized 2026-07-30 (§6.2 resolved: approve-by-paying; this spec now governs, superseding parts of `price-adjustment-flow.md`) |
 | 11 | Second visit needed | New — design expanded 2026-07-25, rev 2026-07-29 (disposition prompt; poll 3rd button + NO follow-up) |
 | 12 | Stuck-state timeouts | **Built** (2026-07-13, stage 4 — sweep ladders + attention queue with forcing actions) |
 
@@ -278,17 +278,27 @@ Scheduled visit happens → handyman inspects → not fit for job
 
 ### Scenario 7 — Handyman no-show (customer-reported)
 
-**Solution.** Two report entry points: (a) the "handyman never came" branch of the completion poll's NO follow-up prompt (see Scenario 11 Door 3 — the poll itself stays 3 buttons: Yes / No / Coming back); (b) free-text intents ("no show", "never came", "didn't come") recognized by the router any time on/after the visit date. Report → job flagged (`noShowReports[]`, handyman profile `noShowCount` incremented — display-only, like `cancellationCount`), admin alerted, and the customer immediately gets a **choice prompt**: 1 = reschedule with the same handyman (→ Scenario 3, handyman must approve this time), 2 = new handyman (→ admin-confirmed forced un-assign, then Scenario 2's re-release; v1 keeps a human in the loop rather than letting one WhatsApp reply strip a job), 3 = cancel and refund (→ Scenario 9). The handyman is notified a no-show was reported and can dispute to the admin (protects against wrong-address/customer-error cases).
+*(Rev 2026-07-30 — owner decision §6.4 resolved: **admin confirms** the new-handyman un-assign (recommended option). Option-3 routing updated for the Scenario 9 deferral: cancel-and-refund lands in the admin attention queue's existing Refund machinery, not a structured WA cancel flow. The stage-6 stub (poll follow-up "never came" → attention flag + email only) is replaced by this full flow.)*
+
+**Solution.** Two report entry points: (a) the "handyman never came" branch of the completion poll's NO follow-up prompt (see Scenario 11 Door 3 — shipped as `completion_no_followup` action `never_came`, currently stubbed to the admin queue; this scenario replaces the stub); (b) free-text intents ("no show", "never came", "didn't come") recognized by the router on/after the visit date — v1 implements this in the no-open-prompt path (an unmatched reply while other prompts are open still falls to F3/admin, unchanged). Report → job flagged (`noShowReports[]` entry with `via`, handyman profile `noShowCount` incremented — display-only, like `cancellationCount`), admin alerted, handyman notified (`no_show_reported` template) with a dispute path (reply → F3 → admin; protects against wrong-address/customer-error cases), and the customer immediately gets a **choice prompt** (`type: 'no_show_choice'`):
+
+- **1 = Reschedule with the same handyman** → customer is sent an F6 pick-time link (rides the session window they just opened) → their pick goes to the handyman as `schedule_pick_approval` — Scenario 3's roles-flipped rails verbatim.
+- **2 = New handyman** → `buildAttentionUpdate('no_show_new_handyman')` + admin email; the admin confirms via the existing force-unassign queue action (→ Scenario 2 re-release; the new claimant re-fixes the time via 3/4). One WhatsApp reply never strips a job without a human look. Customer ack: "we're finding you a new handyman."
+- **3 = Cancel and refund** → Scenario 9 is deferred-manual, so this flags `buildAttentionUpdate('no_show_refund_requested')` + admin email; the admin executes via the queue's existing Refund button. Customer ack: "our team will process your refund shortly."
+- **No reply** → generic prompt ladder (48h expiry → nudge → admin queue [12]).
 
 **Flow.**
 ```
 preferredDate passes, nobody came
-      → customer replies "no show" / taps poll option 3 [WA]
-      → [F] record report, handyman notified + admin alerted
+      → customer: poll NO → follow-up "never came" [11 Door 3], or free text [WA]
+      → [F] noShowReports[] + noShowCount++, handyman notified (can dispute),
+            admin alerted
       → [WA] customer choice: 1 Reschedule / 2 New handyman / 3 Cancel & refund
-      ├─ 1 → reschedule proposal to HANDYMAN for approval [3, roles flipped]
-      ├─ 2 → [ADM] confirms un-assign → re-release + fan-out [2] → [4] for new time
-      └─ 3 → cancellation + refund [9]
+      ├─ 1 → [F] F6 pick-time link → customer picks
+      │       → handyman schedule_pick_approval [3, roles flipped]
+      ├─ 2 → attention queue → [ADM] force-unassign → re-release + fan-out [2]
+      ├─ 3 → attention queue → [ADM] Refund button (Scenario 9 machinery, manual)
+      └─ No reply 48h → nudge → admin queue [12]
 ```
 
 ---
@@ -333,17 +343,31 @@ Customer [WA] "cancel"
 
 ### Scenario 10 — Price/scope change after inspection
 
-Detailed in `docs/features/price-adjustment-flow.md`; this spec only fixes its integration points. The approval ride on F2 (`price_adjustment_approval` prompt, quick-reply Approve/Decline). **Delta collection (owner decision, §6):** (a) off-session charge on a saved card — requires adding `setup_future_usage` at booking; or (b) a Stripe Payment Link sent in the same thread — no card storage, customer taps and pays; recommended for v1. Declined adjustment → handyman chooses: proceed at original scope, or cancel via Scenario 2 (reason `job_bigger_than_expected`) with the customer offered Scenario 9. Frequently pairs with Scenario 11 (adjustment approved → second visit scheduled).
+*(Rev 2026-07-30 — owner decision §6.2 resolved: **approve-by-paying**. Supersedes `price-adjustment-flow.md`'s locked decisions 1 and 3 — the magic-link breakdown page and off-session saved-card charge are dropped; that doc's range-cap rule (decision 2: delta capped at the service's published `priceMax`) and its reason-required rule survive. Chosen for least downstream problems: payment and approval are one event, so an "approved but unpaid" limbo state can never exist and needs no ladder; no card-on-file compliance surface; rides existing rails (template send, F2 prompt, `stripeWebhook`).)*
+
+**Solution.** The customer's payment IS the approval. Handyman taps "Request price adjustment" in-app (delta amount + mandatory reason + optional note; server validates `job.status === 'in_progress'`, delta > 0, and original + delta ≤ the service's `priceMax`) → `requestPriceAdjustment` [F] creates a Stripe **Payment Link / Checkout Session** for the delta (metadata: `jobId`, `adjustmentId`; line item named for the reason), appends a `priceAdjustments[]` entry (`status: 'pending_payment'`), sends the customer the `price_adjustment_approval` template (amount, reason, link), and opens an F2 prompt (`type: 'price_adjustment_choice'`, **decline-only options** — the pay-link is the approve path, mirroring how `visit_disposition`'s deep link is its answer path).
+
+- **Customer pays** → `stripeWebhook` (`checkout.session.completed`, matched by metadata) → transaction: adjustment `status: 'paid'` (+ delta PaymentIntent id recorded), job amount increased, decline prompt superseded → both parties confirmed [WA], admin FYI email. The delta sits in the platform balance as a **second held pot** (§2b row 10 unchanged): released together with the original at admin release, refundable before it.
+- **Customer replies Decline** → adjustment `status: 'declined'`, payment link deactivated, handyman notified [WA]: proceed at the original scope (no action needed — just do the work) or cancel via Scenario 2 (reason `job_bigger_than_expected`, existing button); admin FYI. No automated renegotiation round.
+- **No reply** → the prompt rides the generic 48h expiry → nudge → admin-queue ladder (Scenario 12, existing). A payment that arrives after expiry/decline is guarded in the webhook: applied only if the job is still `in_progress` and the adjustment still `pending_payment`; otherwise flagged to the admin queue for a manual delta refund — money never silently sticks.
+- **Gates while `pending_payment`:** Mark Complete is blocked in-app, and the auto-poll + Door 2 disposition prompt skip the job (same pattern as `hasPendingSecondVisit`) — a job mid-price-talk must not be polled "is it done?".
+- Frequently pairs with Scenario 11 (adjustment paid → second visit scheduled). Admin fund-release view shows original + delta and the adjustment history.
 
 **Flow.**
 ```
 Visit 1: inspection → bigger than booked
-      → handyman [A] "Request price adjustment" (+amount, reason, photo optional)
-      → [WA] customer: "+$120 — corroded pipe replacement. Approve / Decline"
-      ├─ Approve → [WA] payment link for delta → paid → [F] job amount updated
-      │       → proceed (often → second visit [11])
-      ├─ Decline → handyman: proceed at original scope, or cancel [2] → customer may [9]
-      └─ No reply 48h → nudge → admin queue [12]
+      → handyman [A] "Request price adjustment" (+amount ≤ priceMax, reason)
+      → [F] requestPriceAdjustment: Stripe payment link created,
+            priceAdjustments[] entry 'pending_payment', Mark-Complete gate on
+      → [WA] customer: "+$120 — corroded pipe replacement.
+             Pay here to approve: <link> — or reply NO to decline"
+      ├─ Pays → [F] stripeWebhook checkout.session.completed:
+      │       adjustment 'paid', job amount += delta, prompt superseded
+      │       → [WA] both parties confirmed → proceed (often → [11])
+      ├─ Decline → adjustment 'declined', link deactivated
+      │       → [WA] handyman: proceed at original scope, or cancel [2]
+      └─ No reply 48h → nudge → admin queue [12]; late payment → webhook
+              guard applies-or-flags (no silent stick)
 ```
 
 ---
@@ -457,10 +481,10 @@ Visit day ends, job still in_progress
 
 ## 6. Open owner decisions (to settle at plan time)
 
-1. **Refund policy copy** (Scenario 9): full refund vs minus processing fee; different pre/post-acceptance?
-2. **Price-adjustment delta collection** (Scenario 10): payment link (recommended) vs saved-card off-session.
-3. **Penalty copy** in the Express-Interest modal ("$20 penalty") — implement, soften, or remove; interacts with Scenarios 2/7/8 counters.
-4. **No-show → new handyman** (Scenario 7 option 2): keep admin confirmation in the loop (recommended) or fully automatic un-assign.
+1. **Refund policy copy** (Scenario 9): full refund vs minus processing fee; different pre/post-acceptance? — still open (Scenario 9 deferred-manual).
+2. ~~**Price-adjustment delta collection** (Scenario 10)~~ — **RESOLVED 2026-07-30: approve-by-paying payment link** (payment IS approval; see Scenario 10 rev note). Supersedes `price-adjustment-flow.md` decisions 1 & 3.
+3. **Penalty copy** in the Express-Interest modal ("$20 penalty") — implement, soften, or remove; interacts with Scenarios 2/7/8 counters. — still open.
+4. ~~**No-show → new handyman** (Scenario 7 option 2)~~ — **RESOLVED 2026-07-30: admin confirmation stays in the loop** (existing force-unassign queue action).
 
 ## 7. Build order — status as of 2026-07-13
 

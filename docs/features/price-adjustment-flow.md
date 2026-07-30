@@ -1,6 +1,6 @@
 # Price Adjustment Flow
 
-> **Status:** 📝 **Proposed — design only, not yet implemented.** This document is the working spec for the post-inspection price-adjustment workflow. To be reviewed with the cofounder before any code changes outside the lower-bound charge already shipped.
+> **Status:** ⚠️ **Partially superseded (owner decision 2026-07-30).** The governing design is now Scenario 10 in `docs/superpowers/specs/2026-07-12-job-lifecycle-scenarios-design.md`: **approve-by-paying** — a Stripe Payment Link where the customer's payment IS the approval. This supersedes this doc's locked decisions **1** (magic-link breakdown page → dropped; the WhatsApp message + payment-link page carry amount/reason) and **3** (off-session saved-card charge → dropped; no `setup_future_usage`, no card storage). Decision **2** (delta capped at the service's published `priceMax`) and the mandatory-reason rule **still stand**. The background analysis and integration inventory below remain useful reference.
 
 ## Overview
 
