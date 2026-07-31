@@ -521,115 +521,20 @@ const JobActionButtons = ({
         </button>
       )}
 
-      {canSecondVisit && (
-        <button
-          onClick={() => setShowSecondVisitModal(true)}
-          className="flex items-center justify-center gap-2 bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors font-medium"
-        >
-          <span className="material-symbols-outlined text-sm">event_repeat</span>
-          Needs another visit
-        </button>
-      )}
-
-      {job.status === 'in_progress' && isVisitDay() && (
-        <button
-          onClick={() => setVisitIssueKind('no_access')}
-          className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
-        >
-          <span className="material-symbols-outlined text-sm">door_front</span>
-          Customer not home
-        </button>
-      )}
-
-      {canRequestAdjustment && (
-        <button
-          onClick={() => setShowAdjustmentModal(true)}
-          className="flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
-        >
-          <span className="material-symbols-outlined text-sm">request_quote</span>
-          Request price adjustment
-        </button>
-      )}
-
-      {/* View Details button - conditionally shown */}
+      {/* View Details — the promoted card action. Every situational
+          action (second visit, no-access, price adjustment, propose
+          time, cancel) lives on the details page (full variant), which
+          is also where the ?action=disposition deep link lands — so the
+          compact card stays down to the two essentials. */}
       {showViewDetails && (
         <button
           onClick={handleViewDetails}
-          className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white px-4 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+          className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-bold"
         >
-          <span className="material-symbols-outlined text-sm">description</span>
-          View Job Details
+          <span className="material-symbols-outlined text-sm">arrow_forward</span>
+          View Details
         </button>
       )}
-
-      {canPropose && (
-        <button
-          onClick={() => setShowProposeModal(true)}
-          className="flex items-center justify-center gap-2 border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors font-medium"
-        >
-          <span className="material-symbols-outlined text-sm">event</span>
-          {job.preferredTiming === 'Schedule' ? 'New time' : 'Set time'}
-        </button>
-      )}
-
-      <ProposeTimeModal
-        job={job}
-        isOpen={showProposeModal}
-        onClose={() => setShowProposeModal(false)}
-        onProposed={handleProposed}
-      />
-
-      {canCancel && (
-        <button
-          onClick={() => setShowCancelModal(true)}
-          className="flex items-center justify-center gap-2 border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 px-4 py-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors font-medium"
-        >
-          <span className="material-symbols-outlined text-sm">event_busy</span>
-          Cancel Job
-        </button>
-      )}
-
-      <CancelJobModal
-        job={job}
-        isOpen={showCancelModal}
-        onClose={() => setShowCancelModal(false)}
-        onCancelled={handleCancelled}
-      />
-
-      {/* Disposition sheet — "How did today's visit go?" — opens via the
-          ?action=disposition deep link on an actionable in-progress job. */}
-      <Modal isOpen={showDisposition} onClose={() => setShowDisposition(false)} title="How did today's visit go?" size="small">
-        <div className="flex flex-col gap-3 p-1">
-          <button
-            onClick={() => { setShowDisposition(false); handleMarkCompleted(); }}
-            className="w-full flex items-center gap-3 bg-primary/10 dark:bg-primary/20 hover:bg-primary/20 dark:hover:bg-primary/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
-          >
-            <span className="material-symbols-outlined text-primary">check_circle</span>
-            <span>Job's done<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Mark complete — the customer confirms on WhatsApp</span></span>
-          </button>
-          <button
-            onClick={() => { setShowDisposition(false); setShowSecondVisitModal(true); }}
-            className="w-full flex items-center gap-3 bg-orange-50 dark:bg-orange-900/20 hover:bg-orange-100 dark:hover:bg-orange-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
-          >
-            <span className="material-symbols-outlined text-orange-500">event_repeat</span>
-            <span>Needs another visit<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Propose a return time for the customer to approve</span></span>
-          </button>
-          <button
-            onClick={() => { setShowDisposition(false); setVisitIssueKind('cannot_finish'); }}
-            className="w-full flex items-center gap-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-900 dark:text-white font-bold py-4 px-4 rounded-xl text-left"
-          >
-            <span className="material-symbols-outlined text-red-500">report_problem</span>
-            <span>Problem — can't finish<span className="block text-sm font-normal text-gray-500 dark:text-gray-400">Tell us what's wrong; our team steps in</span></span>
-          </button>
-        </div>
-      </Modal>
-
-      <SecondVisitModal job={job} isOpen={showSecondVisitModal}
-        onClose={() => setShowSecondVisitModal(false)} onRequested={onStatusChange} />
-      <VisitIssueModal job={job} kind={visitIssueKind || 'no_access'} isOpen={!!visitIssueKind}
-        onClose={() => setVisitIssueKind(null)} onReported={onStatusChange} />
-      <RequestAdjustmentModal job={job} isOpen={showAdjustmentModal}
-        onClose={() => setShowAdjustmentModal(false)} onRequested={onStatusChange} />
     </div>
   );
 };
