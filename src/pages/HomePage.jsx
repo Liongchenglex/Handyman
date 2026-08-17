@@ -260,8 +260,8 @@ const HomePage = () => {
                   <span className="material-symbols-outlined text-gray-500 dark:text-gray-400">call</span>
                   <div>
                     <span className="text-gray-700 dark:text-gray-300 block font-medium">Phone</span>
-                    <a href="tel:+6561234567" className="text-green-600 dark:text-green-400 hover:underline">
-                      +65 6123 4567
+                    <a href="tel:+6592298812" className="text-green-600 dark:text-green-400 hover:underline">
+                      +65 9229 8812
                     </a>
                   </div>
                 </div>

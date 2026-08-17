@@ -319,7 +319,7 @@ const JobDetails = () => {
                 Need Help?
               </h4>
               <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                <li className="break-words">📱 WhatsApp: +65 6123 4567</li>
+                <li className="break-words">📱 WhatsApp: +65 9229 8812</li>
                 <li className="break-all">📧 easydonehandyman@gmail.com</li>
               </ul>
             </div>

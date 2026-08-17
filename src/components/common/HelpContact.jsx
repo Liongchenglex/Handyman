@@ -134,7 +134,7 @@ const HelpContact = () => {
     {
       icon: "phone",
       title: "Customer Support Hotline",
-      details: "+65 8888 1234",
+      details: "+65 9229 8812",
       subtext: "Available 24/7 via phone call or WhatsApp"
     },
     {
@@ -180,12 +180,12 @@ const HelpContact = () => {
           </button>
 
           <a
-            href="tel:+6588881234"
+            href="tel:+6592298812"
             className="bg-primary/10 dark:bg-primary/20 border border-primary/30 rounded-xl p-6 hover:bg-primary/20 dark:hover:bg-primary/30 transition-colors text-center"
           >
             <span className="material-symbols-outlined text-primary text-2xl mb-2 block">emergency</span>
             <h3 className="font-semibold text-primary mb-1">Emergency Support</h3>
-            <p className="text-sm text-primary/80">Call now: +65 8888 1234</p>
+            <p className="text-sm text-primary/80">Call now: +65 9229 8812</p>
           </a>
         </div>
 
