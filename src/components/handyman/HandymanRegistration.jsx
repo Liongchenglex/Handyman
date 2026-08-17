@@ -66,6 +66,8 @@ const HandymanRegistration = ({
   // Error states for each step
   const [personalErrors, setPersonalErrors] = useState({});
   const [professionalErrors, setProfessionalErrors] = useState({});
+  // Step 3 validation — CV / work-experience document is mandatory
+  const [documentsError, setDocumentsError] = useState('');
 
   // Service types and other options
   const serviceTypes = [
@@ -249,18 +251,37 @@ const HandymanRegistration = ({
   // Step 3: Documents handlers
   const handleDocumentsSubmit = (e) => {
     e.preventDefault();
-    // Documents are optional for now, but validation can be added
+    // A CV / work-experience document is mandatory: admin approval relies
+    // on it, so a handyman cannot proceed without at least one file.
+    if (!documentsData.workExperience || documentsData.workExperience.length === 0) {
+      setDocumentsError('Please upload at least one CV or work experience document to continue.');
+      document.querySelector('[data-field="workExperience"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    setDocumentsError('');
     setCurrentStep(4);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleFileUpload = (field, files) => {
     setDocumentsData(prev => ({ ...prev, [field]: files }));
+    // Clear the mandatory-document error as soon as a CV is attached
+    if (field === 'workExperience' && files && files.length > 0) {
+      setDocumentsError('');
+    }
   };
 
   // Step 4: Final submission
   const handleFinalSubmit = async (e) => {
     e.preventDefault();
+    // Defensive re-check: the CV could have been removed after step 3
+    // (the user can navigate back). Never create an account without one.
+    if (!documentsData.workExperience || documentsData.workExperience.length === 0) {
+      setDocumentsError('Please upload at least one CV or work experience document to continue.');
+      setCurrentStep(3);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -733,13 +754,17 @@ const HandymanRegistration = ({
               </div>
 
               <form onSubmit={handleDocumentsSubmit} className="space-y-8">
-                {/* Work Experience/CV */}
-                <div>
-                  <h3 className="text-lg font-bold mb-4">Work Experience / CV</h3>
+                {/* Work Experience/CV — mandatory */}
+                <div data-field="workExperience">
+                  <h3 className="text-lg font-bold mb-4">
+                    Work Experience / CV <span className="text-red-500">*</span>
+                  </h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                    Upload your CV, resume, or work experience documents to help customers understand your background
+                    Upload your CV, resume, or work experience documents. This is required so we can verify your background before approving your profile.
                   </p>
-                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6">
+                  <div className={`border-2 border-dashed rounded-xl p-6 ${
+                    documentsError ? 'border-red-500' : 'border-gray-300 dark:border-gray-600'
+                  }`}>
                     <input
                       type="file"
                       multiple
@@ -757,6 +782,9 @@ const HandymanRegistration = ({
                       <span className="text-sm">PDF, DOC, DOCX, PNG, JPG up to 10MB each</span>
                     </label>
                   </div>
+                  {documentsError && (
+                    <p role="alert" className="text-red-500 text-sm mt-2">{documentsError}</p>
+                  )}
 
                   {/* File Preview for Work Experience */}
                   {documentsData.workExperience && documentsData.workExperience.length > 0 && (
@@ -846,7 +874,7 @@ const HandymanRegistration = ({
                         Build Trust with Customers
                       </h3>
                       <p className="text-blue-700 dark:text-blue-300 text-sm">
-                        These documents are optional but highly recommended. A strong portfolio and CV help customers choose you with confidence. You can always add more later from your dashboard.
+                        A CV or work experience document is required for verification. A profile photo is optional but highly recommended — it helps customers choose you with confidence. You can always add more later from your dashboard.
                       </p>
                     </div>
                   </div>
