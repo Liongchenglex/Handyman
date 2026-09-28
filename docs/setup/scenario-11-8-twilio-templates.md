@@ -55,8 +55,10 @@ Quick replies: **Approve** / **Decline** (router also accepts YES/NO/OK).
 - **Code:** `coming_back` poll handler, `functions/index.js:2942`
 
 ```
-🔁 The customer says job #{{1}} needs another visit. Propose the return time here:
+The customer says job #{{1}} needs another visit. Propose the return time here:
 {{2}}
+
+Thank you!
 ```
 
 | Var | Meaning | Sample |
@@ -75,10 +77,12 @@ existing `handyman_new_job` template) and keep only {{1}} in the body.
 - **Code:** `eveningVisitDisposition`, `functions/index.js:4229`
 
 ```
-👷 How did today's job go — {{1}} (#{{2}})?
+How did today's job go — {{1}} (#{{2}})?
 
 Tap to update (done / needs another visit / problem):
 {{3}}
+
+Thank you!
 ```
 
 | Var | Meaning | Sample |
@@ -112,7 +116,7 @@ Quick replies: **Reschedule** / **Contact support** (router also accepts 1/2/SUP
 - **Code:** `reportVisitIssue` (`cannot_finish`), `functions/index.js:5085`
 
 ```
-ℹ️ There's a snag with job #{{1}} — our team is looking into it and will contact you shortly. Your payment stays protected.
+There's a snag with job #{{1}} — our team is looking into it and will contact you shortly. Your payment stays protected.
 ```
 
 | Var | Meaning | Sample |
@@ -147,7 +151,7 @@ Please review the work and confirm completion, or report any issues.
 | {{3}} | service type | Plumbing |
 | {{4}} | job id (full) | abc123xyz |
 
-Quick replies: **✅ Confirm Complete** / **⚠️ Report Issue** / **🔁 He's coming back**.
+Quick replies: **Confirm Complete** / **Report Issue** / **He's coming back**.
 Button text matters: the router matches "CONFIRM COMPLETE" → confirm,
 "REPORT ISSUE" → reject (opens the what-happened follow-up), "HE'S COMING BACK"
 → coming_back (records second-visit intent). Until this v2 is approved, the old

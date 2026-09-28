@@ -39,7 +39,7 @@ extracts just what you need to click through the Twilio Content Editor.
 - **Code:** `runNoShowReport`, `functions/index.js:3136`
 
 ```
-😔 We're very sorry — we've recorded that your handyman didn't turn up for Job #{{1}} ({{2}}). How would you like to proceed?
+We're very sorry — we've recorded that your handyman didn't turn up for Job #{{1}} ({{2}}). How would you like to proceed?
 
 👉 Reply *1* — Reschedule with the same handyman
 👉 Reply *2* — Get a new handyman
@@ -61,7 +61,7 @@ Quick replies (exactly 3 — within the button cap): **Reschedule** / **New hand
 - **Code:** `runNoShowReport`, `functions/index.js:3118`
 
 ```
-⚠️ The customer reported that nobody arrived for Job #{{1}} ({{2}}). If this was reported in error, reply here and our team will look into it.
+The customer reported that nobody arrived for Job #{{1}} ({{2}}). If this was reported in error, reply here and our team will look into it.
 ```
 
 | Var | Meaning | Sample |
@@ -77,14 +77,14 @@ No buttons — a dispute reply falls through to F3 (reply parsing → admin).
 - **Code:** `requestPriceAdjustment`, `functions/index.js:5796` (send); re-issue at `functions/index.js:2596`
 
 ```
-💰 Your handyman has requested a price adjustment of +S${{1}} for Job #{{3}}.
+Your handyman has requested a price adjustment of +S${{1}} for Job #{{3}}.
 
 Reason: {{2}}
 
-👉 Pay here to approve (valid 24h):
+Pay here to approve (valid 24h):
 {{4}}
 
-👉 Reply *NO* to decline
+Reply *NO* to decline
 ```
 
 | Var | Meaning | Sample |
@@ -112,7 +112,7 @@ and keep only the amount/reason/job-id variables in the body.
 - **Code:** customer send `functions/index.js:2533`, handyman send `functions/index.js:2541`
 
 ```
-✅ The +S${{1}} adjustment for Job #{{2}} has been paid.
+The +S${{1}} adjustment for Job #{{2}} has been paid.
 ```
 
 | Var | Meaning | Sample |
