@@ -42,4 +42,13 @@ module.exports = {
   // big enough that per-trade targeting matters.
   NOTIFY_FILTER_BY_SERVICE_TYPE:
     process.env.NOTIFY_FILTER_BY_SERVICE_TYPE === 'true',
+
+  // How the second_visit_needed / visit_disposition templates take their
+  // job link. 'button' = approved template has a URL button with the
+  // domain baked in and wants only the job-id suffix (prod templates);
+  // anything else = link is in the body and needs the full URL (dev
+  // templates). Must match the template SIDs in the same env file.
+  // See visitService.buildDispositionLinkVar.
+  TEMPLATE_LINK_MODE:
+    process.env.TWILIO_TEMPLATE_LINK_MODE === 'button' ? 'button' : 'body',
 };

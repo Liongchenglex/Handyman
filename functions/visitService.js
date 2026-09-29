@@ -203,6 +203,23 @@ function buildVisitProposalReset(job, { visitIndex, nowIso }) {
   return { visits };
 }
 
+/**
+ * Template variable carrying the handyman's disposition deep link
+ * (second_visit_needed + visit_disposition templates).
+ *
+ * The approved templates differ per environment:
+ *   - 'button' (prod): a URL button with `https://<domain>/job-details/{{n}}`
+ *     baked in — the variable must be ONLY the suffix, or the link doubles.
+ *   - 'body' (dev, default): the link sits in the message body — the
+ *     variable must be the full URL.
+ * Set by TWILIO_TEMPLATE_LINK_MODE, which must match the SIDs configured
+ * in the same env file.
+ */
+function buildDispositionLinkVar({ appUrl, jobId, mode }) {
+  const suffix = `${jobId}?action=disposition`;
+  return mode === 'button' ? suffix : `${appUrl}/job-details/${suffix}`;
+}
+
 module.exports = {
   VisitError,
   SECOND_VISIT_REASONS,
@@ -218,4 +235,5 @@ module.exports = {
   validateVisitIssueReport,
   buildVisitIssueEntry,
   buildVisitProposalReset,
+  buildDispositionLinkVar,
 };

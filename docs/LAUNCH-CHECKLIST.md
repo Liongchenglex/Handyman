@@ -44,7 +44,7 @@ starts with `cd` into the right folder.
 ## Phase 0 — Tidy up
 
 - [x] Commit pending doc edits + support-email change (done: commit `f51bc6d`).
-- [ ] Delete iCloud duplicates (verified as older copies or empty folders).
+- [ x] Delete iCloud duplicates (verified as older copies or empty folders).
       Paste into Terminal:
 
   ```sh
@@ -57,10 +57,10 @@ starts with `cd` into the right folder.
 
   Expected `git status` output afterwards: only `brand/` and
   `Testing and Validation Guide (1).docx` left as `??`.
-- [ ] `brand/` and `Testing and Validation Guide (1).docx` (in the project
+- [ x] `brand/` and `Testing and Validation Guide (1).docx` (in the project
       folder): commit them (`git add brand && git commit -m "add brand assets"`)
       or move them out of the project folder.
-- [ ] Push `master` to GitHub:
+- [x ] Push `master` to GitHub:
 
   ```sh
   cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
@@ -69,39 +69,18 @@ starts with `cd` into the right folder.
 
 ## Phase 1 — Connect the templates to the app
 
-- [ ] Open https://console.twilio.com/us1/develop/sms/content-template-builder,
-      then paste the **browser brief** (bottom of this file) into Claude in
-      Chrome.
-- [ ] From its result, check all 10 templates say **Approved**. Leave any
-      Pending/Rejected one blank below (the app sends plain text instead).
-- [ ] Open the prod env file:
-
-  ```sh
-  open -e /Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418
-  ```
-
-  Add these lines at the end with the `HX…` SIDs filled in, and **change**
-  the existing `TWILIO_TEMPLATE_JOB_COMPLETION=` line to the 3-button v2 SID
-  (don't add a second copy of that line):
-
-  ```
-  TWILIO_TEMPLATE_NO_SHOW_CHOICE=
-  TWILIO_TEMPLATE_NO_SHOW_REPORTED=
-  TWILIO_TEMPLATE_PRICE_ADJUSTMENT=
-  TWILIO_TEMPLATE_ADJUSTMENT_PAID=
-  TWILIO_TEMPLATE_SECOND_VISIT_PROPOSAL=
-  TWILIO_TEMPLATE_SECOND_VISIT_NEEDED=
-  TWILIO_TEMPLATE_VISIT_DISPOSITION=
-  TWILIO_TEMPLATE_ACCESS_ISSUE=
-  TWILIO_TEMPLATE_VISIT_PROBLEM=
-  ```
-
-  Shortcut: paste the brief's output to Claude Code and it will edit the file.
-- [ ] Check it worked — this should print 10 lines, each with an `HX…` value:
+- [x] Collected SIDs from Twilio (browser brief at the bottom of this file).
+- [x] All 10 SIDs written to both env files (2026-09-29). Prod uses the
+      `_prod` variants of `second_visit_needed` / `visit_disposition` (URL
+      button); dev uses the `_dev` variants (link in body).
+- [x] `TWILIO_TEMPLATE_LINK_MODE=button` added to the prod env only, and the
+      code now sends just the job-id suffix to button templates (without it
+      the button link would double up the domain).
+- [ ] Double-check — this should print 10 `HX…` lines plus `LINK_MODE=button`:
 
   ```sh
   cd /Users/liongchenglex/Desktop/AI_Projects/Handyman/functions
-  grep -E "NO_SHOW|PRICE_ADJ|ADJUSTMENT_PAID|SECOND_VISIT|VISIT_DISP|ACCESS_ISSUE|VISIT_PROBLEM|JOB_COMPLETION" .env.handyman-sg-3b418
+  grep -E "NO_SHOW|PRICE_ADJ|ADJUSTMENT_PAID|SECOND_VISIT|VISIT_DISP|ACCESS_ISSUE|VISIT_PROBLEM|JOB_COMPLETION|LINK_MODE" .env.handyman-sg-3b418
   ```
 
 ## Phase 2 — Stripe webhooks (LIVE mode)
@@ -154,12 +133,31 @@ priced at **S$4–20** in both `src/config/servicePricing.js:21` and
 and loses only ~S$0.64 in Stripe fees when refunded. The S$20 max also
 leaves room to test a price adjustment.
 
-- [ ] **Stop real handymen being pinged.** Open
-      https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fhandymen
-      → **Filter** → field `serviceTypes`, **array-contains**,
-      `Appliance Repair`. Every handyman listed who isn't a test account will
-      get your test jobs on WhatsApp. Either warn them, or temporarily set
-      their `notifyOnNewJob` to `false` (set it back after Phase 6).
+- [ ] **Stop real handymen being pinged.** By default EVERY active,
+      verified, Stripe-onboarded handyman gets a WhatsApp for EVERY new job,
+      whatever the service type (`NOTIFY_FILTER_BY_SERVICE_TYPE` is off —
+      `functions/notificationConfig.js`). Pick one:
+  - **Option A (recommended):** turn on trade matching for prod, so only
+    handymen listing `Appliance Repair` get your test jobs. Add this line to
+    `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`
+    **before** the Phase 3 deploy:
+
+    ```
+    NOTIFY_FILTER_BY_SERVICE_TYPE=true
+    ```
+
+    Then open
+    https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fhandymen
+    → **Filter** → `serviceTypes` **array-contains** `Appliance Repair`, and
+    make sure only your test handymen appear. Real handymen who list it: warn
+    them or set their `notifyOnNewJob` to `false`.
+    After testing, decide whether to keep the line (real jobs then only go to
+    matching trades) or delete it and redeploy functions.
+  - **Option B:** leave it off and set `notifyOnNewJob` to `false` on
+    **every** non-test handyman in that collection for the test period.
+
+  Note: the job board in the app still shows test jobs to every logged-in
+  handyman either way — the setting only controls WhatsApp.
 - [ ] **Test accounts ready:**
   - CUST — your own WhatsApp number (you book as a guest at `/request-job`).
   - HM-A and HM-B — two handyman accounts on phones you control. In Firestore
@@ -281,6 +279,7 @@ the pass condition.
   - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/servicePricing.js` (line 18)
 
   Then redeploy both parts (Phase 3 commands) and commit.
+- [ ] Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
 - [ ] Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
       `true`.
 - [ ] Delete `TEST` jobs from prod Firestore (jobs collection → open job →

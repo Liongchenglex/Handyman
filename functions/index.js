@@ -61,7 +61,7 @@ const {
 // wrapper that detects the paid-transition and delegates.
 // See docs/features/handyman-job-notifications.md.
 const { runFanOut: runHandymanFanOut } = require('./handymanNotifier');
-const { NOTIFY_ENABLED } = require('./notificationConfig');
+const { NOTIFY_ENABLED, TEMPLATE_LINK_MODE } = require('./notificationConfig');
 
 // Job reassignment — cancel-side domain logic (pure validation +
 // update-payload construction). See functions/jobReassignment.js and
@@ -88,7 +88,7 @@ const {
   buildVisitScheduledUpdate, buildVisitDeclinedUpdate,
   hasPendingSecondVisit, shouldSendDisposition,
   validateVisitIssueReport, buildVisitIssueEntry,
-  buildVisitProposalReset,
+  buildVisitProposalReset, buildDispositionLinkVar,
 } = require('./visitService');
 
 // Post-inspection price adjustment domain logic (Scenario 10,
@@ -3370,7 +3370,10 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
                 await sendTwilioTemplateMessage(
                   formatPhoneToWhatsApp(hmPhone),
                   process.env.TWILIO_TEMPLATE_SECOND_VISIT_NEEDED,
-                  { '1': verdict.prompt.jobId.slice(-6), '2': link },
+                  {
+                    '1': verdict.prompt.jobId.slice(-6),
+                    '2': buildDispositionLinkVar({ appUrl: APP_URL, jobId: verdict.prompt.jobId, mode: TEMPLATE_LINK_MODE }),
+                  },
                   `🔁 The customer says Job #${verdict.prompt.jobId.slice(-6)} needs another visit${hadCompletionClaim ? ' (they answered this after your Mark Complete — if you believe the job IS complete, contact easydonehandyman@gmail.com)' : ''}. Propose the return time here:\n${link}`
                 );
               }
@@ -4800,7 +4803,11 @@ exports.eveningVisitDisposition = functions.pubsub
         const sendResult = await sendTwilioTemplateMessage(
           formatPhoneToWhatsApp(hmPhone),
           process.env.TWILIO_TEMPLATE_VISIT_DISPOSITION,
-          { '1': job.serviceType || 'job', '2': jobShortId, '3': link },
+          {
+            '1': job.serviceType || 'job',
+            '2': jobShortId,
+            '3': buildDispositionLinkVar({ appUrl: APP_URL, jobId: doc.id, mode: TEMPLATE_LINK_MODE }),
+          },
           `👷 How did today's job go — ${job.serviceType || 'job'} (#${jobShortId})?\n\nTap to update (done / needs another visit / problem):\n${link}`
         );
         if (!sendResult.success) { console.error(`⚠️ disposition send failed for ${doc.id}:`, sendResult.error); skipped++; continue; }

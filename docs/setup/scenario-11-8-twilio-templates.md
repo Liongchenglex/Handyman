@@ -71,6 +71,14 @@ No buttons — the link is the answer path.
 **CTA URL button** with a `{{1}}`-suffixed URL instead (same approach as the
 existing `handyman_new_job` template) and keep only {{1}} in the body.
 
+> **As approved (2026-09-29):** prod uses `second_visit_needed_prod`
+> (`HX4bfd…`), which has a URL button
+> `https://www.easydonehandyman.sg/job-details/{{2}}`; dev uses the no-button
+> `_dev` variant with the link in the body. Prod sets
+> `TWILIO_TEMPLATE_LINK_MODE=button`, so the code sends only
+> `<jobId>?action=disposition` as the link variable
+> (`visitService.buildDispositionLinkVar`).
+
 ## 3. `visit_disposition` → `TWILIO_TEMPLATE_VISIT_DISPOSITION`
 
 - **To:** handyman · **Trigger:** 7pm evening sweep on the visit day when the handyman went silent (Door 2)
@@ -93,6 +101,11 @@ Thank you!
 
 No buttons — the deep link opens the in-app disposition sheet. Same
 ends-with-URL caveat as template 2 (same CTA-button escape hatch).
+
+> **As approved (2026-09-29):** prod uses `visit_disposition_prod`
+> (`HXfc92…`) with a URL button `https://www.easydonehandyman.sg/job-details/{{3}}`;
+> dev uses the no-button `_dev` variant. Same `TWILIO_TEMPLATE_LINK_MODE`
+> switch as template 2.
 
 ## 4. `access_issue_choice` → `TWILIO_TEMPLATE_ACCESS_ISSUE`
 

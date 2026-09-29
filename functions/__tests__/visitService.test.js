@@ -16,6 +16,7 @@ const {
   validateVisitIssueReport,
   buildVisitIssueEntry,
   buildVisitProposalReset,
+  buildDispositionLinkVar,
 } = require('../visitService');
 
 const NOW_ISO = '2026-07-29T11:00:00.000Z';
@@ -237,5 +238,21 @@ describe('buildVisitProposalReset', () => {
   test('returns null for an already-dateless entry (idempotent)', () => {
     const j = job({ visits: [{ status: 'pending_schedule', proposedDate: null }] });
     expect(buildVisitProposalReset(j, { visitIndex: 0, nowIso: NOW_ISO })).toBeNull();
+  });
+});
+
+describe('buildDispositionLinkVar', () => {
+  const APP = 'https://www.easydonehandyman.sg';
+  test('body mode (default) returns the full deep link for in-body templates', () => {
+    expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123' }))
+      .toBe('https://www.easydonehandyman.sg/job-details/JOB123?action=disposition');
+  });
+  test('button mode returns only the suffix after /job-details/', () => {
+    expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'button' }))
+      .toBe('JOB123?action=disposition');
+  });
+  test('unknown mode falls back to the full link', () => {
+    expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'weird' }))
+      .toBe('https://www.easydonehandyman.sg/job-details/JOB123?action=disposition');
   });
 });
