@@ -1,8 +1,32 @@
 # Launch Checklist — Job Lifecycle Flows (prod)
 
-Written 2026-09-28 to restart the project after a break. Work top to bottom.
-Tick boxes as you go. Details live in the linked docs; this is the
-"what do I actually do" list.
+Written 2026-09-28 to restart the project after a break. Work top to bottom,
+ticking boxes as you go. Every command below is copy-paste ready: each one
+starts with `cd` into the right folder.
+
+## Quick reference
+
+| Thing | Exact value |
+|---|---|
+| Project folder | `/Users/liongchenglex/Desktop/AI_Projects/Handyman` |
+| Prod Firebase project | `handyman-sg-3b418` (alias `prod`) — Stripe **LIVE** |
+| Dev Firebase project | `eazydone-d06cf` (alias `dev`) — Stripe TEST |
+| Prod backend env file | `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418` |
+| Prod frontend env file | `/Users/liongchenglex/Desktop/AI_Projects/Handyman/.env.prod` |
+| Firebase CLI | `/Users/liongchenglex/.npm-global/bin/firebase` |
+| Prod website | https://www.easydonehandyman.sg |
+| Customer books a job | https://www.easydonehandyman.sg/request-job |
+| Handyman dashboard | https://www.easydonehandyman.sg/handyman-dashboard |
+| Admin dashboard (Active jobs table, "Needs attention" chip, Refund / Set time / Force unassign / Mark resolved buttons) | https://www.easydonehandyman.sg/admin |
+| Admin fund release ("Release Funds" button) | https://www.easydonehandyman.sg/admin/fund-release |
+| Prod Firestore — jobs | https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fjobs |
+| Prod Firestore — indexes | https://console.firebase.google.com/project/handyman-sg-3b418/firestore/indexes |
+| Prod function logs | https://console.cloud.google.com/logs/query?project=handyman-sg-3b418 |
+| Prod scheduled jobs (force-run) | https://console.cloud.google.com/cloudscheduler?project=handyman-sg-3b418 |
+| Stripe payments (live) | https://dashboard.stripe.com/payments |
+| Stripe transfers to handymen | https://dashboard.stripe.com/connect/transfers |
+| Stripe webhooks (live) | https://dashboard.stripe.com/webhooks |
+| Twilio templates | https://console.twilio.com/us1/develop/sms/content-template-builder |
 
 **Where things stand**
 
@@ -12,43 +36,53 @@ Tick boxes as you go. Details live in the linked docs; this is the
   (self-serve swap after inspection). Scenario 9 (customer cancel) is
   manual by design — admin clicks **Refund**.
 - **The gap:** the WhatsApp templates exist in Twilio, but 9 of their SIDs
-  are not in the env files, so the code falls back to freeform messages
-  (which WhatsApp only delivers inside a 24h customer-initiated window).
-
-**Environments** (`.firebaserc`)
-
-| Alias | Firebase project | Env file | Stripe |
-|---|---|---|---|
-| `dev` / default | `eazydone-d06cf` | `functions/.env.eazydone-d06cf` | TEST mode |
-| `prod` | `handyman-sg-3b418` | `functions/.env.handyman-sg-3b418` | **LIVE** — real money |
+  are missing from the env files, so the app falls back to plain messages
+  that WhatsApp only delivers inside a 24h customer-initiated window.
 
 ---
 
 ## Phase 0 — Tidy up
 
-- [x] Commit pending doc edits (emoji removal in template runbooks) and the
-      support-email change in `SuspendedStatusView.jsx`.
-- [ ] Delete iCloud duplicates (all verified as older copies / empty — the
-      originals are newer). Run from the repo root:
+- [x] Commit pending doc edits + support-email change (done: commit `f51bc6d`).
+- [ ] Delete iCloud duplicates (verified as older copies or empty folders).
+      Paste into Terminal:
 
   ```sh
+  cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
   rm -f "src/components/handyman/JobBoard 2.jsx" "package-lock 2.json" ".git/index 2"
   rmdir "docs/features 2" "docs/setup 2" "docs/deployment 2"
   rm -rf "node_modules 2"
+  git status --short
   ```
 
-- [ ] Decide what to do with the untracked `brand/` folder and
-      `Testing and Validation Guide (1).docx` (commit, move, or ignore).
+  Expected `git status` output afterwards: only `brand/` and
+  `Testing and Validation Guide (1).docx` left as `??`.
+- [ ] `brand/` and `Testing and Validation Guide (1).docx` (in the project
+      folder): commit them (`git add brand && git commit -m "add brand assets"`)
+      or move them out of the project folder.
+- [ ] Push `master` to GitHub:
+
+  ```sh
+  cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
+  git push origin master
+  ```
 
 ## Phase 1 — Connect the templates to the app
 
-- [ ] Use the **browser brief** at the bottom of this file to have browser
-      Claude collect the SIDs from Twilio.
-- [ ] Confirm every template below shows **Approved** for WhatsApp.
-      Anything still pending/rejected: leave its env var unset (freeform
-      fallback) and note it here.
-- [ ] Paste the SIDs into `functions/.env.handyman-sg-3b418` (prod), and
-      into `functions/.env.eazydone-d06cf` too if you test on dev:
+- [ ] Open https://console.twilio.com/us1/develop/sms/content-template-builder,
+      then paste the **browser brief** (bottom of this file) into Claude in
+      Chrome.
+- [ ] From its result, check all 10 templates say **Approved**. Leave any
+      Pending/Rejected one blank below (the app sends plain text instead).
+- [ ] Open the prod env file:
+
+  ```sh
+  open -e /Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418
+  ```
+
+  Add these lines at the end with the `HX…` SIDs filled in, and **change**
+  the existing `TWILIO_TEMPLATE_JOB_COMPLETION=` line to the 3-button v2 SID
+  (don't add a second copy of that line):
 
   ```
   TWILIO_TEMPLATE_NO_SHOW_CHOICE=
@@ -60,120 +94,199 @@ Tick boxes as you go. Details live in the linked docs; this is the
   TWILIO_TEMPLATE_VISIT_DISPOSITION=
   TWILIO_TEMPLATE_ACCESS_ISSUE=
   TWILIO_TEMPLATE_VISIT_PROBLEM=
-  # REPLACE the existing value with the 3-button v2 template's SID:
-  TWILIO_TEMPLATE_JOB_COMPLETION=
   ```
 
-  Or paste the brief's output to Claude Code and it will fill these in.
+  Shortcut: paste the brief's output to Claude Code and it will edit the file.
+- [ ] Check it worked — this should print 10 lines, each with an `HX…` value:
 
-## Phase 2 — Stripe Dashboard (LIVE mode)
+  ```sh
+  cd /Users/liongchenglex/Desktop/AI_Projects/Handyman/functions
+  grep -E "NO_SHOW|PRICE_ADJ|ADJUSTMENT_PAID|SECOND_VISIT|VISIT_DISP|ACCESS_ISSUE|VISIT_PROBLEM|JOB_COMPLETION" .env.handyman-sg-3b418
+  ```
 
-- [ ] Developers → Webhooks → the prod endpoint is subscribed to all of:
-  - `payment_intent.amount_capturable_updated` (capture at booking)
-  - `payment_intent.succeeded`
-  - `payment_intent.canceled` (lost-authorization alarm)
-  - `charge.refunded`
-  - `checkout.session.completed` (price-adjustment paid)
-  - `checkout.session.expired` (price-adjustment link expiry)
+## Phase 2 — Stripe webhooks (LIVE mode)
+
+- [ ] Open https://dashboard.stripe.com/webhooks. Make sure the **Test mode**
+      toggle (top right) is OFF.
+- [ ] Click the endpoint whose URL ends in `/stripeWebhook` and contains
+      `handyman-sg-3b418`.
+- [ ] "Listening to" must include all 6 events below. If any are missing:
+      **⋯ → Update details → Select events**, tick them, **Update endpoint**.
+  - [ ] `payment_intent.amount_capturable_updated` — takes the money at booking
+  - [ ] `payment_intent.succeeded` — marks the job paid, notifies handymen
+  - [ ] `payment_intent.canceled` — alerts you if a card authorisation is lost
+  - [ ] `charge.refunded` — marks the job refunded
+  - [ ] `checkout.session.completed` — price-adjustment paid
+  - [ ] `checkout.session.expired` — price-adjustment link expired
 
 ## Phase 3 — Deploy to prod
 
-- [ ] `~/.npm-global/bin/firebase deploy -P prod --only functions,firestore:rules,firestore:indexes`
-- [ ] Firebase Console → Firestore → Indexes: wait until all show **Enabled**.
-- [ ] `npm run build` then `~/.npm-global/bin/firebase deploy -P prod --only hosting`
+- [ ] Backend (functions + database rules + indexes), ~5 min:
+
+  ```sh
+  cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
+  /Users/liongchenglex/.npm-global/bin/firebase deploy -P prod --only functions,firestore:rules,firestore:indexes
+  ```
+
+  Pass = ends with `Deploy complete!`. If it asks to delete functions that
+  aren't in the code, answer **N** and send me the list.
+- [ ] Open https://console.firebase.google.com/project/handyman-sg-3b418/firestore/indexes
+      and wait until every row says **Enabled** (not "Building").
+- [ ] Frontend (website):
+
+  ```sh
+  cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
+  cp .env.prod .env.production.local
+  npm run build
+  /Users/liongchenglex/.npm-global/bin/firebase deploy -P prod --only hosting
+  ```
+
+  (Don't run a bare `npm install` — see the note in memory; `npm run build`
+  uses the existing `node_modules`.)
+- [ ] Open https://www.easydonehandyman.sg in a private window and confirm it
+      loads.
 
 ## Phase 4 — Prod test setup (read before testing)
 
-Testing on prod means:
+**Use the `Appliance Repair` service for every test job.** It's temporarily
+priced at **S$4–20** in both `src/config/servicePricing.js:21` and
+`functions/servicePricing.js:18`, so each test booking costs a few dollars
+and loses only ~S$0.64 in Stripe fees when refunded. The S$20 max also
+leaves room to test a price adjustment.
 
-- **Real charges.** Refunds return the money, but Stripe keeps its fee
-  (~3.4% + S$0.50 per charge). Always book the cheapest service.
-- **Real handymen get pinged.** Fan-out goes to every handyman who is
-  `active` + `verified` + Stripe-onboarded + lists the job's service type
-  (`functions/handymanNotifier.js:62`). Book test jobs under a service type
-  **only your test handymen list**, or warn your handymen first.
-- **Test data stays in prod.** Put `TEST` in every job description.
+- [ ] **Stop real handymen being pinged.** Open
+      https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fhandymen
+      → **Filter** → field `serviceTypes`, **array-contains**,
+      `Appliance Repair`. Every handyman listed who isn't a test account will
+      get your test jobs on WhatsApp. Either warn them, or temporarily set
+      their `notifyOnNewJob` to `false` (set it back after Phase 6).
+- [ ] **Test accounts ready:**
+  - CUST — your own WhatsApp number (you book as a guest at `/request-job`).
+  - HM-A and HM-B — two handyman accounts on phones you control. In Firestore
+    `handymen/{id}` each must have: `status: "active"`, `verified: true`,
+    `stripeOnboardingCompleted: true`, and `serviceTypes` containing
+    `Appliance Repair`.
+  - ADMIN — your admin login at https://www.easydonehandyman.sg/admin
+- [ ] Type `TEST` at the start of every job description so you can find
+      and clean up test jobs later.
+- [ ] **Running scheduled jobs on demand** (don't wait for the timer): open
+      https://console.cloud.google.com/cloudscheduler?project=handyman-sg-3b418,
+      find the row whose name contains the function, click **⋮ → Force run**.
 
-- [ ] Actors ready:
-  - CUST: your own WhatsApp phone
-  - HM-A and HM-B: two handyman accounts with phones you control, verified
-    and Stripe-onboarded
-  - ADMIN: admin login
-- [ ] Scheduled jobs are not waited on. Trigger them by hand from Google Cloud
-      Console → Cloud Functions → function → **Testing** tab (or
-      `firebase functions:shell -P prod`):
-      `autoTriggerCompletionPoll`, `stuckStateSweep`, `eveningVisitDisposition`.
+  | Function | Normally runs (SGT) | What it does |
+  |---|---|---|
+  | `autoTriggerCompletionPoll` | 10:00 daily | "Is the job done?" poll, day after the visit |
+  | `stuckStateSweep` | 10:30 daily | Nudges + "Needs attention" flags |
+  | `eveningVisitDisposition` | 19:00 daily | "How did today's job go?" link to handyman |
+
+- [ ] **Checking a job's data:** open the jobs link in the Quick reference,
+      find the job by ID (last 6 characters are shown as "Job #xxxxxx" in
+      WhatsApp and the app).
 
 ## Phase 5 — Test run (priority order)
 
 Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
 
-- [ ] **Happy path.** CUST books → Stripe payment shows **Succeeded** (not
-      "Uncaptured") → HM-A gets WhatsApp, claims → CUST gets "accepted" →
-      HM-A taps Mark Complete → CUST gets 3-button poll → taps Confirm
-      Complete → admin `/admin/fund-release` → Release → HM-A's Stripe
-      account receives the transfer.
-- [ ] **Handyman cancels.** HM-A cancels from the job page → job back on
-      the board → HM-A cannot reclaim → HM-B can → CUST notified.
-- [ ] **Reschedule.** HM proposes a new time → CUST taps Decline → CUST gets
-      a pick-time link → picks a slot → HM gets Approve/Decline → Approve →
-      both confirmed.
-- [ ] **ASAP job.** Claiming requires a proposed time → CUST approves →
-      job now has a real date.
-- [ ] **Price adjustment.** HM taps "Request price adjustment" (+S$X) → CUST
-      gets the pay link → pays → both confirmed, job amount increased →
-      at release, **two** transfers go out.
-- [ ] **Price adjustment decline.** CUST replies NO → HM told to proceed at
-      original price or cancel.
-- [ ] **No-show.** On the poll CUST taps Report Issue → "never came" (2) →
-      CUST gets 3 choices (Reschedule / New handyman / Cancel & refund).
-      Try each choice on a different job.
-- [ ] **Second visit.** CUST taps "He's coming back" on the poll → HM gets a
-      link to propose the return date.
-- [ ] **Customer not home.** On the visit day HM taps "Customer not home" →
-      CUST gets Reschedule / Contact support.
-- [ ] **Evening disposition.** Job dated today, HM does nothing → trigger
-      `eveningVisitDisposition` → HM gets the deep link → it opens the
-      disposition sheet.
-- [ ] **Stuck-job sweep.** Leave a prompt unanswered past its expiry →
-      trigger `stuckStateSweep` → nudge sent; later → job appears in the
-      admin "Attention needed" queue.
-- [ ] **Templates really used.** For each new template, trigger it when the
-      recipient hasn't messaged the business number in >24h. Check function
-      logs: a Twilio **63016** error = that template's SID is not set.
+- [ ] **T1 Happy path.**
+  1. CUST: https://www.easydonehandyman.sg/request-job → Appliance Repair,
+     date = tomorrow, description `TEST happy path` → pay with a real card.
+  2. Stripe https://dashboard.stripe.com/payments: payment shows
+     **Succeeded** (NOT "Uncaptured").
+  3. HM-A: WhatsApp "new job" arrives → `/handyman-dashboard` →
+     **Express Interest** → confirm.
+  4. CUST: WhatsApp "your job was accepted".
+  5. HM-A: open the job → **Mark Complete**.
+  6. CUST: WhatsApp poll with 3 buttons → tap **Confirm Complete**.
+  7. ADMIN: `/admin/fund-release` → **Release Funds** on the job.
+  8. Stripe https://dashboard.stripe.com/connect/transfers: transfer to HM-A.
+- [ ] **T2 Handyman cancels.** New job; HM-A claims → job page → **Can't do
+      this job?** → pick a reason. Check: job reappears on the job board,
+      HM-A can't claim it again, HM-B can, CUST gets a WhatsApp.
+- [ ] **T3 Reschedule.** Job claimed by HM-A → **Propose new time** → CUST
+      taps **Decline** → CUST receives a `/pick-time` link → picks a slot →
+      HM-A gets Approve/Decline → **Approve** → both get "new time
+      confirmed". Firestore: job `preferredDate` changed.
+- [ ] **T4 ASAP job.** Book with the ASAP option → HM-A's **Express
+      Interest** must ask for a date/time → CUST taps **Approve** → Firestore:
+      job now has `preferredDate` and `scheduledFromAsapAt`.
+- [ ] **T5 Price adjustment (pay).** Book at S$4. HM-A → **Request price
+      adjustment** → amount `5`, any reason → CUST gets a WhatsApp with a pay
+      link → pay → both get "adjustment paid". Firestore:
+      `priceAdjustment.status: "paid"`, `estimatedBudget` up by 5. Then do
+      T1 steps 5–8: Stripe should show **two** transfers to HM-A.
+- [ ] **T6 Price adjustment (decline).** Same, but CUST replies `NO` →
+      HM-A gets "customer declined". Firestore:
+      `priceAdjustment.status: "declined"`.
+- [ ] **T7 No-show.** Job dated today, HM-A claimed, don't mark complete →
+      force-run `autoTriggerCompletionPoll` (only fires the day after the
+      date; alternatively have HM-A tap **Mark Complete**) → CUST taps
+      **Report Issue** → replies `2` ("never came") → CUST gets 3 choices.
+      Repeat on 3 jobs, replying `1`, `2`, `3`:
+      - `1` → CUST gets a `/pick-time` link.
+      - `2` → job shows **Needs attention** on `/admin` → **Force unassign**
+        → job back on the board.
+      - `3` → job shows **Needs attention** → used in refund test R4.
+- [ ] **T8 Second visit.** HM-A → **Mark Complete** → CUST taps **He's
+      coming back** → HM-A gets a WhatsApp link → opens → **Needs another
+      visit** → pick date → CUST **Approve**.
+- [ ] **T9 Customer not home.** Job dated **today**, HM-A claimed → job page
+      → **Customer not home** → CUST gets Reschedule / Contact support →
+      tap **Reschedule** → CUST gets a `/pick-time` link.
+- [ ] **T10 Evening check-in.** Job dated today, HM-A does nothing →
+      force-run `eveningVisitDisposition` → HM-A gets "How did today's job
+      go?" link → opens with **Job's done / Needs another visit / Problem —
+      can't finish** options.
+- [ ] **T11 Stuck-job sweep.** Leave any Approve/Decline prompt unanswered
+      for 2 days → force-run `stuckStateSweep` → nudge WhatsApp sent → after
+      the next threshold, job shows **Needs attention** on `/admin` and you
+      get a digest email.
+- [ ] **T12 Templates really used.** Trigger each new template to a phone
+      that hasn't messaged the business number for 24h+. Then open the logs
+      link in the Quick reference and search `63016` — any hit means that
+      template's SID isn't set (Phase 1).
 
 ## Phase 6 — Refund testing
 
-Refunds are admin-only: **Admin Dashboard → Active jobs / Attention queue →
-Refund** (calls `refundPayment`, `functions/index.js:1997`).
+Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table
+→ **Refund** on the job's row (calls `refundPayment`, `functions/index.js:1997`).
 
-- [ ] **R1 — Refund an in-progress job.** Book, HM-A claims, admin clicks
-      Refund and confirms.
-      Verify: Stripe payment shows **Refunded**; Firestore
-      `jobs/{id}` has `paymentStatus: 'refunded'`, `status: 'cancelled'`;
-      row leaves the queue.
-- [ ] **R2 — Refund with a paid price adjustment.** Do the adjustment, pay
-      it, then Refund. Verify **both** charges are refunded in Stripe.
-- [ ] **R3 — Refund an unclaimed job** (not in the queue yet). Refund from the
-      Stripe Dashboard → payment → Refund. Verify the `charge.refunded`
-      webhook set `paymentStatus: 'refunded'` on the job; if the job status
-      is still `pending`, cancel it manually in Firestore so it leaves the
-      board.
-- [ ] **R4 — No-show → cancel & refund.** CUST picks option 3 → job flagged
-      in the Attention queue → admin Refund works.
-- [ ] **R5 — Money never moves by itself.** After all non-refund tests, every
-      touched job still has `paymentStatus: 'succeeded'` until admin
-      releases or refunds.
+- [ ] **R1 Refund an in-progress job.** Book (S$4), HM-A claims, ADMIN clicks
+      **Refund** → confirm. Check:
+  - Stripe payments: payment shows **Refunded**.
+  - Firestore job: `paymentStatus: "refunded"`, `status: "cancelled"`.
+  - Row gone from the Active jobs table.
+- [ ] **R2 Refund with a paid price adjustment.** Do T5 up to "paid", then
+      **Refund**. Stripe payments: **both** the S$4 and the S$5 charges show
+      Refunded.
+- [ ] **R3 Refund a job nobody claimed** (not in the Active jobs table).
+      https://dashboard.stripe.com/payments → click the payment → **Refund**
+      → full amount. Firestore job should change to
+      `paymentStatus: "refunded"` within a minute. If job `status` is still
+      `"pending"`, edit it to `"cancelled"` by hand so it leaves the board.
+- [ ] **R4 No-show → refund.** The job from T7 reply `3` → **Refund** on its
+      row → same checks as R1.
+- [ ] **R5 Money never moves by itself.** In Firestore, every test job that
+      wasn't released or refunded still has `paymentStatus: "succeeded"`.
 
-Real-card refunds take 5–10 business days to show on the statement;
-"Refunded" in Stripe is the pass condition.
+Real cards show the refund in 5–10 business days; **Refunded** in Stripe is
+the pass condition.
 
-## Phase 7 — After launch
+## Phase 7 — Before real customers
 
-- [ ] Clean up TEST jobs in prod Firestore.
-- [ ] Open owner decisions still pending (spec §6): refund policy copy
-      (full vs minus fee); the "$20 penalty" copy in the Express Interest
-      modal.
+- [ ] **Revert the test price.** In both files, change
+      `'Appliance Repair':  { min: 4,   max: 20 },` to
+      `'Appliance Repair':  { min: 90,  max: 130 },` and remove the `TEMP`
+      comment:
+  - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/src/config/servicePricing.js` (line 21)
+  - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/servicePricing.js` (line 18)
+
+  Then redeploy both parts (Phase 3 commands) and commit.
+- [ ] Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
+      `true`.
+- [ ] Delete `TEST` jobs from prod Firestore (jobs collection → open job →
+      **⋮ → Delete document**).
+- [ ] Still-open product decisions (spec §6): refund policy wording (full vs
+      minus fee), and the "$20 penalty" wording in the Express Interest pop-up.
 
 ---
 
@@ -186,8 +299,8 @@ Twilio Console.
 TASK: Look up WhatsApp template Content SIDs in the Twilio Console. READ ONLY —
 do not create, edit, delete, or submit anything.
 
-1. Go to https://console.twilio.com → Messaging → Content Template Builder
-   (a.k.a. Content Editor). If there are multiple Twilio accounts/subaccounts,
+1. Go to https://console.twilio.com/us1/develop/sms/content-template-builder
+   (Messaging → Content Template Builder, a.k.a. Content Editor). If there are multiple Twilio accounts/subaccounts,
    list which one you are in.
 2. For each template below, find the matching one in the list (match by
    friendly name first; if the name differs, match by the body text snippet
