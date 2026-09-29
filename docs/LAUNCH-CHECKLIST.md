@@ -85,18 +85,18 @@ starts with `cd` into the right folder.
 
 ## Phase 2 — Stripe webhooks (LIVE mode)
 
-- [ ] Open https://dashboard.stripe.com/webhooks. Make sure the **Test mode**
+- [ x ] Open https://dashboard.stripe.com/webhooks. Make sure the **Test mode**
       toggle (top right) is OFF.
-- [ ] Click the endpoint whose URL ends in `/stripeWebhook` and contains
+- [ x] Click the endpoint whose URL ends in `/stripeWebhook` and contains
       `handyman-sg-3b418`.
-- [ ] "Listening to" must include all 6 events below. If any are missing:
+- [ x ] "Listening to" must include all 6 events below. If any are missing:
       **⋯ → Update details → Select events**, tick them, **Update endpoint**.
-  - [ ] `payment_intent.amount_capturable_updated` — takes the money at booking
-  - [ ] `payment_intent.succeeded` — marks the job paid, notifies handymen
-  - [ ] `payment_intent.canceled` — alerts you if a card authorisation is lost
-  - [ ] `charge.refunded` — marks the job refunded
-  - [ ] `checkout.session.completed` — price-adjustment paid
-  - [ ] `checkout.session.expired` — price-adjustment link expired
+  - [ x] `payment_intent.amount_capturable_updated` — takes the money at booking
+  - [x ] `payment_intent.succeeded` — marks the job paid, notifies handymen
+  - [ x] `payment_intent.canceled` — alerts you if a card authorisation is lost
+  - [ x] `charge.refunded` — marks the job refunded
+  - [ x] `checkout.session.completed` — price-adjustment paid
+  - [ x] `checkout.session.expired` — price-adjustment link expired
 
 ## Phase 3 — Deploy to prod
 
@@ -109,9 +109,9 @@ starts with `cd` into the right folder.
 
   Pass = ends with `Deploy complete!`. If it asks to delete functions that
   aren't in the code, answer **N** and send me the list.
-- [ ] Open https://console.firebase.google.com/project/handyman-sg-3b418/firestore/indexes
+- [x ] Open https://console.firebase.google.com/project/handyman-sg-3b418/firestore/indexes
       and wait until every row says **Enabled** (not "Building").
-- [ ] Frontend (website):
+- [x ] Frontend (website):
 
   ```sh
   cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
@@ -122,7 +122,7 @@ starts with `cd` into the right folder.
 
   (Don't run a bare `npm install` — see the note in memory; `npm run build`
   uses the existing `node_modules`.)
-- [ ] Open https://www.easydonehandyman.sg in a private window and confirm it
+- [ x] Open https://www.easydonehandyman.sg in a private window and confirm it
       loads.
 
 ## Phase 4 — Prod test setup (read before testing)
@@ -203,6 +203,22 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
   6. CUST: WhatsApp poll with 3 buttons → tap **Confirm Complete**.
   7. ADMIN: `/admin/fund-release` → **Release Funds** on the job.
   8. Stripe https://dashboard.stripe.com/connect/transfers: transfer to HM-A.
+- [ ] **T1b Payout to the handyman's bank** (continues T1; nothing to click —
+      Stripe does it automatically).
+  1. Stripe https://dashboard.stripe.com/connect/accounts → HM-A's account →
+     the T1 transfer shows under **Balance** as *pending*. This is normal:
+     the transfer went out immediately (`source_transaction`), but the money
+     only becomes *available* once the customer's charge settles.
+  2. HM-A's connected accounts are set to **daily** automatic payouts
+     (`functions/index.js:813`). Once the balance is available, a **Payout**
+     appears on HM-A's account and lands in HM-A's bank the next business day
+     or so. A brand-new Stripe account usually has a longer **first**
+     payout (often ~7 days) — Stripe shows the expected date on the payout.
+  3. Pass = HM-A's bank statement shows the Stripe payout for the T1 amount
+     minus Stripe fee and platform fee (breakdown in the transfer metadata).
+  4. Only the money reaching the connected account (step 1) is our code; the
+     bank payout is Stripe's. Don't block launch waiting for step 3 — tick it
+     when it arrives.
 - [ ] **T2 Handyman cancels.** New job; HM-A claims → job page → **Can't do
       this job?** → pick a reason. Check: job reappears on the job board,
       HM-A can't claim it again, HM-B can, CUST gets a WhatsApp.
