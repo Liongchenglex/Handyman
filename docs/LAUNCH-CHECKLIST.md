@@ -133,7 +133,10 @@ priced at **S$4–20** in both `src/config/servicePricing.js:21` and
 and loses only ~S$0.64 in Stripe fees when refunded. The S$20 max also
 leaves room to test a price adjustment.
 
-- [ ] **Stop real handymen being pinged.** By default EVERY active,
+- [x] ~~**Stop real handymen being pinged.**~~ SKIPPED 2026-09-29 — no real
+      handymen registered yet. Revisit before the first real handyman signs up.
+      Original step kept below for then:
+      **Stop real handymen being pinged.** By default EVERY active,
       verified, Stripe-onboarded handyman gets a WhatsApp for EVERY new job,
       whatever the service type (`NOTIFY_FILTER_BY_SERVICE_TYPE` is off —
       `functions/notificationConfig.js`). Pick one:
@@ -160,7 +163,10 @@ leaves room to test a price adjustment.
   handyman either way — the setting only controls WhatsApp.
 - [ ] **Test accounts ready:**
   - CUST — your own WhatsApp number (you book as a guest at `/request-job`).
-  - HM-A and HM-B — two handyman accounts on phones you control. In Firestore
+  - HM-A and HM-B — two handyman accounts on phones you control. Prod is
+    live Stripe, so each must complete the real Stripe payout onboarding
+    (real ID + bank account — use your own / your partner's details),
+    otherwise Release Funds has nowhere to send money. In Firestore
     `handymen/{id}` each must have: `status: "active"`, `verified: true`,
     `stripeOnboardingCompleted: true`, and `serviceTypes` containing
     `Appliance Repair`.
