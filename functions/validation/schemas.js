@@ -21,10 +21,11 @@ exports.paymentIntentSchema = Joi.object({
   handymanId: Joi.string().allow(null, '').min(10).max(100)
     .description('Handyman Firebase UID (optional for new jobs)'),
 
-  // TEMP: floor lowered 20 -> 10 to allow the $10 live Stripe test price.
-  // Revert to .min(20) and 'SGD 20 - SGD 10,000' when restoring real pricing.
-  serviceFee: Joi.number().required().min(10).max(10000)
-    .description('Service fee in dollars (SGD 10 - SGD 10,000)'),
+  // TEMP: floor lowered 20 -> 4 to allow the S$4 'Appliance Repair' live
+  // Stripe test price (servicePricing.js). Revert to .min(20) and
+  // 'SGD 20 - SGD 10,000' when restoring real pricing (LAUNCH-CHECKLIST Phase 7).
+  serviceFee: Joi.number().required().min(4).max(10000)
+    .description('Service fee in dollars (SGD 4 - SGD 10,000)'),
 
   serviceType: Joi.string().required().min(3).max(100)
     .description('Type of service requested'),

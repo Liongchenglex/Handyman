@@ -300,6 +300,11 @@ the pass condition.
   - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/src/config/servicePricing.js` (line 21)
   - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/servicePricing.js` (line 18)
 
+  - `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/validation/schemas.js`
+    (line ~27): change `.min(4)` back to `.min(20)` and the description to
+    `'Service fee in dollars (SGD 20 - SGD 10,000)'` — the payment
+    minimum was lowered to S$4 for testing (2026-09-30).
+
   Then redeploy both parts (Phase 3 commands) and commit.
 - [ ] Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
 - [ ] Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
