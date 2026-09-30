@@ -312,10 +312,17 @@ const JobActionButtons = ({
   // pending one.
   const adjustmentPending = job.priceAdjustment?.status === 'pending_payment';
 
+  // v1 allows one PAID adjustment per job (server: adjustment_already_paid);
+  // declined/expired ones may be retried.
+  const adjustmentAlreadyPaid = ['paid', 'refunded', 'released'].includes(job.priceAdjustment?.status);
+
   // Gate for "Request price adjustment": only while actively working an
   // in-progress job on/after its scheduled date (the inspection has
-  // happened), not already completed, and no adjustment already pending.
-  const canRequestAdjustment = job.status === 'in_progress' && dateReached && !isCompleted && !adjustmentPending;
+  // happened), not already completed, no adjustment pending, and none
+  // already paid (mirrors the server rule so the button never leads to a
+  // guaranteed rejection).
+  const canRequestAdjustment = job.status === 'in_progress' && dateReached && !isCompleted &&
+    !adjustmentPending && !adjustmentAlreadyPaid;
 
   // Full width variant for job detail pages
   if (variant === 'full') {
