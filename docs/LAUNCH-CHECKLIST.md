@@ -100,7 +100,7 @@ starts with `cd` into the right folder.
 
 ## Phase 3 — Deploy to prod
 
-- [ ] Backend (functions + database rules + indexes), ~5 min:
+- [ x ] Backend (functions + database rules + indexes), ~5 min:
 
   ```sh
   cd /Users/liongchenglex/Desktop/AI_Projects/Handyman
@@ -161,7 +161,7 @@ leaves room to test a price adjustment.
 
   Note: the job board in the app still shows test jobs to every logged-in
   handyman either way — the setting only controls WhatsApp.
-- [ ] **Test accounts ready:**
+- [x ] **Test accounts ready:**
   - CUST — your own WhatsApp number (you book as a guest at `/request-job`).
   - HM-A and HM-B — two handyman accounts on phones you control. Prod is
     live Stripe, so each must complete the real Stripe payout onboarding
@@ -171,9 +171,9 @@ leaves room to test a price adjustment.
     `stripeOnboardingCompleted: true`, and `serviceTypes` containing
     `Appliance Repair`.
   - ADMIN — your admin login at https://www.easydonehandyman.sg/admin
-- [ ] Type `TEST` at the start of every job description so you can find
+- [ x] Type `TEST` at the start of every job description so you can find
       and clean up test jobs later.
-- [ ] **Running scheduled jobs on demand** (don't wait for the timer): open
+- [ x] **Running scheduled jobs on demand** (don't wait for the timer): open
       https://console.cloud.google.com/cloudscheduler?project=handyman-sg-3b418,
       find the row whose name contains the function, click **⋮ → Force run**.
 
@@ -191,7 +191,7 @@ leaves room to test a price adjustment.
 
 Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
 
-- [ ] **T1 Happy path.**
+- [ x] **T1 Happy path.**
   1. CUST: https://www.easydonehandyman.sg/request-job → Appliance Repair,
      date = tomorrow, description `TEST happy path` → pay with a real card.
   2. Stripe https://dashboard.stripe.com/payments: payment shows
@@ -219,10 +219,10 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
   4. Only the money reaching the connected account (step 1) is our code; the
      bank payout is Stripe's. Don't block launch waiting for step 3 — tick it
      when it arrives.
-- [ ] **T2 Handyman cancels.** New job; HM-A claims → job page → **Can't do
+- [ x] **T2 Handyman cancels.** New job; HM-A claims → job page → **Can't do
       this job?** → pick a reason. Check: job reappears on the job board,
       HM-A can't claim it again, HM-B can, CUST gets a WhatsApp.
-- [ ] **T3 Reschedule.** Job claimed by HM-A → **Propose new time** → CUST
+- [ x] **T3 Reschedule.** Job claimed by HM-A → **Propose new time** → CUST
       taps **Decline** → CUST receives a `/pick-time` link → picks a slot →
       HM-A gets Approve/Decline → **Approve** → both get "new time
       confirmed". Firestore: job `preferredDate` changed.
@@ -273,6 +273,29 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       Firebase page to set a new password → log in with it.
       Optional polish: Firebase Console → Authentication → **Templates** →
       Password reset, to change the sender name/wording.
+
+- [ ] **T14 Admin job page + status lines** (added 2026-09-30). Deploy
+      functions + hosting first (Phase 3 commands).
+  1. https://www.easydonehandyman.sg/admin → **Active jobs**: a flagged job
+     shows a red box "⚠️ Needs attention: <reason>" with a **Next step**, and
+     jobs mid-reschedule show a 🕒 line saying who we're waiting on.
+  2. Click **Details →** on the T3 deadlock job → page `/admin/jobs/<id>`
+     shows Customer / Handyman / Job / Money cards and a **Timeline** with the
+     whole T3 back-and-forth (proposal → declined → pick → declined).
+  3. https://www.easydonehandyman.sg/admin/jobs → **Details →** on any job
+     opens the same page.
+  4. On a phone-width window: cards stack in one column, nothing is cut off.
+- [ ] **T15 Admin price adjustment on the handyman's behalf.** Job in
+      progress, HM-A assigned, no adjustment yet (book S$4).
+  1. `/admin/jobs/<id>` → Money → **Request price adjustment** → amount `5`,
+     any reason → **Send request**.
+  2. CUST gets the pay link on WhatsApp; HM-A gets "Our team has requested a
+     price adjustment … on your behalf" (only arrives if HM-A messaged the
+     business number in the last 24h — plain message, not a template).
+  3. Money card shows `+S$5.00 · pending payment · by admin`. Firestore:
+     `priceAdjustment.requestedVia: "admin"`.
+  4. CUST pays → same result as T5 (both confirmed, fee goes up).
+  5. The button is hidden while an adjustment is pending or paid.
 
 ## Phase 6 — Refund testing
 
