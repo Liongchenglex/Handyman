@@ -5,6 +5,7 @@ import LoadingSpinner from '../common/LoadingSpinner';
 import { sendScheduleLink } from '../../services/api/scheduleLink';
 import { resolveAttention, adminUnassignJob, adminRefundJob } from '../../services/api/adminQueue';
 import AdminSetTimeModal from './AdminSetTimeModal';
+import { getAttentionLabel, deriveScheduleStatus } from '../../utils/adminJobStatus';
 
 /**
  * ActiveJobsTable — admin view of every in_progress job (lifecycle
@@ -15,6 +16,10 @@ import AdminSetTimeModal from './AdminSetTimeModal';
  * sends them the F6 pick-time link from the matching row. Rows flagged
  * attentionNeeded (schedule deadlock) sort first and are highlighted.
  *
+ * Each row also shows, in plain English, WHY a job needs attention (plus a
+ * suggested next step) and where any reschedule currently stands — derived
+ * from the job's recent prompt docs (see utils/adminJobStatus.js).
+ *
  * Mobile-friendly: stacked cards on small screens, table-like rows on
  * md+, matching the dashboard's Tailwind idiom.
  */
@@ -24,6 +29,8 @@ const ActiveJobsTable = () => {
   const [loadError, setLoadError] = useState('');
   // per-job send state: { [jobId]: 'sending' | 'sent' | <error string> }
   const [sendState, setSendState] = useState({});
+  // recent prompt docs per job, for the schedule-status line: { [jobId]: prompt[] }
+  const [promptsByJob, setPromptsByJob] = useState({});
 
   const fetchJobs = useCallback(async () => {
     setLoading(true);
@@ -39,6 +46,24 @@ const ActiveJobsTable = () => {
       const rows = [...byId.values()];
       rows.sort((a, b) => (b.needsAttention ? 1 : 0) - (a.needsAttention ? 1 : 0));
       setJobs(rows);
+
+      // Schedule status needs each job's latest prompts. One small query
+      // per row (≤100 rows, admin-only); a failure just hides the status
+      // line for that job rather than failing the whole table.
+      const promptEntries = await Promise.all(rows.map(async (job) => {
+        try {
+          const snap = await getDocs(query(
+            collection(db, 'jobs', job.id, 'prompts'),
+            orderBy('createdAt', 'desc'),
+            limit(5)
+          ));
+          return [job.id, snap.docs.map((d) => ({ id: d.id, ...d.data() }))];
+        } catch (promptErr) {
+          console.error(`Could not load prompts for job ${job.id}:`, promptErr);
+          return [job.id, []];
+        }
+      }));
+      setPromptsByJob(Object.fromEntries(promptEntries));
     } catch (err) {
       console.error('Error loading active jobs:', err);
       setLoadError('Could not load active jobs. Please refresh.');
@@ -143,6 +168,8 @@ const ActiveJobsTable = () => {
           const state = sendState[job.id];
           const busy = actionState[job.id] === 'busy';
           const refundOrphaned = actionState[job.id] === 'refund_orphaned';
+          const attention = job.attentionNeeded ? getAttentionLabel(job.attentionNeeded.type) : null;
+          const scheduleStatus = deriveScheduleStatus(job, promptsByJob[job.id] || []);
           return (
             <div
               key={job.id}
@@ -155,13 +182,26 @@ const ActiveJobsTable = () => {
               <div className="min-w-0">
                 <p className="font-medium text-gray-900 dark:text-white truncate">
                   #{job.id.slice(-6)} · {job.serviceType || 'Job'}
-                  {job.attentionNeeded && (
-                    <span className="ml-2 inline-block text-xs font-bold text-red-700 dark:text-red-300 uppercase">
-                      Needs attention · {String(job.attentionNeeded.type || '').replace(/_/g, ' ')}
-                      {job.attentionNeeded.at ? ` · since ${new Date(job.attentionNeeded.at).toLocaleDateString('en-SG')}` : ''}
-                    </span>
-                  )}
                 </p>
+                {/* Own block (not inside the truncated title) so the reason is never cut off */}
+                {attention && (
+                  <div className="mt-1 mb-2 rounded-lg bg-red-100 dark:bg-red-900/40 px-3 py-2">
+                    <p className="text-sm font-bold text-red-800 dark:text-red-200">
+                      ⚠️ Needs attention: {attention.label}
+                      {job.attentionNeeded.at && (
+                        <span className="font-normal"> · since {new Date(job.attentionNeeded.at).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                      )}
+                    </p>
+                    {job.attentionNeeded.detail && (
+                      <p className="text-xs text-red-800 dark:text-red-200 mt-0.5 break-words">{job.attentionNeeded.detail}</p>
+                    )}
+                    {attention.hint && (
+                      <p className="text-xs text-red-700 dark:text-red-300 mt-1">
+                        <span className="font-semibold">Next step:</span> {attention.hint}
+                      </p>
+                    )}
+                  </div>
+                )}
                 <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
                   Customer: {job.customerName || '—'} ({job.customerPhone || 'no phone'}) ·
                   Handyman: {(job.acceptedBy && job.acceptedBy.name) || '—'}
@@ -171,6 +211,20 @@ const ActiveJobsTable = () => {
                   {Array.isArray(job.scheduleHistory) && job.scheduleHistory.length > 0 &&
                     ` · ${job.scheduleHistory.length} change${job.scheduleHistory.length > 1 ? 's' : ''}`}
                 </p>
+                {scheduleStatus && (
+                  <p className={`text-sm mt-0.5 break-words ${
+                    scheduleStatus.tone === 'alert'
+                      ? 'font-semibold text-red-700 dark:text-red-300'
+                      : 'text-amber-700 dark:text-amber-300'
+                  }`}>
+                    🕒 {scheduleStatus.text}
+                    {scheduleStatus.since && (
+                      <span className="text-gray-500 dark:text-gray-400">
+                        {' '}· since {new Date(scheduleStatus.since).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
               <div className="mt-3 md:mt-0 shrink-0 flex flex-col gap-2 md:items-end">
                 <div className="flex flex-wrap gap-2">
