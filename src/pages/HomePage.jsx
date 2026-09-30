@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import AdjustmentResultNotice from '../components/customer/AdjustmentResultNotice';
 
 const HomePage = () => {
   const { isHandyman } = useAuth();
@@ -78,6 +79,8 @@ const HomePage = () => {
 
   return (
     <div className="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
+      {/* Shown only when Stripe returns here after a price-adjustment payment */}
+      <AdjustmentResultNotice />
       {/* Hero Banner Section */}
       <div className="relative overflow-hidden">
         <div className="flex flex-col items-center justify-center min-h-[70vh] py-12 p-4">

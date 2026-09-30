@@ -2582,6 +2582,7 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
             mode: 'payment',
             line_items: [{ price_data: { currency: 'sgd', unit_amount: dollarsToCents(adj.deltaServiceFee * (1 + getPlatformFeePercentage())), product_data: { name: `Price adjustment — ${job.serviceType} job #${shortId}`, description: (adj.reason || '').slice(0, 200) } }, quantity: 1 }],
             client_reference_id: meta.jobId,
+            ...adjustmentCustomerEmail(job),
             metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '' },
             payment_intent_data: { description: `Price adjustment for ${job.serviceType} - Job #${meta.jobId}`, metadata: { type: 'price_adjustment_delta', jobId: meta.jobId, adjustmentId: adj.adjustmentId || '', customerId: job.customerId || '', serviceType: job.serviceType || '', platform: 'handyman-platform' } },
             expires_at: Math.floor(Date.now() / 1000) + 24 * 3600,
@@ -5708,6 +5709,17 @@ exports.reportVisitIssue = functions.https.onRequest((req, res) => {
  * template carries a URL button with TWILIO_PRICE_ADJUSTMENT_LINK_BASE
  * baked in, so only the suffix is sent (see pricingService.buildCheckoutLinkVar).
  */
+/**
+ * Prefill the customer's email on an adjustment Checkout Session so Stripe
+ * can send its receipt there (when receipts are enabled in the Stripe
+ * Dashboard) and the customer doesn't retype it. Omitted when the job has
+ * no plausible email — Stripe rejects malformed customer_email outright.
+ */
+function adjustmentCustomerEmail(job) {
+  const email = String((job && job.customerEmail) || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? { customer_email: email } : {};
+}
+
 function priceAdjustmentLinkVar(url) {
   const base = process.env.TWILIO_PRICE_ADJUSTMENT_LINK_BASE || '';
   const value = buildCheckoutLinkVar(url, base);
@@ -5776,6 +5788,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
           quantity: 1,
         }],
         client_reference_id: jobId,
+        ...adjustmentCustomerEmail(preJob),
         metadata: { type: 'price_adjustment_delta', jobId, adjustmentId },
         payment_intent_data: {
           description: `Price adjustment for ${preJob.serviceType} - Job #${jobId}`,
