@@ -277,11 +277,12 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
 - [ ] **T14 Admin job page + status lines** (added 2026-09-30). Deploy
       functions + hosting first (Phase 3 commands).
   1. https://www.easydonehandyman.sg/admin → **Active jobs**: a flagged job
-     shows a red box "⚠️ Needs attention: <reason>" with a **Next step**, and
-     jobs mid-reschedule show a 🕒 line saying who we're waiting on.
-  2. Click **Details →** on the T3 deadlock job → page `/admin/jobs/<id>`
-     shows Customer / Handyman / Job / Money cards and a **Timeline** with the
-     whole T3 back-and-forth (proposal → declined → pick → declined).
+     shows only a red "⚠️ Needs attention — see details" badge.
+  2. Click the badge (or **Details →**) on the T3 deadlock job → page
+     `/admin/jobs/<id>` shows the red "Needs attention: Schedule deadlock"
+     box with a **Next step**, the 🕒 schedule-status line, Customer /
+     Handyman / Job / Money cards, and a **Timeline** with the whole T3
+     back-and-forth (proposal → declined → pick → declined).
   3. https://www.easydonehandyman.sg/admin/jobs → **Details →** on any job
      opens the same page.
   4. On a phone-width window: cards stack in one column, nothing is cut off.
