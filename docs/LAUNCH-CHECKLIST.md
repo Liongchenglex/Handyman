@@ -265,6 +265,15 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       link in the Quick reference and search `63016` — any hit means that
       template's SID isn't set (Phase 1).
 
+- [ ] **T13 Forgot password** (added 2026-09-30). Deploy hosting first
+      (Phase 3 frontend commands). https://www.easydonehandyman.sg/handyman-auth
+      → type HM-A's email → **Forgot password?** → green "we've emailed a
+      link" message → email arrives (check spam; sender is Firebase's
+      `noreply@handyman-sg-3b418.firebaseapp.com`) → link opens a
+      Firebase page to set a new password → log in with it.
+      Optional polish: Firebase Console → Authentication → **Templates** →
+      Password reset, to change the sender name/wording.
+
 ## Phase 6 — Refund testing
 
 Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table

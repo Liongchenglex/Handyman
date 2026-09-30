@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
-import { signInHandyman } from '../../services/firebase';
+import { signInHandyman, resetPassword } from '../../services/firebase';
 import { callFunction } from '../../services/api/cloudFunctions';
 import { scrollToFirstError } from '../../utils/scrollToFirstError';
 
@@ -29,6 +29,8 @@ const HandymanAuth = ({
     tosAccepted: false
   });
   const [errors, setErrors] = useState({});
+  // Forgot-password flow: null | 'sending' | 'sent'
+  const [resetStatus, setResetStatus] = useState(null);
 
   // Validation functions
   const validateLoginData = (data) => {
@@ -68,6 +70,8 @@ const HandymanAuth = ({
   // Handle form input changes
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    // A reset confirmation names the email — hide it once the email changes
+    if (field === 'email') setResetStatus(null);
     // Clear error when user starts typing
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
@@ -150,10 +154,41 @@ const HandymanAuth = ({
     }
   };
 
+  /**
+   * Send a Firebase password-reset email to the address in the email field.
+   * The success message is deliberately the same whether or not an account
+   * exists, so the form can't be used to discover registered emails.
+   */
+  const handleForgotPassword = async () => {
+    const email = formData.email.trim();
+    if (!/^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(email)) {
+      setErrors({ email: 'Enter your email address above, then tap "Forgot password?" again' });
+      scrollToFirstError({ email: true }, ['email']);
+      return;
+    }
+
+    setErrors({});
+    setResetStatus('sending');
+    try {
+      await resetPassword(email);
+      setResetStatus('sent');
+    } catch (error) {
+      if (error.message === 'No account found with this email.') {
+        // Same outcome as success — don't reveal whether the account exists.
+        setResetStatus('sent');
+      } else {
+        console.error('Password reset error:', error);
+        setResetStatus(null);
+        setErrors({ general: error.message || 'Could not send the reset email. Please try again.' });
+      }
+    }
+  };
+
   // Toggle between login and signup modes
   const toggleAuthMode = () => {
     setAuthMode(authMode === 'login' ? 'signup' : 'login');
     setErrors({});
+    setResetStatus(null);
     setFormData({
       email: formData.email, // Keep email when switching
       password: '',
@@ -214,6 +249,16 @@ const HandymanAuth = ({
               </div>
             )}
 
+            {/* Password reset confirmation */}
+            {resetStatus === 'sent' && (
+              <div className="mb-6 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg" role="status">
+                <p className="text-green-700 dark:text-green-400 text-sm">
+                  If an account exists for {formData.email.trim()}, we've emailed a link to reset your password.
+                  Check your inbox (and spam folder).
+                </p>
+              </div>
+            )}
+
             {/* Auth Form */}
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* Email Field */}
@@ -252,6 +297,18 @@ const HandymanAuth = ({
                   disabled={isSubmitting}
                 />
                 {errors.password && <span className="text-red-500 text-sm mt-1">{errors.password}</span>}
+                {authMode === 'login' && (
+                  <div className="mt-2 text-right">
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={isSubmitting || resetStatus === 'sending'}
+                      className="text-sm font-semibold text-primary hover:text-primary/80 transition-colors disabled:opacity-50 py-1"
+                    >
+                      {resetStatus === 'sending' ? 'Sending reset link…' : 'Forgot password?'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Confirm Password Field (Signup only) */}
