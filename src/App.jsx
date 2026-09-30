@@ -26,6 +26,7 @@ const AdminAccountApproval = lazy(() => import('./pages/AdminAccountApproval'));
 const AdminFundRelease = lazy(() => import('./pages/AdminFundRelease'));
 const AdminDisputedJobs = lazy(() => import('./pages/AdminDisputedJobs'));
 const AdminJobs = lazy(() => import('./pages/AdminJobs'));
+const AdminJobDetail = lazy(() => import('./pages/AdminJobDetail'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 const JobCard = lazy(() => import('./components/handyman/JobCard'));
@@ -82,6 +83,7 @@ function AppContent() {
             <Route path="/admin/fund-release" element={<ProtectedRoute requireAdmin><AdminFundRelease /></ProtectedRoute>} />
             <Route path="/admin/disputed-jobs" element={<ProtectedRoute requireAdmin><AdminDisputedJobs /></ProtectedRoute>} />
             <Route path="/admin/jobs" element={<ProtectedRoute requireAdmin><AdminJobs /></ProtectedRoute>} />
+            <Route path="/admin/jobs/:jobId" element={<ProtectedRoute requireAdmin><AdminJobDetail /></ProtectedRoute>} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/job-details/:jobId" element={<JobCard />} />

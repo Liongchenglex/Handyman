@@ -53,6 +53,35 @@ describe('validateAdjustmentRequest', () => {
   });
 });
 
+describe('validateAdjustmentRequest — admin on behalf of the handyman', () => {
+  test('admin (not the assigned uid) is allowed with asAdmin', () => {
+    expect(() => validateAdjustmentRequest(job(), 'admin-uid', 30, 'r', 160, { asAdmin: true })).not.toThrow();
+  });
+  test('admin still needs an assigned handyman (the payee)', () => {
+    expect.assertions(1);
+    try { validateAdjustmentRequest(job({ handymanId: null }), 'admin-uid', 30, 'r', 160, { asAdmin: true }); }
+    catch (e) { expect(e.code).toBe('not_assigned'); }
+  });
+  test.each([
+    ['over_cap', job(), 41],
+    ['bad_amount', job(), 0],
+    ['wrong_status', job({ status: 'completed' }), 30],
+    ['adjustment_pending', job({ priceAdjustment: { status: 'pending_payment' } }), 30],
+  ])('admin is still bound by %s', (code, j, delta) => {
+    expect.assertions(1);
+    try { validateAdjustmentRequest(j, 'admin-uid', delta, 'r', 160, { asAdmin: true }); }
+    catch (e) { expect(e.code).toBe(code); }
+  });
+});
+
+describe('buildAdjustmentEntry — requestedVia', () => {
+  test('records admin-initiated requests', () => {
+    const entry = buildAdjustmentEntry({ deltaDollars: 30, reason: 'r', requestedBy: 'admin-uid', requestedVia: 'admin', priceMax: 160, nowIso: NOW_ISO });
+    expect(entry.requestedVia).toBe('admin');
+    expect(entry.requestedBy).toBe('admin-uid');
+  });
+});
+
 describe('buildAdjustmentEntry', () => {
   test('builds a pending entry with trimmed fields', () => {
     const entry = buildAdjustmentEntry({ deltaDollars: 30, reason: '  corroded pipe  ', note: '', requestedBy: 'hm-1', priceMax: 160, nowIso: NOW_ISO });
@@ -65,6 +94,7 @@ describe('buildAdjustmentEntry', () => {
       requestedAt: NOW_ISO,
       priceMaxAtRequest: 160,
       reissued: false,
+      requestedVia: 'handyman',
     });
   });
   test('truncates reason to 300 chars', () => {

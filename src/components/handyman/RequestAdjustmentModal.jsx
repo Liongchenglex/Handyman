@@ -22,8 +22,11 @@ import { getServicePriceRange } from '../../config/servicePricing';
  *   isOpen      - render toggle
  *   onClose     - called when the user backs out or after a successful request
  *   onRequested - called after a successful request, before onClose
+ *   asAdmin     - admin is requesting on the assigned handyman's behalf
+ *                 (admin job page); only the wording changes — the server
+ *                 applies the same money rules and notifies the handyman.
  */
-const RequestAdjustmentModal = ({ job, isOpen, onClose, onRequested }) => {
+const RequestAdjustmentModal = ({ job, isOpen, onClose, onRequested, asAdmin = false }) => {
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
@@ -82,13 +85,15 @@ const RequestAdjustmentModal = ({ job, isOpen, onClose, onRequested }) => {
             <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">request_quote</span>
           </div>
           <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-            Request price adjustment
+            {asAdmin ? "Request price adjustment for the handyman" : 'Request price adjustment'}
           </h3>
         </div>
 
         {/* Body note */}
         <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
-          The customer approves by paying the additional amount through a secure Stripe link — you'll be notified when it's paid. If they decline, you can continue at the original price or cancel the job.
+          {asAdmin
+            ? `Sent on behalf of ${job.acceptedBy?.name || 'the assigned handyman'}, who gets a WhatsApp heads-up. The customer approves by paying through a secure Stripe link; if they decline, the handyman continues at the original price or cancels.`
+            : "The customer approves by paying the additional amount through a secure Stripe link — you'll be notified when it's paid. If they decline, you can continue at the original price or cancel the job."}
         </p>
 
         {/* Amount */}

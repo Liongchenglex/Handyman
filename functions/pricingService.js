@@ -17,6 +17,8 @@
  *             'cancelled_assignment'|'refunded'|'released',
  *     deltaServiceFee: number (pre-platform-fee dollars),
  *     reason, note, requestedBy, requestedAt: ISO,
+ *     requestedVia: 'handyman'|'admin' (admin = requested on the assigned
+ *       handyman's behalf; requestedBy is then the admin's uid),
  *     priceMaxAtRequest: number, reissued: boolean,
  *     sessionId?, checkoutUrl?, deltaPaymentIntentId?,
  *     paidAt?, declinedAt?, expiredAt?, refundedAt?, refundId?,
@@ -38,9 +40,20 @@ function clean(text) {
   return trimmed || null;
 }
 
-function validateAdjustmentRequest(job, callerUid, deltaDollars, reason, priceMax) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.asAdmin] - caller is a platform admin acting on the
+ *   assigned handyman's behalf (admin-as-actor, spec F5). Skips only the
+ *   "caller is the assignee" check; a handyman must still be assigned (they
+ *   are the payee) and every money rule below still applies.
+ */
+function validateAdjustmentRequest(job, callerUid, deltaDollars, reason, priceMax, { asAdmin = false } = {}) {
   if (!job) throw new PricingError('not_found', 'Job not found');
-  if (job.handymanId !== callerUid) throw new PricingError('not_assigned', 'You are not assigned to this job');
+  if (asAdmin) {
+    if (!job.handymanId) throw new PricingError('not_assigned', 'No handyman is assigned to this job');
+  } else if (job.handymanId !== callerUid) {
+    throw new PricingError('not_assigned', 'You are not assigned to this job');
+  }
   if (job.status !== 'in_progress') throw new PricingError('wrong_status', 'Job is not in progress');
   const delta = Number(deltaDollars);
   if (!Number.isFinite(delta) || delta <= 0) throw new PricingError('bad_amount', 'Adjustment must be a positive amount');
@@ -56,7 +69,7 @@ function validateAdjustmentRequest(job, callerUid, deltaDollars, reason, priceMa
   }
 }
 
-function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, priceMax, nowIso }) {
+function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, requestedVia = 'handyman', priceMax, nowIso }) {
   return {
     status: 'pending_payment',
     deltaServiceFee: Number(deltaDollars),
@@ -66,6 +79,7 @@ function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, priceMa
     requestedAt: nowIso,
     priceMaxAtRequest: priceMax,
     reissued: false,
+    requestedVia,
   };
 }
 

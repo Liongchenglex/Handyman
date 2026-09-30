@@ -5725,8 +5725,12 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
       const preSnap = await db.collection('jobs').doc(jobId).get();
       const preJob = preSnap.exists ? preSnap.data() : null;
       const priceMax = preJob ? getServicePriceMax(preJob.serviceType) : 0;
+      // Admin-as-actor (spec F5): an admin may request on the assigned
+      // handyman's behalf, e.g. after a phone call. Same money rules; the
+      // customer still approves by paying. Recorded as requestedVia 'admin'.
+      const asAdmin = isAdminToken(decodedToken) && (!preJob || preJob.handymanId !== decodedToken.uid);
       try {
-        validateAdjustmentRequest(preJob, decodedToken.uid, deltaDollars, reason, priceMax);
+        validateAdjustmentRequest(preJob, decodedToken.uid, deltaDollars, reason, priceMax, { asAdmin });
         if (!preJob.customerPhone) throw new PricingError('no_customer_phone', 'Job has no customer phone on file');
       } catch (pricingErr) {
         if (pricingErr.name === 'PricingError') {
@@ -5736,7 +5740,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
         throw pricingErr;
       }
 
-      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, priceMax, nowIso });
+      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, requestedVia: asAdmin ? 'admin' : 'handyman', priceMax, nowIso });
       const adjustmentId = db.collection('_ids').doc().id; // firestore auto-id as an opaque unique token
       const jobShortId = jobId.slice(-6);
       const deltaChargeCents = dollarsToCents(entry.deltaServiceFee * (1 + getPlatformFeePercentage()));
@@ -5778,7 +5782,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
         await db.runTransaction(async (tx) => {
           const snap = await tx.get(db.collection('jobs').doc(jobId));
           const job = snap.exists ? snap.data() : null;
-          validateAdjustmentRequest(job, decodedToken.uid, deltaDollars, reason, priceMax);
+          validateAdjustmentRequest(job, decodedToken.uid, deltaDollars, reason, priceMax, { asAdmin });
           tx.update(snap.ref, {
             priceAdjustment: { ...entry, adjustmentId, sessionId: session.id, checkoutUrl: session.url },
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -5832,7 +5836,23 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
         expiresInHours: 24,
       });
 
-      await writeAuditLog('price_adjustment_requested', decodedToken, { jobId, deltaServiceFee: entry.deltaServiceFee, sessionId: session.id });
+      // Admin-initiated: tell the handyman, who didn't press the button
+      // themselves. Best-effort freeform (rides their session window);
+      // the in-app job page shows the pending adjustment regardless.
+      if (asAdmin) {
+        try {
+          const hmSnap = await db.collection('handymen').doc(preJob.handymanId).get();
+          const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
+          if (hmPhone) {
+            await sendTwilioMessage(
+              formatPhoneToWhatsApp(hmPhone),
+              `ℹ️ Our team has requested a price adjustment of +S$${entry.deltaServiceFee.toFixed(2)} for Job #${jobShortId} on your behalf (reason: ${entry.reason}). The customer has been sent a payment link — you'll be notified when they pay or decline.`
+            );
+          }
+        } catch (e) { console.error('⚠️ admin-adjustment handyman notice failed (continuing):', e); }
+      }
+
+      await writeAuditLog('price_adjustment_requested', decodedToken, { jobId, deltaServiceFee: entry.deltaServiceFee, sessionId: session.id, requestedVia: entry.requestedVia });
       return res.status(200).json({ success: true, promptId });
     } catch (error) {
       console.error('❌ requestPriceAdjustment error:', error);

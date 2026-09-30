@@ -145,7 +145,9 @@ const AdminJobs = () => {
               <div className="min-w-0">
                 <p className="font-medium text-gray-900 dark:text-white truncate">
                   {/* Short id everywhere; full id on hover for support lookups */}
-                  <span title={job.id}>#{job.id.slice(-6)}</span> · {job.serviceType || 'Job'}
+                  <Link to={`/admin/jobs/${job.id}`} title={job.id} className="hover:underline">
+                    #{job.id.slice(-6)} · {job.serviceType || 'Job'}
+                  </Link>
                   <span className={`ml-2 inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_BADGE_CLASSES[job.status] || 'bg-gray-100 text-gray-700'}`}>
                     {String(job.status || '—').replace(/_/g, ' ')}
                   </span>
@@ -159,6 +161,7 @@ const AdminJobs = () => {
                   Customer: {job.customerName || '—'} ({job.customerPhone || 'no phone'}) ·
                   Handyman: {(job.acceptedBy && job.acceptedBy.name) || '—'}
                 </p>
+                <Link to={`/admin/jobs/${job.id}`} className="text-sm text-primary underline">Details →</Link>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
                   {scheduleLabel(job)} · Payment: {job.paymentStatus || '—'} · Created {toDisplayDate(job.createdAt)}
                   {typeof job.estimatedBudget !== 'undefined' && ` · S$${job.estimatedBudget}`}

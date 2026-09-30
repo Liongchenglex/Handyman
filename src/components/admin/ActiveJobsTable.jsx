@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase/config';
 import LoadingSpinner from '../common/LoadingSpinner';
@@ -181,7 +182,12 @@ const ActiveJobsTable = () => {
             >
               <div className="min-w-0">
                 <p className="font-medium text-gray-900 dark:text-white truncate">
-                  #{job.id.slice(-6)} · {job.serviceType || 'Job'}
+                  <Link to={`/admin/jobs/${job.id}`} className="hover:underline">
+                    #{job.id.slice(-6)} · {job.serviceType || 'Job'}
+                  </Link>
+                  <Link to={`/admin/jobs/${job.id}`} className="ml-2 text-sm font-normal text-primary underline">
+                    Details →
+                  </Link>
                 </p>
                 {/* Own block (not inside the truncated title) so the reason is never cut off */}
                 {attention && (
