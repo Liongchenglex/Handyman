@@ -20,6 +20,8 @@
  *     requestedVia: 'handyman'|'admin' (admin = requested on the assigned
  *       handyman's behalf; requestedBy is then the admin's uid),
  *     priceMaxAtRequest: number, reissued: boolean,
+ *     customerTotal: number|null (what the customer pays for the delta,
+ *       i.e. deltaServiceFee + platform fee, 2dp — display/audit only),
  *     sessionId?, checkoutUrl?, deltaPaymentIntentId?,
  *     paidAt?, declinedAt?, expiredAt?, refundedAt?, refundId?,
  *     transferId?, releasedAt? }
@@ -69,10 +71,11 @@ function validateAdjustmentRequest(job, callerUid, deltaDollars, reason, priceMa
   }
 }
 
-function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, requestedVia = 'handyman', priceMax, nowIso }) {
+function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, requestedVia = 'handyman', priceMax, nowIso, platformFeePercentage = null }) {
+  const delta = Number(deltaDollars);
   return {
     status: 'pending_payment',
-    deltaServiceFee: Number(deltaDollars),
+    deltaServiceFee: delta,
     reason: clean(reason),
     note: clean(note),
     requestedBy,
@@ -80,7 +83,32 @@ function buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy, request
     priceMaxAtRequest: priceMax,
     reissued: false,
     requestedVia,
+    customerTotal: platformFeePercentage == null
+      ? null
+      : Math.round(delta * (1 + platformFeePercentage) * 100) / 100,
   };
+}
+
+/**
+ * Template variable carrying the Stripe Checkout link.
+ *
+ * The approved price_adjustment template puts the link in a URL button
+ * whose base (e.g. https://checkout.stripe.com/c/pay/) is baked into the
+ * template — the variable must then be ONLY the suffix, or WhatsApp opens
+ * "<base>https://checkout.stripe.com/…" (a Stripe 404). Stripe may issue
+ * sessions under a different one-letter path (/g/pay/, /c/pay/); the
+ * session suffix (cs_…#…) is served under the button's path.
+ *
+ * @param {string} url - session.url from Stripe
+ * @param {string} buttonBase - TWILIO_PRICE_ADJUSTMENT_LINK_BASE ('' = link in body)
+ * @returns {string} full URL (no base / unrecognised) or the suffix
+ */
+function buildCheckoutLinkVar(url, buttonBase) {
+  const full = String(url || '');
+  if (!buttonBase) return full;
+  if (full.startsWith(buttonBase)) return full.slice(buttonBase.length);
+  const m = full.match(/^https:\/\/checkout\.stripe\.com\/[a-z]+\/pay\/(.+)$/);
+  return m ? m[1] : full;
 }
 
 function hasPendingPriceAdjustment(job) {
@@ -122,6 +150,7 @@ function applyPaidAdjustment(job, { nowIso, deltaPaymentIntentId, sessionId }) {
 }
 
 module.exports = {
+  buildCheckoutLinkVar,
   PricingError,
   MAX_ADJUSTMENT_REASON_LENGTH,
   validateAdjustmentRequest,

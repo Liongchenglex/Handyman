@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { doc, getDoc, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import { projectConfig } from '../config/firebaseProject';
+import { getPlatformFee } from '../config/servicePricing';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import RequestAdjustmentModal from '../components/handyman/RequestAdjustmentModal';
 import { getAttentionLabel, deriveScheduleStatus } from '../utils/adminJobStatus';
@@ -265,7 +266,9 @@ const AdminJobDetail = () => {
               </Field>
               {adj && (
                 <Field label="Adjustment">
-                  +{money(adj.deltaServiceFee)} · <b>{readable(adj.status)}</b>
+                  +{money(adj.deltaServiceFee)} service fee
+                  {' '}(customer pays {money(adj.customerTotal ?? (Number(adj.deltaServiceFee) + getPlatformFee(Number(adj.deltaServiceFee))))} incl. platform fee)
+                  {' '}· <b>{readable(adj.status)}</b>
                   {adj.requestedVia === 'admin' && ' · by admin'}
                   {adj.reason && <span className="block text-xs text-gray-500 dark:text-gray-400">{adj.reason}</span>}
                   {adj.status === 'pending_payment' && adj.checkoutUrl && (

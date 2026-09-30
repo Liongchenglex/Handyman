@@ -10,6 +10,7 @@ const {
   hasPendingPriceAdjustment,
   buildAdjustmentTransition,
   applyPaidAdjustment,
+  buildCheckoutLinkVar,
 } = require('../pricingService');
 
 const NOW_ISO = '2026-07-30T11:00:00.000Z';
@@ -95,6 +96,7 @@ describe('buildAdjustmentEntry', () => {
       priceMaxAtRequest: 160,
       reissued: false,
       requestedVia: 'handyman',
+      customerTotal: null,
     });
   });
   test('truncates reason to 300 chars', () => {
@@ -165,5 +167,30 @@ describe('applyPaidAdjustment', () => {
     expect.assertions(1);
     try { applyPaidAdjustment(pending({ status: 'paid' }), { nowIso: NOW_ISO, deltaPaymentIntentId: 'pi_9', sessionId: 'cs_123' }); }
     catch (e) { expect(e.code).toBe('bad_transition'); }
+  });
+});
+
+describe('buildAdjustmentEntry — customerTotal', () => {
+  test('stores the amount the customer pays (delta + platform fee), 2dp', () => {
+    const entry = buildAdjustmentEntry({ deltaDollars: 1, reason: 'r', requestedBy: 'hm-1', priceMax: 20, nowIso: NOW_ISO, platformFeePercentage: 0.1 });
+    expect(entry.customerTotal).toBe(1.1);
+    const entry2 = buildAdjustmentEntry({ deltaDollars: 7, reason: 'r', requestedBy: 'hm-1', priceMax: 20, nowIso: NOW_ISO, platformFeePercentage: 0.1 });
+    expect(entry2.customerTotal).toBe(7.7);
+  });
+});
+
+describe('buildCheckoutLinkVar', () => {
+  const BASE = 'https://checkout.stripe.com/c/pay/';
+  test('no button base configured → full URL (in-body link)', () => {
+    expect(buildCheckoutLinkVar('https://checkout.stripe.com/c/pay/cs_live_1#abc', '')).toBe('https://checkout.stripe.com/c/pay/cs_live_1#abc');
+  });
+  test('URL under the button base → only the suffix', () => {
+    expect(buildCheckoutLinkVar('https://checkout.stripe.com/c/pay/cs_live_1#abc', BASE)).toBe('cs_live_1#abc');
+  });
+  test('Stripe /g/pay/ URL → session suffix (served under the button base)', () => {
+    expect(buildCheckoutLinkVar('https://checkout.stripe.com/g/pay/cs_live_2#xyz', BASE)).toBe('cs_live_2#xyz');
+  });
+  test('unrecognised URL with a button base → full URL (best effort, caller logs)', () => {
+    expect(buildCheckoutLinkVar('https://example.com/pay/1', BASE)).toBe('https://example.com/pay/1');
   });
 });

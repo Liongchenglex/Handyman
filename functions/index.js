@@ -96,7 +96,7 @@ const {
 const {
   PricingError,
   validateAdjustmentRequest,
-  buildAdjustmentEntry,
+  buildAdjustmentEntry, buildCheckoutLinkVar,
   hasPendingPriceAdjustment,
   buildAdjustmentTransition,
   applyPaidAdjustment,
@@ -2595,7 +2595,7 @@ exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
           });
           await sendTwilioTemplateMessage(formatPhoneToWhatsApp(job.customerPhone),
             process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
-            { '1': totalDisplay, '2': (adj.reason || '').slice(0, 150), '3': shortId, '4': fresh.url },
+            { '1': totalDisplay, '2': (adj.reason || '').slice(0, 150), '3': shortId, '4': priceAdjustmentLinkVar(fresh.url) },
             `⏰ Reminder — the +S$${totalDisplay} adjustment for Job #${shortId} is still awaiting your decision.\n\n👉 Pay here to approve (fresh link, valid 24h):\n${fresh.url}\n\n👉 Reply *NO* to decline`);
         } else {
           // Second expiry (or job inactive): terminal. Unwedges the
@@ -5703,6 +5703,20 @@ exports.reportVisitIssue = functions.https.onRequest((req, res) => {
 // Money: delta lands in the platform balance as a second held pot —
 // released/refunded only by the existing admin paths.
 // ===================================
+/**
+ * Checkout link as the price_adjustment template expects it: the approved
+ * template carries a URL button with TWILIO_PRICE_ADJUSTMENT_LINK_BASE
+ * baked in, so only the suffix is sent (see pricingService.buildCheckoutLinkVar).
+ */
+function priceAdjustmentLinkVar(url) {
+  const base = process.env.TWILIO_PRICE_ADJUSTMENT_LINK_BASE || '';
+  const value = buildCheckoutLinkVar(url, base);
+  if (base && value === url) {
+    console.error(`⚠️ price_adjustment link not under button base "${base}" — button will be broken: ${String(url).slice(0, 60)}`);
+  }
+  return value;
+}
+
 exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
@@ -5740,7 +5754,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
         throw pricingErr;
       }
 
-      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, requestedVia: asAdmin ? 'admin' : 'handyman', priceMax, nowIso });
+      const entry = buildAdjustmentEntry({ deltaDollars, reason, note, requestedBy: decodedToken.uid, requestedVia: asAdmin ? 'admin' : 'handyman', priceMax, nowIso, platformFeePercentage: getPlatformFeePercentage() });
       const adjustmentId = db.collection('_ids').doc().id; // firestore auto-id as an opaque unique token
       const jobShortId = jobId.slice(-6);
       const deltaChargeCents = dollarsToCents(entry.deltaServiceFee * (1 + getPlatformFeePercentage()));
@@ -5808,7 +5822,7 @@ exports.requestPriceAdjustment = functions.https.onRequest((req, res) => {
       const sendResult = await sendTwilioTemplateMessage(
         formatPhoneToWhatsApp(preJob.customerPhone),
         process.env.TWILIO_TEMPLATE_PRICE_ADJUSTMENT,
-        { '1': totalDisplay, '2': entry.reason.slice(0, 150), '3': jobShortId, '4': session.url },
+        { '1': totalDisplay, '2': entry.reason.slice(0, 150), '3': jobShortId, '4': priceAdjustmentLinkVar(session.url) },
         fallback
       );
       if (!sendResult.success) {

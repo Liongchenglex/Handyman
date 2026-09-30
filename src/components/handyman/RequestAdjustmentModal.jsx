@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { requestPriceAdjustment } from '../../services/api/jobPricing';
-import { getServicePriceRange } from '../../config/servicePricing';
+import { getServicePriceRange, getPlatformFee } from '../../config/servicePricing';
 
 /**
  * RequestAdjustmentModal
@@ -113,6 +113,11 @@ const RequestAdjustmentModal = ({ job, isOpen, onClose, onRequested, asAdmin = f
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
           Range for {job.serviceType}: up to S${max} total — current S${job.estimatedBudget}, so max +S${maxAdditional}
         </p>
+        {Number(amount) > 0 && (
+          <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-3">
+            Customer will pay S${(Number(amount) + getPlatformFee(Number(amount))).toFixed(2)} (incl. platform fee)
+          </p>
+        )}
 
         {/* Reason */}
         <label htmlFor="adjustment-reason" className="block text-sm font-medium text-gray-900 dark:text-white mb-1">
