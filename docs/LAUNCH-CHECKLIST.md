@@ -226,15 +226,15 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       taps **Decline** → CUST receives a `/pick-time` link → picks a slot →
       HM-A gets Approve/Decline → **Approve** → both get "new time
       confirmed". Firestore: job `preferredDate` changed.
-- [ ] **T4 ASAP job.** Book with the ASAP option → HM-A's **Express
+- [ x ] **T4 ASAP job.** Book with the ASAP option → HM-A's **Express
       Interest** must ask for a date/time → CUST taps **Approve** → Firestore:
       job now has `preferredDate` and `scheduledFromAsapAt`.
-- [ ] **T5 Price adjustment (pay).** Book at S$4. HM-A → **Request price
+- [ x ] **T5 Price adjustment (pay).** Book at S$4. HM-A → **Request price
       adjustment** → amount `5`, any reason → CUST gets a WhatsApp with a pay
       link → pay → both get "adjustment paid". Firestore:
       `priceAdjustment.status: "paid"`, `estimatedBudget` up by 5. Then do
       T1 steps 5–8: Stripe should show **two** transfers to HM-A.
-- [ ] **T6 Price adjustment (decline).** Same, but CUST replies `NO` →
+- [ x] **T6 Price adjustment (decline).** Same, but CUST replies `NO` →
       HM-A gets "customer declined". Firestore:
       `priceAdjustment.status: "declined"`.
 - [ ] **T7 No-show.** Job dated today, HM-A claimed, don't mark complete →
@@ -274,7 +274,7 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       Optional polish: Firebase Console → Authentication → **Templates** →
       Password reset, to change the sender name/wording.
 
-- [ ] **T14 Admin job page + status lines** (added 2026-09-30). Deploy
+- [ x ] **T14 Admin job page + status lines** (added 2026-09-30). Deploy
       functions + hosting first (Phase 3 commands).
   1. https://www.easydonehandyman.sg/admin → **Active jobs**: a flagged job
      shows only a red "⚠️ Needs attention — see details" badge.
@@ -339,6 +339,21 @@ the pass condition.
     minimum was lowered to S$4 for testing (2026-09-30).
 
   Then redeploy both parts (Phase 3 commands) and commit.
+- [ ] **Upgrade the backend runtime Node 20 → 22 — deadline 30 Oct 2026.**
+      Google retires Node 20 for Cloud Functions on 2026-10-30; after that,
+      `firebase deploy --only functions` is refused until upgraded (the
+      running functions keep working, but no fixes can ship).
+  1. `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/package.json`:
+     `"engines": { "node": "20" }` → `"node": "22"` (ask Claude Code).
+  2. `cd /Users/liongchenglex/Desktop/AI_Projects/Handyman/functions && npx jest`
+     — all tests pass.
+  3. Deploy functions (Phase 3 backend command). If the upload fails with
+     "Failed to make request to https://storage.googleapis.com/…", just
+     re-run — it's intermittent on Google's side.
+  4. Re-run a short smoke test: T1 (book → claim → complete → release) and
+     one WhatsApp reply flow (T3 or T6).
+  - Optional later: `firebase-functions` 4.9 → latest has breaking changes;
+    do it separately, not together with the Node upgrade.
 - [ ] Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
 - [ ] Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
       `true`.
