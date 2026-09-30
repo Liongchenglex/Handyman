@@ -309,6 +309,77 @@ the pass condition.
 - [ ] Still-open product decisions (spec §6): refund policy wording (full vs
       minus fee), and the "$20 penalty" wording in the Express Interest pop-up.
 
+## Phase 8 — Safe prod testing after real handymen join ("test mode")
+
+**Goal:** once real handymen are onboarded, you can still book test jobs in
+prod (real Stripe, real WhatsApp) and only YOUR test handymen ever hear about
+them — no WhatsApp, and not on their job board.
+
+**How it works (design):**
+
+- A job is a **test job** when the customer phone is on an allow-list in the
+  prod env (`TEST_CUSTOMER_PHONES`). The backend stamps `isTest: true` on the
+  job when payment succeeds — before any handyman is notified. The phone is
+  checked server-side, so a real customer can never accidentally be "test"
+  unless they use your number.
+- A handyman is a **test account** when their Firestore doc has
+  `isTestAccount: true` (you set this by hand in the console; handymen can't
+  set it themselves — Firestore rules block it).
+- The rule, applied in both places a handyman can see a job:
+  test jobs → test accounts only; real jobs → real handymen only.
+  1. **WhatsApp new-job messages**, incl. daily re-sends and re-release after a
+     cancel — all go through one function, `pickEligibleHandymen`
+     (`functions/handymanNotifier.js`), so one filter covers them all.
+  2. **The in-app job board** (`getAvailableJobs`) hides test jobs from real
+     handymen and real jobs from test accounts.
+- Everything else (payment capture, prompts, refunds, release, payouts) runs
+  exactly as for a real job, so tests stay realistic. Admin pages show test
+  jobs with a `TEST` badge so you don't release/refund the wrong one.
+
+**Build (Claude Code does these — say "build Phase 8"):**
+
+- [ ] `functions/handymanNotifier.js` — `pickEligibleHandymen`: test job →
+      query `isTestAccount == true`; real job → drop `isTestAccount` handymen.
+      Unit tests in `functions/__tests__/handymanNotifier.test.js`.
+- [ ] `functions/index.js` — `onJobPaymentSucceeded`: stamp `isTest` from
+      `TEST_CUSTOMER_PHONES` before the fan-out.
+- [ ] `firestore.rules` — clients can't write `isTest` (jobs) or
+      `isTestAccount` (handymen), same pattern as `noShowCount`.
+- [ ] `src/services/firebase/collections.js` `getAvailableJobs` + job board —
+      filter by the viewing handyman's `isTestAccount`.
+- [ ] Admin dashboard + fund-release page — `TEST` badge on `isTest` jobs.
+- [ ] Run all backend tests, then deploy functions + rules + hosting
+      (Phase 3 commands).
+
+**Setup (you do these, once):**
+
+- [ ] Add to `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`
+      your test customer number(s), with country code, comma-separated:
+
+  ```
+  TEST_CUSTOMER_PHONES=+6591234567
+  ```
+
+- [ ] In https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fhandymen
+      open HM-A and HM-B → **Add field** → `isTestAccount` (boolean) = `true`.
+- [ ] Redeploy functions (Phase 3 backend command) so the env change loads.
+
+**Verify it works (do this once, before trusting it):**
+
+- [ ] Have at least one real (non-test) handyman on the roster — or
+      temporarily set `isTestAccount: false` on HM-B to act as "real".
+- [ ] Book a job from the test customer number → HM-A gets the WhatsApp;
+      the "real" handyman gets **nothing** and does **not** see it on the job
+      board. Firestore job has `isTest: true`.
+- [ ] Book from any other number (e.g. a friend's) → the reverse: real
+      handyman notified, HM-A not. Refund it (Phase 6, R1).
+- [ ] Check prod function logs for the fan-out line listing who was notified.
+
+**Cost note:** after Phase 7 reverts `Appliance Repair` to S$90–130, each
+refunded prod test loses ~S$3.60 in Stripe fees (fees aren't returned on
+refund). If that adds up, ask Claude Code for a "test price" follow-up
+(allow a S$1–5 price for jobs from `TEST_CUSTOMER_PHONES` only).
+
 ---
 
 ## Browser brief — collect Twilio template SIDs
