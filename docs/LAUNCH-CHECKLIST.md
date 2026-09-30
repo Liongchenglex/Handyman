@@ -209,11 +209,11 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
      the T1 transfer shows under **Balance** as *pending*. This is normal:
      the transfer went out immediately (`source_transaction`), but the money
      only becomes *available* once the customer's charge settles.
-  2. HM-A's connected accounts are set to **daily** automatic payouts
-     (`functions/index.js:813`). Once the balance is available, a **Payout**
-     appears on HM-A's account and lands in HM-A's bank the next business day
-     or so. A brand-new Stripe account usually has a longer **first**
-     payout (often ~7 days) — Stripe shows the expected date on the payout.
+  2. Payout schedule (confirmed in Stripe 2026-09-30): **Daily – 7 day
+     rolling basis**. Each charge's money becomes *available* on HM-A's
+     account 7 days after the customer paid, then pays out daily — so
+     expect the bank payout ~7 days after the T1 booking. Stripe shows the
+     expected date on the payout.
   3. Pass = HM-A's bank statement shows the Stripe payout for the T1 amount
      minus Stripe fee and platform fee (breakdown in the transfer metadata).
   4. Only the money reaching the connected account (step 1) is our code; the
