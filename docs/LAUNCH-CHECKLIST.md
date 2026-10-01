@@ -317,80 +317,80 @@ question; admin emails now work). Do the scenarios **in order**.
       time slot later today (or ASAP + approve the proposed time).
 
 ### S1 — No-show → customer wants a refund (covers T7 choice 3 + R2)
-1. [ ] CUST books `TEST S1`. HM-A claims it.
-2. [ ] HM-A → **Request price adjustment** → `1`, reason `extra part`. CUST pays
+1. [ x ] CUST books `TEST S1`. HM-A claims it.
+2. [ x ] HM-A → **Request price adjustment** → `1`, reason `extra part`. CUST pays
        the link (S$1.10) → "Payment received" popup → both phones get "paid".
-3. [ ] HM-A → **Mark Complete**. CUST gets the 3-button poll → tap **Report Issue**.
-4. [ ] CUST gets "What happened? 1 problem / 2 never came" → reply `2`.
-5. [ ] Check **all** of:
+3. [x ] HM-A → **Mark Complete**. CUST gets the 3-button poll → tap **Report Issue**.
+4. [ x] CUST gets "What happened? 1 problem / 2 never came" → reply `2`.
+5. [x] Check **all** of:
    - CUST gets the 3 choices (Reschedule / New handyman / Cancel & refund).
    - HM-A gets "The customer reported that nobody arrived…".
    - Admin email "no-show reported" arrives at easydonehandyman@gmail.com.
    - Firestore job: `status: "in_progress"` (back from pending_confirmation),
      one `noShowReports` entry. HM-A's handyman doc: `noShowCount` +1.
-6. [ ] CUST replies `3`. → CUST gets "our team will process your refund shortly";
+6. [x ] CUST replies `3`. → CUST gets "our team will process your refund shortly";
        admin email arrives; `/admin` row shows **⚠️ Needs attention**; Details
        page says **"No-show — customer wants a refund"**.
-7. [ ] `/admin` → **Refund** on that row → confirm.
-8. [ ] **R2 check** — Stripe https://dashboard.stripe.com/payments: **both** the
+7. [ x ] `/admin` → **Refund** on that row → confirm.
+8. [x  ] **R2 check** — Stripe https://dashboard.stripe.com/payments: **both** the
        S$4.40 and the S$1.10 payments show **Refunded**. Firestore job:
        `paymentStatus: "refunded"`, `status: "cancelled"`,
        `priceAdjustment.status: "refunded"`. CUST gets Stripe refund email(s).
 
 ### S2 — No-show → new handyman → paid adjustment follows the job (T7 choice 2 + T16)
-1. [ ] CUST books `TEST S2`. HM-A claims. HM-A requests `+1`, CUST pays.
-2. [ ] HM-A **Mark Complete** → CUST **Report Issue** → `2` → then `2` (new handyman).
-3. [ ] Check: CUST gets "we're finding you a new handyman"; admin email;
+1. [x ] CUST books `TEST S2`. HM-A claims. HM-A requests `+1`, CUST pays.
+2. [ x] HM-A **Mark Complete** → CUST **Report Issue** → `2` → then `2` (new handyman).
+3. [ x ] Check: CUST gets "we're finding you a new handyman"; admin email;
        `/admin` row ⚠️ → Details: **"No-show — customer wants a new handyman"**.
-4. [ ] `/admin` → **Force unassign** (add a note) → check:
+4. [ x ] `/admin` → **Force unassign** (add a note) → check:
        HM-A notified and **cannot** re-claim; CUST notified; HM-B gets the
        new-job WhatsApp; on HM-B's job board the card shows
        **"💰 Price includes +S$1 agreed with the customer: extra part"**.
-5. [ ] HM-B claims → (ASAP: CUST approves time) → HM-B **Mark Complete** →
+5. [  x] HM-B claims → (ASAP: CUST approves time) → HM-B **Mark Complete** →
        CUST **Confirm Complete** → `/admin/fund-release` → **Release Funds**.
-6. [ ] Stripe https://dashboard.stripe.com/connect/transfers: **two** transfers
+6. [x  ] Stripe https://dashboard.stripe.com/connect/transfers: **two** transfers
        to **HM-B** (≈S$3.41 + ≈S$0.51), **none** to HM-A for this job.
 
 ### S3 — No-show → reschedule with the same handyman (T7 choice 1)
-1. [ ] CUST books `TEST S3`. HM-A claims → **Mark Complete** → CUST
+1. [ x] CUST books `TEST S3`. HM-A claims → **Mark Complete** → CUST
        **Report Issue** → `2` → then `1` (reschedule).
-2. [ ] CUST gets a pick-time link → opens `/pick-time` → picks tomorrow.
-3. [ ] HM-A gets "Customer picked … Approve / Decline" → **Approve** →
+2. [x  ] CUST gets a pick-time link → opens `/pick-time` → picks tomorrow.
+3. [ x] HM-A gets "Customer picked … Approve / Decline" → **Approve** →
        both get "new time confirmed". Firestore: new `preferredDate`,
        `status: "in_progress"`.
-4. [ ] **Keep this job** for S5 (stuck-job sweep).
+4. [ x ] **Keep this job** for S5 (stuck-job sweep).
 
 ### S4 — Refund a job nobody claimed (R3)
-1. [ ] CUST books `TEST S4`. **Nobody claims it** (HM-A/HM-B ignore the WhatsApp).
-2. [ ] https://dashboard.stripe.com/payments → open the S$4.40 payment →
+1. [x ] CUST books `TEST S4`. **Nobody claims it** (HM-A/HM-B ignore the WhatsApp).
+2. [ x] https://dashboard.stripe.com/payments → open the S$4.40 payment →
        **Refund** → full amount → Refund.
-3. [ ] Within ~1 min, Firestore job: `paymentStatus: "refunded"`. CUST gets
+3. [ x] Within ~1 min, Firestore job: `paymentStatus: "refunded"`. CUST gets
        the Stripe refund email.
-4. [ ] The job is still `pending` (still on the board): `/admin/jobs` → find
+4. [ x] The job is still `pending` (still on the board): `/admin/jobs` → find
        `TEST S4` → **Set status (override)** → **cancelled**. Check it's gone
        from HM-A's job board.
 
 ### S5 — Stuck-job sweep, fast-forwarded (replaces T11)
 Instead of waiting 2+ days, move the deadline into the past by hand.
-1. [ ] On the S3 job, HM-A → **Propose new time** (any slot). CUST does **not** reply.
-2. [ ] Firestore → `jobs/<S3 job id>/prompts` → open the newest
+1. [ x] On the S3 job, HM-A → **Propose new time** (any slot). CUST does **not** reply.
+2. [ x] Firestore → `jobs/<S3 job id>/prompts` → open the newest
        `schedule_approval` (status `open`) → edit `expiresAt` to
        `2026-09-30T00:00:00.000Z` → Update.
-3. [ ] Cloud Scheduler → **Force run** `stuckStateSweep`.
-       Check: CUST gets a reminder WhatsApp (prompt_nudge); the prompt now has
+3. [ x] Cloud Scheduler → **Force run** `stuckStateSweep`.
+       Check: CUST gets a reminder WhatsApp ( prompt_nudge); the prompt now has
        `nudgedAt` and a new `expiresAt` (+24h). No attention flag yet.
-4. [ ] Edit that same prompt's `expiresAt` to `2026-09-30T00:00:00.000Z` again →
+4. [ x ] Edit that same prompt's `expiresAt` to `2026-09-30T00:00:00.000Z` again →
        **Force run** `stuckStateSweep` again.
-5. [ ] Check: prompt `status: "expired"`; `/admin` row ⚠️ → Details:
+5. [ x ] Check: prompt `status: "expired"`; `/admin` row ⚠️ → Details:
        **"WhatsApp question left unanswered"**; admin digest email arrives.
-6. [ ] Clean up: Refund the S3 job (R1 path) so CUST has no open questions.
+6. [ x] Clean up: Refund the S3 job (R1 path) so CUST has no open questions.
 
 ### S6 — Template delivery check (replaces T12)
 - [x] 2026-10-01: Claude checked prod logs + Twilio — 98 WhatsApp sent since
       29 Sep, **0 failed / undelivered**, no `63016` errors, no template-less
       fallbacks.
-- [ ] After S1–S5: ask Claude Code to re-run the same check (it covers the
-      no-show, nudge and refund messages those scenarios send).
+- [x] 2026-10-01 after S1–S5: re-checked — 158 WhatsApp sent, **all read**,
+      0 failed, no `63016`, no template-less fallbacks, no admin-email failures.
 
 ## Phase 6 — Refund testing
 
@@ -412,7 +412,7 @@ Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table
       `"pending"`, edit it to `"cancelled"` by hand so it leaves the board.
 - [ x ] **R4 No-show → refund.** The job from T7 reply `3` → **Refund** on its
       row → same checks as R1.
-- [ x ] **R5 Money never moves by itself.** In Firestore, every test job that
+- [x] **R5 Money never moves by itself.** (2026-10-01: Claude cross-checked all 8 test jobs Firestore ↔ Stripe — 5 refunded incl. S1's adjustment, 3 released with correct transfers, S2's went to HM-B only; 0 mismatches.) In Firestore, every test job that
       wasn't released or refunded still has `paymentStatus: "succeeded"`.
 
 Real cards show the refund in 5–10 business days; **Refunded** in Stripe is
