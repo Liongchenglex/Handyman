@@ -27,7 +27,7 @@ const JobActionButtons = ({
   variant = 'compact',  // 'compact' for lists, 'full' for detail pages
   showViewDetails = true,
   completionFlow = 'pending_confirmation', // 'pending_confirmation' (sends WhatsApp) or 'direct' (no notification)
-  initialAction // optional deep-link hint, e.g. 'disposition' — opens the disposition sheet once on mount
+  initialAction // optional deep-link hint: 'disposition' opens the disposition sheet, 'second_visit' the return-visit picker, once on mount
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -37,7 +37,12 @@ const JobActionButtons = ({
   const [justCompleted, setJustCompleted] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [showProposeModal, setShowProposeModal] = useState(false);
-  const [showSecondVisitModal, setShowSecondVisitModal] = useState(false);
+  // Lazy-init from the ?action=second_visit deep link (the "Propose time"
+  // button in the second_visit_needed WhatsApp, sent when the customer says
+  // the handyman is coming back): open the date picker directly.
+  const [showSecondVisitModal, setShowSecondVisitModal] = useState(
+    () => initialAction === 'second_visit' && job.status === 'in_progress'
+  );
   const [visitIssueKind, setVisitIssueKind] = useState(null); // null | 'no_access' | 'cannot_finish'
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   // Lazy-init: only opens the sheet from a fresh deep link (?action=disposition)

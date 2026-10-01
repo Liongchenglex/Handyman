@@ -252,6 +252,12 @@ describe('buildDispositionLinkVar', () => {
     expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'button' }))
       .toBe('JOB123?action=disposition');
   });
+  test('custom action (second_visit) in both modes', () => {
+    expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'button', action: 'second_visit' }))
+      .toBe('JOB123?action=second_visit');
+    expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', action: 'second_visit' }))
+      .toBe('https://www.easydonehandyman.sg/job-details/JOB123?action=second_visit');
+  });
   test('unknown mode falls back to the full link', () => {
     expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'weird' }))
       .toBe('https://www.easydonehandyman.sg/job-details/JOB123?action=disposition');

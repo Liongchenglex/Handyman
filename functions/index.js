@@ -3366,13 +3366,13 @@ exports.whatsappWebhook = functions.https.onRequest(async (req, res) => {
               const hmSnap = hmId ? await admin.firestore().collection('handymen').doc(hmId).get() : null;
               const hmPhone = hmSnap && hmSnap.exists ? hmSnap.data().phone : null;
               if (hmPhone) {
-                const link = `${APP_URL}/job-details/${verdict.prompt.jobId}?action=disposition`;
+                const link = `${APP_URL}/job-details/${verdict.prompt.jobId}?action=second_visit`;
                 await sendTwilioTemplateMessage(
                   formatPhoneToWhatsApp(hmPhone),
                   process.env.TWILIO_TEMPLATE_SECOND_VISIT_NEEDED,
                   {
                     '1': verdict.prompt.jobId.slice(-6),
-                    '2': buildDispositionLinkVar({ appUrl: APP_URL, jobId: verdict.prompt.jobId, mode: TEMPLATE_LINK_MODE }),
+                    '2': buildDispositionLinkVar({ appUrl: APP_URL, jobId: verdict.prompt.jobId, mode: TEMPLATE_LINK_MODE, action: 'second_visit' }),
                   },
                   `🔁 The customer says Job #${verdict.prompt.jobId.slice(-6)} needs another visit${hadCompletionClaim ? ' (they answered this after your Mark Complete — if you believe the job IS complete, contact easydonehandyman@gmail.com)' : ''}. Propose the return time here:\n${link}`
                 );
@@ -5026,7 +5026,7 @@ exports.stuckStateSweep = functions.pubsub
             const hmSnap = await db.collection('handymen').doc(job.handymanId).get();
             const hmPhone = hmSnap.exists ? hmSnap.data().phone : null;
             if (hmPhone) {
-              const link = `${APP_URL}/job-details/${doc.id}?action=disposition`;
+              const link = `${APP_URL}/job-details/${doc.id}?action=second_visit`;
               await sendTwilioTemplateMessage(
                 formatPhoneToWhatsApp(hmPhone),
                 process.env.TWILIO_TEMPLATE_PROMPT_NUDGE,

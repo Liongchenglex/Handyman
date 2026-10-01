@@ -204,8 +204,10 @@ function buildVisitProposalReset(job, { visitIndex, nowIso }) {
 }
 
 /**
- * Template variable carrying the handyman's disposition deep link
- * (second_visit_needed + visit_disposition templates).
+ * Template variable carrying the handyman's job deep link
+ * (visit_disposition → action 'disposition' opens the "how did it go"
+ * sheet; second_visit_needed → action 'second_visit' opens the return-visit
+ * date picker directly).
  *
  * The approved templates differ per environment:
  *   - 'button' (prod): a URL button with `https://<domain>/job-details/{{n}}`
@@ -238,8 +240,8 @@ function buildNoShowReportUpdate(job, { via, promptId = null, nowIso }) {
   return update;
 }
 
-function buildDispositionLinkVar({ appUrl, jobId, mode }) {
-  const suffix = `${jobId}?action=disposition`;
+function buildDispositionLinkVar({ appUrl, jobId, mode, action = 'disposition' }) {
+  const suffix = `${jobId}?action=${action}`;
   return mode === 'button' ? suffix : `${appUrl}/job-details/${suffix}`;
 }
 
