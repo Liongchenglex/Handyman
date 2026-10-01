@@ -1,5 +1,33 @@
 # Simple Environment Setup Guide
 
+## Which env file is which (current — 2026-10-01)
+
+All real env files are git-ignored. Templates (`*.example`) are the only ones in git.
+
+**Backend (Cloud Functions)** — one self-contained file per Firebase project.
+There is intentionally **no** shared `functions/.env`: Firebase loads it under
+*every* project, which once let placeholder email settings silently apply to prod.
+
+| File | Used when | Edit it? |
+|---|---|---|
+| `functions/.env.handyman-sg-3b418` | `firebase deploy -P prod --only functions` | ✅ **prod backend** — Stripe live keys, Twilio, templates, admin email (`SMTP_*`, `ADMIN_EMAIL`) |
+| `functions/.env.eazydone-d06cf` | `firebase deploy -P dev --only functions` | ✅ dev backend (Stripe test keys) |
+| `functions/.env.example` | never loaded — template | ✅ add new variable *names* here |
+
+**Frontend (React / CRA)** — `REACT_APP_*` values are baked into the build.
+
+| File | Used when | Edit it? |
+|---|---|---|
+| `.env.prod` | source of truth for prod website settings | ✅ edit prod values here |
+| `.env.dev` | source of truth for dev website settings | ✅ edit dev values here |
+| `.env.production.local` | read by `npm run build` | ❌ generated — `cp .env.prod .env.production.local` before every prod build (the `deploy:prod` script does this) |
+| `.env.local` | read by `npm start` (local dev) | ❌ copy of `.env.dev` — re-copy after editing `.env.dev` |
+| `.env.local.example` | never loaded — template | ✅ add new variable *names* here |
+
+**Changing a backend value** → edit the project file → `firebase deploy -P <alias> --only functions`
+(values are read at deploy time). **Changing a website value** → edit `.env.prod` →
+`cp .env.prod .env.production.local && npm run build` → `firebase deploy -P prod --only hosting`.
+
 ## Overview
 
 This project uses **simple `.env` file configuration** for different environments:
