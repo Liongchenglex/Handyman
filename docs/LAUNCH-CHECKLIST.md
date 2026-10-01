@@ -402,10 +402,10 @@ Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table
   - Stripe payments: payment shows **Refunded**.
   - Firestore job: `paymentStatus: "refunded"`, `status: "cancelled"`.
   - Row gone from the Active jobs table.
-- [ ] **R2 Refund with a paid price adjustment.** Do T5 up to "paid", then
+- [x] **R2 Refund with a paid price adjustment.** Do T5 up to "paid", then
       **Refund**. Stripe payments: **both** the S$4 and the S$5 charges show
       Refunded.
-- [ ] **R3 Refund a job nobody claimed** (not in the Active jobs table).
+- [x ] **R3 Refund a job nobody claimed** (not in the Active jobs table).
       https://dashboard.stripe.com/payments → click the payment → **Refund**
       → full amount. Firestore job should change to
       `paymentStatus: "refunded"` within a minute. If job `status` is still
@@ -420,7 +420,7 @@ the pass condition.
 
 ## Phase 7 — Before real customers
 
-- [ ] **Revert the test price.** In both files, change
+- [ ] **Revert the test price.** PREPARED 2026-10-01 on branch `launch/real-pricing` (`4532c6e`: S$90–130 + S$20 floor in all 3 files, tests pass). After the Node smoke test, tell Claude Code "ship real pricing" → merge + deploy functions + hosting. (Original instructions below.) In both files, change
       `'Appliance Repair':  { min: 4,   max: 20 },` to
       `'Appliance Repair':  { min: 90,  max: 130 },` and remove the `TEMP`
       comment:
@@ -454,7 +454,7 @@ the pass condition.
   4. Verify: send an unrecognised WhatsApp message (e.g. "hello test") from
      the customer phone → an "unmatched message" email arrives at
      `ADMIN_EMAIL`. Function logs must show no `535` / `sendAdminEmail failed`.
-- [ ] **Upgrade the backend runtime Node 20 → 22 — deadline 30 Oct 2026.**
+- [x] **Upgrade the backend runtime Node 20 → 22 — deadline 30 Oct 2026.** DONE 2026-10-01 (`3859b51`): all 34 functions on `nodejs22`, 165 tests pass, live endpoint verified. Owner smoke test (T1 at S$4) still to do.
       Google retires Node 20 for Cloud Functions on 2026-10-30; after that,
       `firebase deploy --only functions` is refused until upgraded (the
       running functions keep working, but no fixes can ship).
