@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AdjustmentScopeNote from './AdjustmentScopeNote';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ExpressInterestButton from './ExpressInterestButton';
@@ -402,6 +403,7 @@ const JobBoard = ({
                       </div>
                     </div>
                   </div>
+                  <AdjustmentScopeNote job={job} compact />
 
                   {/* Customer Info — wraps instead of overflowing on narrow screens */}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-3">

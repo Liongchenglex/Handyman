@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AdjustmentScopeNote from './AdjustmentScopeNote';
 import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getJob } from '../../services/firebase';
@@ -153,6 +154,7 @@ const JobCard = () => {
                 </p>
               </div>
             </div>
+            <AdjustmentScopeNote job={job} />
           </div>
 
           {/* Job Content */}

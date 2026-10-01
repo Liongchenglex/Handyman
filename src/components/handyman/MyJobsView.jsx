@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AdjustmentScopeNote from './AdjustmentScopeNote';
 import { getJobsByHandyman } from '../../services/firebase';
 import JobActionButtons from './JobActionButtons';
 import { getStatusColor, getStatusText, formatDate } from '../../utils/jobHelpers';
@@ -120,6 +121,7 @@ const MyJobsView = ({ user, onViewChange }) => {
                   </p>
                 </div>
               </div>
+              <AdjustmentScopeNote job={job} compact />
 
               {/* Job Description */}
               <p className="text-gray-700 dark:text-gray-300 mb-4">
