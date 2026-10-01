@@ -244,15 +244,15 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       Repeat on 3 jobs, replying `1`, `2`, `3`:
       - `1` → CUST gets a `/pick-time` link.
       - `2` → job shows **Needs attention** on `/admin` → **Force unassign**
-        → job back on the board.
+        → job back on the board. x 
       - `3` → job shows **Needs attention** → used in refund test R4.
-- [ ] **T8 Second visit.** HM-A → **Mark Complete** → CUST taps **He's
+- [ x ] **T8 Second visit.** HM-A → **Mark Complete** → CUST taps **He's
       coming back** → HM-A gets a WhatsApp link → opens → **Needs another
       visit** → pick date → CUST **Approve**.
-- [ ] **T9 Customer not home.** Job dated **today**, HM-A claimed → job page
+- [ x ] **T9 Customer not home.** Job dated **today**, HM-A claimed → job page
       → **Customer not home** → CUST gets Reschedule / Contact support →
       tap **Reschedule** → CUST gets a `/pick-time` link.
-- [ ] **T10 Evening check-in.** Job dated today, HM-A does nothing →
+- [ x ] **T10 Evening check-in.** Job dated today, HM-A does nothing →
       force-run `eveningVisitDisposition` → HM-A gets "How did today's job
       go?" link → opens with **Job's done / Needs another visit / Problem —
       can't finish** options.
@@ -286,7 +286,7 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
   3. https://www.easydonehandyman.sg/admin/jobs → **Details →** on any job
      opens the same page.
   4. On a phone-width window: cards stack in one column, nothing is cut off.
-- [ ] **T15 Admin price adjustment on the handyman's behalf.** Job in
+- [ x ] **T15 Admin price adjustment on the handyman's behalf.** Job in
       progress, HM-A assigned, no adjustment yet (book S$4).
   1. `/admin/jobs/<id>` → Money → **Request price adjustment** → amount `5`,
      any reason → **Send request**.
@@ -303,7 +303,7 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
 Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table
 → **Refund** on the job's row (calls `refundPayment`, `functions/index.js:1997`).
 
-- [ ] **R1 Refund an in-progress job.** Book (S$4), HM-A claims, ADMIN clicks
+- [x ] **R1 Refund an in-progress job.** Book (S$4), HM-A claims, ADMIN clicks
       **Refund** → confirm. Check:
   - Stripe payments: payment shows **Refunded**.
   - Firestore job: `paymentStatus: "refunded"`, `status: "cancelled"`.
@@ -316,9 +316,9 @@ Refund button: https://www.easydonehandyman.sg/admin → **Active jobs** table
       → full amount. Firestore job should change to
       `paymentStatus: "refunded"` within a minute. If job `status` is still
       `"pending"`, edit it to `"cancelled"` by hand so it leaves the board.
-- [ ] **R4 No-show → refund.** The job from T7 reply `3` → **Refund** on its
+- [ x ] **R4 No-show → refund.** The job from T7 reply `3` → **Refund** on its
       row → same checks as R1.
-- [ ] **R5 Money never moves by itself.** In Firestore, every test job that
+- [ x ] **R5 Money never moves by itself.** In Firestore, every test job that
       wasn't released or refunded still has `paymentStatus: "succeeded"`.
 
 Real cards show the refund in 5–10 business days; **Refunded** in Stripe is
@@ -339,6 +339,27 @@ the pass condition.
     minimum was lowered to S$4 for testing (2026-09-30).
 
   Then redeploy both parts (Phase 3 commands) and commit.
+- [ ] **Set up admin email alerts — currently NOT working** (found
+      2026-10-01). `functions/.env` still has placeholder values
+      (`SMTP_USER=your_gmail@gmail.com`, `ADMIN_EMAIL=your_admin_email@example.com`),
+      so every admin email (Needs attention, no-show, dispute, unmatched
+      WhatsApp replies, daily digest) fails with Gmail `535 Username and
+      Password not accepted`.
+  1. Sending Gmail (e.g. `easydonehandyman@gmail.com`): turn on 2-Step
+     Verification, then create an App password at
+     https://myaccount.google.com/apppasswords (name "Handyman alerts").
+  2. Add to `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`:
+     ```
+     SMTP_HOST=smtp.gmail.com
+     SMTP_PORT=587
+     SMTP_USER=<sending gmail>
+     SMTP_PASS=<16-char app password, no spaces>
+     ADMIN_EMAIL=<address that receives alerts>
+     ```
+  3. Deploy functions (Phase 3 backend command).
+  4. Verify: send an unrecognised WhatsApp message (e.g. "hello test") from
+     the customer phone → an "unmatched message" email arrives at
+     `ADMIN_EMAIL`. Function logs must show no `535` / `sendAdminEmail failed`.
 - [ ] **Upgrade the backend runtime Node 20 → 22 — deadline 30 Oct 2026.**
       Google retires Node 20 for Cloud Functions on 2026-10-30; after that,
       `firebase deploy --only functions` is refused until upgraded (the
