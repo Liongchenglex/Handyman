@@ -85,6 +85,31 @@ describe('interpretReply — multiple open prompts', () => {
     expect(interpretReply(pair, 'NO')).toEqual({ kind: 'disambiguate' });
   });
 
+  test('a bare digit that is an option on exactly ONE prompt answers it (numbered questions)', () => {
+    // e.g. "what happened? 1 problem / 2 never came" open alongside an
+    // Approve/Decline prompt: "1" can only mean the numbered question.
+    const pair = [
+      prompt({ id: 'f1', type: 'completion_no_followup', options: { '1': 'problem', PROBLEM: 'problem', '2': 'never_came' } }),
+      prompt({ id: 's1', jobId: 'job_bbb222', type: 'schedule_pick_approval', options: { YES: 'approve', APPROVE: 'approve', NO: 'decline' } }),
+    ];
+    const r = interpretReply(pair, '1');
+    expect(r).toMatchObject({ kind: 'answer', action: 'problem' });
+    expect(r.prompt.id).toBe('f1');
+    expect(interpretReply(pair, ' 2 ')).toMatchObject({ kind: 'answer', action: 'never_came' });
+  });
+
+  test('a bare digit valid on SEVERAL prompts asks which — never guesses', () => {
+    const pair = [
+      prompt({ id: 'a', type: 'no_show_choice', options: { '1': 'reschedule', '2': 'new_handyman' } }),
+      prompt({ id: 'b', jobId: 'job_bbb222', type: 'access_issue_choice', options: { '1': 'reschedule', '2': 'support' } }),
+    ];
+    expect(interpretReply(pair, '1')).toEqual({ kind: 'disambiguate' });
+  });
+
+  test('a bare digit valid on NO prompt is still unmatched', () => {
+    expect(interpretReply(two, '1')).toEqual({ kind: 'unmatched' });
+  });
+
   test('a selector out of range is unmatched', () => {
     expect(interpretReply(two, '5 yes')).toEqual({ kind: 'unmatched' });
   });

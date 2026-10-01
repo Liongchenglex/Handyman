@@ -80,7 +80,13 @@ function interpretReply(prompts, messageText) {
   }
 
   const selectorMatch = text.match(/^\s*([1-9])\b(.*)$/);
-  if (!selectorMatch) {
+  // A bare digit ("1") is not a selector — a selector needs an answer after
+  // it ("1 YES"). Numbered questions (poll follow-up, no-show choice, access
+  // issue) take digits as answers, so a bare digit goes through the same
+  // unique-prompt binding as button text below; otherwise a customer holding
+  // two open prompts could never answer a numbered question.
+  const bareDigit = !!selectorMatch && !selectorMatch[2].trim();
+  if (!selectorMatch || bareDigit) {
     // Unique-prompt binding: a reply that matches options on exactly ONE
     // open prompt is unambiguous even without a selector. This matters
     // for quick-reply buttons ("Approve", "Confirm Complete") — they can
