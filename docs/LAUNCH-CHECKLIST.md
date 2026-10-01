@@ -504,49 +504,43 @@ them — no WhatsApp, and not on their job board.
   exactly as for a real job, so tests stay realistic. Admin pages show test
   jobs with a `TEST` badge so you don't release/refund the wrong one.
 
-**Build (Claude Code does these — say "build Phase 8"):**
+**Build — DONE 2026-10-01 (`5543d21`), deployed (rules + functions + website):**
 
-- [ ] `functions/handymanNotifier.js` — `pickEligibleHandymen`: test job →
-      query `isTestAccount == true`; real job → drop `isTestAccount` handymen.
-      Unit tests in `functions/__tests__/handymanNotifier.test.js`.
-- [ ] `functions/index.js` — `onJobPaymentSucceeded`: stamp `isTest` from
-      `TEST_CUSTOMER_PHONES` before the fan-out.
-- [ ] `firestore.rules` — clients can't write `isTest` (jobs) or
-      `isTestAccount` (handymen), same pattern as `noShowCount`.
-- [ ] `src/services/firebase/collections.js` `getAvailableJobs` + job board —
-      filter by the viewing handyman's `isTestAccount`.
-- [ ] Admin dashboard + fund-release page — `TEST` badge on `isTest` jobs.
-- [ ] Run all backend tests, then deploy functions + rules + hosting
-      (Phase 3 commands).
+- [x] Fan-out: test jobs → `isTestAccount` handymen only; real jobs never reach test accounts.
+- [x] Jobs from `TEST_CUSTOMER_PHONES` stamped `isTest` at payment creation (+ backstop before fan-out).
+- [x] Firestore rules: claim split enforced; clients can't write `isTest` / `isTestAccount`.
+      Also fixed a pre-existing hole: handyman sign-up could self-create as verified/active.
+      Verify any time: `python3 scripts/rules-smoke-test.py` against the emulator (11 scenarios).
+- [x] Job board hides the other kind of job.
+- [x] 🧪 TEST badge on Active jobs, All jobs, job Details and Fund release.
+- [x] **S$1 test service** "Platform Test" (S$1–5): only shown at
+      https://www.easydonehandyman.sg/request-job?test=1, and the server refuses
+      payment for it unless the customer phone is a test phone.
 
 **Setup (you do these, once):**
 
-- [ ] Add to `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`
-      your test customer number(s), with country code, comma-separated:
+- [ ] Add your test customer number(s) to
+      `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`
+      (comma-separated, any format), then redeploy functions:
 
   ```
-  TEST_CUSTOMER_PHONES=+6591234567
+  TEST_CUSTOMER_PHONES=+6581505267
   ```
 
-- [ ] In https://console.firebase.google.com/project/handyman-sg-3b418/firestore/data/~2Fhandymen
-      open HM-A and HM-B → **Add field** → `isTestAccount` (boolean) = `true`.
-- [ ] Redeploy functions (Phase 3 backend command) so the env change loads.
+- [ ] Firestore → `handymen` → open each TEST handyman account → **Add field**
+      `isTestAccount` (boolean) = `true`. ⚠️ A test account stops receiving REAL
+      jobs — only mark accounts that will never do real work.
 
-**Verify it works (do this once, before trusting it):**
+**Verify it works (once, ~S$1.10):**
 
-- [ ] Have at least one real (non-test) handyman on the roster — or
-      temporarily set `isTestAccount: false` on HM-B to act as "real".
-- [ ] Book a job from the test customer number → HM-A gets the WhatsApp;
-      the "real" handyman gets **nothing** and does **not** see it on the job
-      board. Firestore job has `isTest: true`.
-- [ ] Book from any other number (e.g. a friend's) → the reverse: real
-      handyman notified, HM-A not. Refund it (Phase 6, R1).
-- [ ] Check prod function logs for the fan-out line listing who was notified.
-
-**Cost note:** after Phase 7 reverts `Appliance Repair` to S$90–130, each
-refunded prod test loses ~S$3.60 in Stripe fees (fees aren't returned on
-refund). If that adds up, ask Claude Code for a "test price" follow-up
-(allow a S$1–5 price for jobs from `TEST_CUSTOMER_PHONES` only).
+- [ ] Open https://www.easydonehandyman.sg/request-job?test=1 → 🧪 banner shows →
+      book **Platform Test** (S$1 + fee = S$1.10) from the test phone.
+- [ ] Firestore job has `isTest: true`; `/admin` row shows 🧪 TEST.
+- [ ] Test handyman gets the WhatsApp + sees it on the board; a non-test
+      handyman (if any) gets nothing and doesn't see it.
+- [ ] Open the same URL but book with a NON-test phone → payment is refused
+      ("Platform Test is for internal testing only").
+- [ ] Refund or release the test job as usual.
 
 ---
 
