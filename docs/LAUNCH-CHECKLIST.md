@@ -433,7 +433,7 @@ the pass condition.
     minimum was lowered to S$4 for testing (2026-09-30).
 
   Then redeploy both parts (Phase 3 commands) and commit.
-- [ ] **Set up admin email alerts — currently NOT working** (found
+- [x] **Set up admin email alerts** — DONE 2026-10-01 (Gmail app password, test email + live alerts verified). Was NOT working (found
       2026-10-01). `functions/.env` still has placeholder values
       (`SMTP_USER=your_gmail@gmail.com`, `ADMIN_EMAIL=your_admin_email@example.com`),
       so every admin email (Needs attention, no-show, dispute, unmatched
@@ -470,7 +470,7 @@ the pass condition.
   - Optional later: `firebase-functions` 4.9 → latest has breaking changes;
     do it separately, not together with the Node upgrade.
 - [ ] Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
-- [ ] Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
+- [x] N/A — nothing was switched off (Phase 4 ping step skipped). Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
       `true`.
 - [ ] Delete `TEST` jobs from prod Firestore (jobs collection → open job →
       **⋮ → Delete document**).
