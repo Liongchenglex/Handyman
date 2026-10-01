@@ -305,12 +305,12 @@ moves the job back to `in_progress`; a bare "1"/"2" reply now answers the right
 question; admin emails now work). Do the scenarios **in order**.
 
 **Before you start (2 min):**
-- [ ] Customer phone (CUST) is a **different WhatsApp number** from HM-A and HM-B.
-- [ ] CUST has **no leftover open questions**: finish or refund old test jobs
+- [ x] Customer phone (CUST) is a **different WhatsApp number** from HM-A and HM-B.
+- [ x] CUST has **no leftover open questions**: finish or refund old test jobs
       first. If CUST gets "You have 2 pending questions", that's a leftover —
       answer it with the number + word it shows (e.g. `1 YES`).
-- [ ] Hard refresh (Cmd + Shift + R) the admin and handyman pages.
-- [ ] Book every job as **Appliance Repair (S$4)** with **today's date**, a
+- [ x] Hard refresh (Cmd + Shift + R) the admin and handyman pages.
+- [ x] Book every job as **Appliance Repair (S$4)** with **today's date**, a
       time slot later today (or ASAP + approve the proposed time).
 
 ### S1 — No-show → customer wants a refund (covers T7 choice 3 + R2)
