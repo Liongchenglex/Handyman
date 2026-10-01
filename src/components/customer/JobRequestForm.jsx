@@ -16,6 +16,7 @@ import { createJob } from '../../services/api/jobs';
 // Service pricing configuration
 import {
   SERVICE_PRICING,
+  TEST_SERVICE_TYPE,
   getServicePrice,
   getServicePriceMax,
   getPlatformFee,
@@ -236,7 +237,14 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
   };
 
   // Get service types from pricing configuration in servicePricing.js. This is to uipdate the services provided and their fixed pricing.
-  const serviceTypes = Object.keys(SERVICE_PRICING);
+  // The internal 'Platform Test' service only appears on /request-job?test=1
+  // (LAUNCH-CHECKLIST Phase 8). The server also refuses payment for it unless
+  // the customer phone is on TEST_CUSTOMER_PHONES, so the URL alone grants nothing.
+  const [isTestMode] = useState(
+    () => new URLSearchParams(window.location.search).get('test') === '1'
+  );
+  const serviceTypes = Object.keys(SERVICE_PRICING)
+    .filter((type) => isTestMode || type !== TEST_SERVICE_TYPE);
 
   const timingOptions = ['Immediate', 'Schedule'];
   const materialsOptions = ['I will buy', 'Handyman to buy (surcharge applies)'];
@@ -956,6 +964,11 @@ const JobRequestForm = ({ onJobCreated, onBackToHome }) => {
           <form onSubmit={handleJobFormSubmit} className="space-y-6">
             {/* Category Selection */}
             <div className="space-y-4" data-field="category">
+              {isTestMode && (
+                <div className="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 text-sm text-amber-900 dark:text-amber-200">
+                  🧪 <strong>Test mode.</strong> "{TEST_SERVICE_TYPE}" (S$1) can only be paid for from a phone number on the test list, and only test handymen will see the job.
+                </div>
+              )}
               <h3 className="text-lg font-bold">Select a category</h3>
               <div className="flex flex-wrap gap-3">
                 {serviceTypes.map(service => (

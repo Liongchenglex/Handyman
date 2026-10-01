@@ -25,6 +25,13 @@ service cloud.firestore {
       return request.auth.uid == userId;
     }
 
+    // Test mode (Phase 8, functions/testMode.js): test jobs may only be
+    // claimed by test accounts, real jobs only by real handymen.
+    function claimerMatchesJobTestMode() {
+      return (resource.data.get('isTest', false) == true) ==
+             (get(/databases/$(database)/documents/handymen/$(request.auth.uid)).data.get('isTestAccount', false) == true);
+    }
+
     function isHandyman() {
       return isSignedIn() &&
              exists(/databases/$(database)/documents/handymen/$(request.auth.uid)) &&
@@ -67,6 +74,7 @@ service cloud.firestore {
     //     server-side by the release/refund Cloud Functions.
     function jobSystemFields() {
       return [
+        'isTest', // test mode (Phase 8) — stamped only by createPaymentIntent
         'paymentStatus',
         'paymentSucceededAt',
         'paymentReleasedAt',
@@ -118,6 +126,7 @@ service cloud.firestore {
     // handyman fan-out for a job that was never paid.
     function jobCreateDeniedFields() {
       return [
+        'isTest', // test mode (Phase 8) — a customer can't self-label a job
         'paymentSucceededAt',
         'paymentReleasedAt',
         'paymentReleasedBy',
@@ -217,7 +226,8 @@ service cloud.firestore {
               // A handyman who cancelled this job cannot re-claim it
               // (reassignment spec §6). previousHandymanIds is written
               // only by cancelJobAssignment via the Admin SDK.
-              !(request.auth.uid in resource.data.get('previousHandymanIds', []))
+              !(request.auth.uid in resource.data.get('previousHandymanIds', [])) &&
+              claimerMatchesJobTestMode()
             )
           )
         )
@@ -265,8 +275,21 @@ service cloud.firestore {
       // Anyone signed in can read handyman profiles (browse / display).
       allow read: if isSignedIn();
 
-      // Handyman can create their own profile
-      allow create: if isSignedIn() && isOwner(handymanId);
+      // Handyman can create their own profile — but only in the same
+      // unprivileged state the registration form writes (createHandyman):
+      // not verified, status 'pending', not Stripe-onboarded, no test-mode
+      // or reliability counters. Previously creation was unrestricted, so a
+      // raw-API sign-up could self-create as verified/active/onboarded and
+      // skip manual approval.
+      allow create: if isSignedIn() && isOwner(handymanId) &&
+                      request.resource.data.get('verified', false) == false &&
+                      request.resource.data.get('status', 'pending') == 'pending' &&
+                      request.resource.data.get('stripeOnboardingCompleted', false) == false &&
+                      request.resource.data.get('stripeAccountStatus', null) == null &&
+                      !request.resource.data.keys().hasAny([
+                        'isTestAccount', 'cancellationCount', 'noShowCount',
+                        'stripeDetailsSubmitted', 'stripeChargesEnabled', 'stripePayoutsEnabled'
+                      ]);
 
       // Handyman can update their own profile, but NOT:
       //   - verified / status: gate verified-handyman privileges (admin-only).
@@ -284,7 +307,8 @@ service cloud.firestore {
                         'stripeConnectedAccountId',
                         'stripeOnboardingCompleted', 'stripeAccountStatus',
                         'stripeDetailsSubmitted', 'stripeChargesEnabled', 'stripePayoutsEnabled',
-                        'cancellationCount', 'noShowCount'
+                        'cancellationCount', 'noShowCount',
+                        'isTestAccount' // test mode (Phase 8) — admin-only
                       ]));
 
       // Admins can update anything, including verified/status. The email

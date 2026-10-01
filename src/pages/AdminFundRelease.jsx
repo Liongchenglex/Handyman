@@ -5,6 +5,7 @@ import { db } from '../services/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import { releaseEscrow } from '../services/stripe/stripeApi';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import TestJobBadge from '../components/admin/TestJobBadge';
 
 /**
  * Reassignment badge + expandable round-by-round history for a job.
@@ -437,6 +438,7 @@ const AdminFundRelease = () => {
                           <h3 className="text-lg font-bold text-gray-900 dark:text-white">
                             {job.serviceType}
                           </h3>
+                          <TestJobBadge job={job} />
                           <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full text-xs font-medium">
                             Pending Approval
                           </span>
@@ -557,6 +559,7 @@ const AdminFundRelease = () => {
                           <h3 className="text-lg font-bold text-gray-900 dark:text-white">
                             {job.serviceType}
                           </h3>
+                          <TestJobBadge job={job} />
                           <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-xs font-medium">
                             Completed
                           </span>

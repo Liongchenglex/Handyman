@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import AdjustmentScopeNote from './AdjustmentScopeNote';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import LoadingSpinner from '../common/LoadingSpinner';
 import ExpressInterestButton from './ExpressInterestButton';
 
@@ -23,6 +24,7 @@ const JobBoard = ({
   onJobSelect
 }) => {
   const navigate = useNavigate();
+  const { userProfile } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [jobs, setJobs] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -113,8 +115,14 @@ const JobBoard = ({
     { label: 'Urgent First', value: 'urgent' }
   ];
 
+  // Test mode (LAUNCH-CHECKLIST Phase 8): test jobs are only shown to test
+  // accounts and real jobs only to real handymen. Firestore rules enforce the
+  // same split when claiming, so this is presentation, not the security gate.
+  const viewerIsTestAccount = userProfile?.isTestAccount === true;
+
   // Filter jobs based on search and filters
   const filteredJobs = jobs.filter(job => {
+    if ((job.isTest === true) !== viewerIsTestAccount) return false;
     const location = job.location || job.address || '';
     const matchesSearch = job.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          job.serviceType.toLowerCase().includes(searchQuery.toLowerCase()) ||

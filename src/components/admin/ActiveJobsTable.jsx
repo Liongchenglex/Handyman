@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../services/firebase/config';
 import LoadingSpinner from '../common/LoadingSpinner';
+import TestJobBadge from './TestJobBadge';
 import { sendScheduleLink } from '../../services/api/scheduleLink';
 import { resolveAttention, adminUnassignJob, adminRefundJob } from '../../services/api/adminQueue';
 import AdminSetTimeModal from './AdminSetTimeModal';
@@ -162,6 +163,7 @@ const ActiveJobsTable = () => {
                   <Link to={`/admin/jobs/${job.id}`} className="hover:underline">
                     #{job.id.slice(-6)} · {job.serviceType || 'Job'}
                   </Link>
+                  <TestJobBadge job={job} className="ml-2" />
                   <Link to={`/admin/jobs/${job.id}`} className="ml-2 text-sm font-normal text-primary underline">
                     Details →
                   </Link>

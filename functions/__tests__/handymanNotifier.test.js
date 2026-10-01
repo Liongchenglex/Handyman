@@ -49,3 +49,33 @@ describe('pickEligibleHandymen exclusions', () => {
     expect(picked.map((h) => h.id)).toEqual(['hm_2']);
   });
 });
+
+describe('pickEligibleHandymen — test mode (Phase 8)', () => {
+  const handymen = [
+    { id: 'real_1', phone: '+65...' },
+    { id: 'test_1', phone: '+65...', isTestAccount: true },
+    { id: 'real_2', phone: '+65...', isTestAccount: false },
+  ];
+
+  test('a real job never reaches test accounts', async () => {
+    const picked = await pickEligibleHandymen({ serviceType: 'Plumbing' }, fakeDb(handymen), 20);
+    expect(picked.map((h) => h.id)).toEqual(['real_1', 'real_2']);
+  });
+
+  test('a test job only reaches test accounts', async () => {
+    const picked = await pickEligibleHandymen({ serviceType: 'Platform Test', isTest: true }, fakeDb(handymen), 20);
+    expect(picked.map((h) => h.id)).toEqual(['test_1']);
+  });
+
+  test('a test job queries test accounts directly and ignores trade matching', async () => {
+    const wheres = [];
+    const query = {
+      where: (...args) => { wheres.push(args); return query; },
+      limit: () => query,
+      get: async () => ({ docs: [] }),
+    };
+    await pickEligibleHandymen({ serviceType: 'Platform Test', isTest: true }, { collection: () => query }, 20);
+    expect(wheres).toContainEqual(['isTestAccount', '==', true]);
+    expect(wheres.find((w) => w[0] === 'serviceTypes')).toBeUndefined();
+  });
+});

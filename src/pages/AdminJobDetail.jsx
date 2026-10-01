@@ -5,6 +5,7 @@ import { db } from '../services/firebase/config';
 import { projectConfig } from '../config/firebaseProject';
 import { getPlatformFee } from '../config/servicePricing';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import TestJobBadge from '../components/admin/TestJobBadge';
 import RequestAdjustmentModal from '../components/handyman/RequestAdjustmentModal';
 import { getAttentionLabel, deriveScheduleStatus } from '../utils/adminJobStatus';
 import { buildJobTimeline, toMillis } from '../utils/jobTimeline';
@@ -149,6 +150,7 @@ const AdminJobDetail = () => {
             <div className="min-w-0">
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                 Job #{job.id.slice(-6)} · {job.serviceType || 'Job'}
+                <TestJobBadge job={job} className="ml-2" />
               </h1>
               <p className="text-xs text-gray-500 dark:text-gray-400 break-all">ID: {job.id}</p>
               <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold">

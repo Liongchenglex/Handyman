@@ -22,12 +22,24 @@ export const SERVICE_PRICING = {
   'Plumbing':          { min: 120, max: 160 },
   'Electrical':        { min: 130, max: 180 },
   'Carpentry':         { min: 150, max: 220 },
-  'Painting':          { min: 180, max: 300 }
+  'Painting':          { min: 180, max: 300 },
+  // Internal prod-testing service (LAUNCH-CHECKLIST Phase 8). Hidden from
+  // the booking form unless opened with ?test=1, and the server only lets
+  // TEST_CUSTOMER_PHONES pay for it (functions/testMode.js). Name must
+  // match TEST_SERVICE_TYPE there.
+  'Platform Test':     { min: 1,   max: 5 }
 };
 
 /**
  * Platform fee percentage (10% of service fee — applied to the lower bound).
  */
+/**
+ * Internal prod-testing service (LAUNCH-CHECKLIST Phase 8). Only shown on
+ * /request-job?test=1 and only payable by TEST_CUSTOMER_PHONES (enforced
+ * server-side in functions/testMode.js). Never list it to customers.
+ */
+export const TEST_SERVICE_TYPE = 'Platform Test';
+
 export const PLATFORM_FEE_PERCENTAGE = 0.10;
 
 /**
@@ -105,7 +117,9 @@ export const getTotalAmount = (serviceType) => {
  * @returns {Array<{ type: string, min: number, max: number }>}
  */
 export const getServiceTypes = () => {
-  return Object.entries(SERVICE_PRICING).map(([type, range]) => ({
+  return Object.entries(SERVICE_PRICING)
+    .filter(([type]) => type !== TEST_SERVICE_TYPE)
+    .map(([type, range]) => ({
     type,
     min: range.min,
     max: range.max

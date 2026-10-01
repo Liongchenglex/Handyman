@@ -20,6 +20,7 @@ const {
   NOTIFY_MAX_PER_HANDYMAN_PER_HOUR,
   NOTIFY_FILTER_BY_SERVICE_TYPE,
 } = require('./notificationConfig');
+const { handymanMatchesJob } = require('./testMode');
 
 const NOTIFICATION_STATUS = Object.freeze({
   SENT: 'sent',
@@ -62,10 +63,14 @@ async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP, excludeIds
     .where('status', '==', 'active')
     .where('verified', '==', true)
     .where('stripeOnboardingCompleted', '==', true);
-  // Per-trade targeting is a config toggle (off while the roster is
-  // small — see notificationConfig.js). When off, every eligible
-  // handyman hears about every job regardless of serviceTypes.
-  if (NOTIFY_FILTER_BY_SERVICE_TYPE) {
+  if (job.isTest === true) {
+    // Test mode (Phase 8, testMode.js): a test job goes only to test
+    // accounts, whatever their trades.
+    query = query.where('isTestAccount', '==', true);
+  } else if (NOTIFY_FILTER_BY_SERVICE_TYPE) {
+    // Per-trade targeting is a config toggle (off while the roster is
+    // small — see notificationConfig.js). When off, every eligible
+    // handyman hears about every job regardless of serviceTypes.
     query = query.where('serviceTypes', 'array-contains', job.serviceType);
   }
   const snapshot = await query.limit(cap).get();
@@ -73,6 +78,9 @@ async function pickEligibleHandymen(job, db, cap = NOTIFY_FANOUT_CAP, excludeIds
   return snapshot.docs
     .map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((h) => h.notifyOnNewJob !== false)
+    // Real jobs never reach test accounts (and vice versa — belt and
+    // braces for the query filter above).
+    .filter((h) => handymanMatchesJob(h, job))
     // Handymen who previously cancelled this job never get re-notified
     // about it (reassignment spec §6).
     .filter((h) => !excludeIds.includes(h.id));

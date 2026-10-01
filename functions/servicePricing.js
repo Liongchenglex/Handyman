@@ -20,6 +20,11 @@ const SERVICE_PRICING = {
   'Electrical':        { min: 130, max: 180 },
   'Carpentry':         { min: 150, max: 220 },
   'Painting':          { min: 180, max: 300 },
+  // Internal prod-testing service (LAUNCH-CHECKLIST Phase 8). Hidden from
+  // the booking form unless opened with ?test=1, and the server only lets
+  // TEST_CUSTOMER_PHONES pay for it (functions/testMode.js). Name must
+  // match TEST_SERVICE_TYPE there.
+  'Platform Test':     { min: 1,   max: 5 },
 };
 
 // Default fallback used when an unknown service type is requested.

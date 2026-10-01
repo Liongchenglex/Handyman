@@ -21,8 +21,12 @@ exports.paymentIntentSchema = Joi.object({
   handymanId: Joi.string().allow(null, '').min(10).max(100)
     .description('Handyman Firebase UID (optional for new jobs)'),
 
-  serviceFee: Joi.number().required().min(20).max(10000)
-    .description('Service fee in dollars (SGD 20 - SGD 10,000)'),
+  // Floor is a sanity bound only: createPaymentIntent derives the real fee
+  // from the serviceType (servicePricing.js) and rejects any mismatch. S$1
+  // allows the TEST_CUSTOMER_PHONES-only 'Platform Test' service (Phase 8);
+  // every customer-visible service is S$80+.
+  serviceFee: Joi.number().required().min(1).max(10000)
+    .description('Service fee in dollars (SGD 1 - SGD 10,000)'),
 
   serviceType: Joi.string().required().min(3).max(100)
     .description('Type of service requested'),

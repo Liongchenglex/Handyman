@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase/config';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import TestJobBadge from '../components/admin/TestJobBadge';
 import { adminSetJobStatus } from '../services/api/adminQueue';
 
 /**
@@ -148,6 +149,7 @@ const AdminJobs = () => {
                   <Link to={`/admin/jobs/${job.id}`} title={job.id} className="hover:underline">
                     #{job.id.slice(-6)} · {job.serviceType || 'Job'}
                   </Link>
+                  <TestJobBadge job={job} className="ml-2" />
                   <span className={`ml-2 inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_BADGE_CLASSES[job.status] || 'bg-gray-100 text-gray-700'}`}>
                     {String(job.status || '—').replace(/_/g, ' ')}
                   </span>

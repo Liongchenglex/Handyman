@@ -61,6 +61,9 @@ const {
 // wrapper that detects the paid-transition and delegates.
 // See docs/features/handyman-job-notifications.md.
 const { runFanOut: runHandymanFanOut } = require('./handymanNotifier');
+
+// Safe prod testing (LAUNCH-CHECKLIST Phase 8). See functions/testMode.js.
+const { checkTestServiceAllowed, isTestCustomerPhone } = require('./testMode');
 const { NOTIFY_ENABLED, TEMPLATE_LINK_MODE } = require('./notificationConfig');
 
 // Job reassignment — cancel-side domain logic (pure validation +
@@ -1204,9 +1207,27 @@ exports.createPaymentIntent = functions.https.onRequest((req, res) => {
       const totalAmount = expectedServiceFee + platformFee;
       const amountInCents = dollarsToCents(totalAmount);
 
+      const jobRef = admin.firestore().collection('jobs').doc(jobId);
+
+      // Test mode (Phase 8, testMode.js). Before any money or handyman is
+      // involved: (1) only TEST_CUSTOMER_PHONES may pay for the cheap test
+      // service; (2) a test customer's job is stamped isTest so the fan-out,
+      // job board and claim rules keep it away from real handymen.
+      {
+        const preSnap = await jobRef.get();
+        const preJob = preSnap.exists ? preSnap.data() : null;
+        const testCheck = checkTestServiceAllowed(serviceType, preJob);
+        if (!testCheck.allowed) {
+          console.warn(`🚫 Payment rejected: ${testCheck.reason} (job ${jobId}, uid ${decodedToken.uid})`);
+          return res.status(403).json({ error: 'Forbidden', message: testCheck.reason });
+        }
+        if (preJob && preJob.isTest !== true && isTestCustomerPhone(preJob.customerPhone)) {
+          await jobRef.update({ isTest: true });
+        }
+      }
+
       // Use Firestore transaction to prevent race conditions
       // This ensures atomic check-and-set of payment intent ID
-      const jobRef = admin.firestore().collection('jobs').doc(jobId);
       let paymentIntent;
       let shouldCreateNewIntent = false;
 
@@ -5168,9 +5189,18 @@ exports.onJobPaymentSucceeded = functions.firestore
     const { jobId } = context.params;
     console.log(`[handyman-notify] trigger job=${jobId} category=${after.serviceType} prevStatus=${before ? before.paymentStatus : 'new'}`);
 
+    // Test-mode backstop (Phase 8): createPaymentIntent normally stamps
+    // isTest already; if a test customer's job somehow lacks it, stamp it
+    // now — BEFORE the fan-out — so no real handyman is messaged.
+    let job = after;
+    if (after.isTest !== true && isTestCustomerPhone(after.customerPhone)) {
+      job = { ...after, isTest: true };
+      await change.after.ref.update({ isTest: true });
+    }
+
     try {
       return await runHandymanFanOut({
-        job: after,
+        job,
         jobId,
         db: admin.firestore(),
         sendTwilioTemplateMessage,
