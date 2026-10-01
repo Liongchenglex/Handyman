@@ -25,7 +25,7 @@ const TermsOfService = () => {
         <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 md:p-10">
 
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Terms of Service</h1>
-          <p className="text-gray-500 dark:text-gray-400 mb-8">Last Updated: February 2, 2026</p>
+          <p className="text-gray-500 dark:text-gray-400 mb-8">Last Updated: October 1, 2026</p>
 
           {/* Section 1 */}
           <section className="mb-8">
@@ -215,18 +215,34 @@ const TermsOfService = () => {
           <section className="mb-8">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">7. Cancellation and Refunds</h2>
 
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-4 mb-3">7.1 Customer Cancellations</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-4 mb-3">7.1 How Your Payment Is Held</h3>
             <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
-              <li><strong>Before Handyman Assignment</strong>: Full refund</li>
-              <li><strong>After Assignment, Before Work Begins</strong>: Refund minus administrative fee</li>
-              <li><strong>After Work Begins</strong>: Partial refund based on work completed (at our discretion)</li>
+              <li>Your card is charged when you book (the Service Fee plus the Platform Fee)</li>
+              <li>We hold the payment. It is only paid out to the handyman after you confirm the job is complete and we release it</li>
+              <li>Until we release the payment to the handyman, it can be refunded to you in full</li>
             </ul>
 
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.2 Refund Processing</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.2 Cancelling a Job</h3>
             <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
-              <li>Refunds are processed within 5-10 business days</li>
-              <li>Refunds are credited to the original payment method</li>
-              <li>Stripe processing fees may not be refundable</li>
+              <li>To cancel, contact us on WhatsApp at +65 9229 8812 or email easydonehandyman@gmail.com — there is no cancel button in the app</li>
+              <li><strong>Before the job is done</strong> (whether or not a handyman has accepted it): full refund of everything you paid, including the Platform Fee. We do not charge a cancellation or administrative fee</li>
+              <li><strong>If no handyman accepts your job</strong>, or your handyman cancels or does not turn up and we cannot arrange another: full refund</li>
+              <li><strong>If you paid a price adjustment</strong> for extra work, it is refunded together with your original payment</li>
+            </ul>
+
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.3 Problems With Completed Work</h3>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
+              <li>If you report a problem when we ask you to confirm completion, we keep holding the payment while we look into it</li>
+              <li>Depending on what happened, we may arrange for the work to be redone, or give a partial or full refund. We decide case by case after hearing from both you and the handyman</li>
+              <li>Once we have released the payment to the handyman, we cannot automatically refund it. Contact us and we will review your case</li>
+            </ul>
+
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.4 Refund Processing</h3>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
+              <li>Refunds are processed by our team, usually within 2 business days of being agreed</li>
+              <li>Refunds go back to the card you paid with. Your bank typically takes 5–10 business days to show it</li>
+              <li>You will receive an email receipt from our payment provider, Stripe, when the refund is issued</li>
+              <li>We cover the card processing fees — you are refunded the full amount you paid</li>
             </ul>
           </section>
 

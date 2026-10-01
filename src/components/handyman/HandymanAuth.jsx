@@ -133,7 +133,7 @@ const HandymanAuth = ({
               email: formData.email,
               password: formData.password,
               tosAcceptedAt: new Date().toISOString(),
-              tosVersion: '2026-02-02',
+              tosVersion: '2026-10-01',
               privacyPolicyAcceptedAt: new Date().toISOString(),
               privacyPolicyVersion: '2026-02-02'
             });

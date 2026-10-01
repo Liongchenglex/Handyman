@@ -11,7 +11,8 @@ import { TIME_SLOTS, isSlotInPastForDate, firstAvailableSlot } from '../../utils
  * ExpressInterestButton Component
  *
  * Shared component for expressing interest in jobs with confirmation modal
- * Includes penalty warnings and professional commitment messaging
+ * Includes commitment messaging (what cancelling / not showing up actually does —
+ * no monetary penalties exist; owner decision 2026-10-01)
  * Used by both JobBoard and JobCard components
  *
  * @param {Object} job - Job object containing job details
@@ -255,12 +256,12 @@ const ExpressInterestButton = ({
 
             <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-4 mb-4">
               <h4 className="font-medium text-orange-900 dark:text-orange-100 mb-2">
-                ⚠️ Important Penalties
+                ⚠️ Please only accept jobs you can do
               </h4>
               <ul className="text-sm text-orange-800 dark:text-orange-200 space-y-1">
-                <li>• Cancelling after acceptance: <strong>$20 penalty</strong></li>
-                <li>• No-show without 2 hours notice: <strong>$50 penalty</strong></li>
-                <li>• Multiple cancellations may result in account suspension</li>
+                <li>• If you cancel after accepting, the job goes back to other handymen and the cancellation is recorded on your profile</li>
+                <li>• If the customer reports that you didn't turn up, the no-show is recorded on your profile</li>
+                <li>• Repeated cancellations or no-shows may lead to your account being suspended</li>
               </ul>
             </div>
 

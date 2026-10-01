@@ -36,7 +36,7 @@ const HelpContact = () => {
         },
         {
           question: "How do I cancel my job request?",
-          answer: "You can cancel your job request before a handyman accepts it without any penalty. Once accepted, cancellation fees may apply: $20 if cancelled before work starts, $50 if cancelled after work begins. To cancel, contact our support team or use the 'Cancel Job' option in your job details."
+          answer: "Message us on WhatsApp at +65 9229 8812 or email easydonehandyman@gmail.com with your Job number — there is no cancel button in the app. If the job hasn't been done yet, we refund everything you paid, including the platform fee. There are no cancellation fees."
         },
         {
           question: "Can I modify my job details after posting?",
@@ -53,19 +53,19 @@ const HelpContact = () => {
       items: [
         {
           question: "How does the payment system work?",
-          answer: "We use a secure escrow system: 1) You pay upfront when posting your job. 2) Payment is held securely until job completion. 3) Handyman starts work after acceptance. 4) You confirm completion and release payment. 5) Funds are transferred to the handyman. This protects both parties."
+          answer: "1) Your card is charged when you book (service fee + 10% platform fee). 2) We hold the payment — the handyman is not paid yet. 3) After the job, we ask you on WhatsApp to confirm it's complete. 4) Once you confirm, our team releases the payment to the handyman. Until then, your money can be refunded in full."
         },
         {
           question: "When can I get a refund?",
-          answer: "Full refunds are available: 1) If no handyman accepts your job within 7 days. 2) If the accepted handyman doesn't show up or cancels. 3) If work quality doesn't meet basic standards (subject to review). Partial refunds may apply for incomplete work. Refunds are processed within 3-5 business days."
+          answer: "You get a full refund (including the platform fee) if: 1) you cancel before the job is done, 2) no handyman accepts your job, or 3) your handyman cancels or doesn't turn up and we can't arrange another. If there's a problem with completed work, report it when we ask you to confirm completion — we hold the payment and decide case by case (re-work, partial or full refund). Refunds are processed by our team, usually within 2 business days, and take 5–10 business days to reach your card."
         },
         {
           question: "What payment methods do you accept?",
-          answer: "We accept: PayNow (instant transfer), PayLah! (DBS digital wallet), and all major credit/debit cards via Stripe. All payments are processed securely with bank-level encryption. You'll receive email confirmations for all transactions."
+          answer: "We accept credit and debit cards (Visa, Mastercard and others supported by Stripe). Payments are processed securely by Stripe, and you'll receive an email receipt from Stripe."
         },
         {
           question: "Are there any hidden fees?",
-          answer: "No hidden fees! Our pricing is transparent: Service fee (set by handyman), Platform fee (5% of service cost), Payment processing fee (2.9% for cards, free for PayNow/PayLah). All fees are shown clearly before payment."
+          answer: "No. You pay the service fee shown for your job plus a 10% platform fee — the total is shown before you pay. If your handyman finds more work is needed on site, they can request a price adjustment; you only pay it if you agree, using the link we send you. There are no card processing or cancellation fees."
         }
       ]
     },
@@ -78,7 +78,7 @@ const HelpContact = () => {
         },
         {
           question: "The handyman didn't show up. What now?",
-          answer: "If a handyman doesn't show up: 1) Try contacting them via WhatsApp or phone. 2) Wait 30 minutes past agreed time. 3) Report the no-show to our support team. 4) We'll contact the handyman and may reassign your job. 5) You'll receive full refund if we can't resolve within 24 hours."
+          answer: "When we ask you on WhatsApp whether the job was completed, tap 'Report Issue' and then reply 2 ('the handyman never came') — or simply message us 'he never came'. You'll then choose: 1) reschedule with the same handyman, 2) get a new handyman, or 3) cancel for a full refund. Your payment stays protected throughout."
         },
         {
           question: "How do I report inappropriate behavior?",
