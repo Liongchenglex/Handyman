@@ -519,7 +519,7 @@ them — no WhatsApp, and not on their job board.
 
 **Setup (you do these, once):**
 
-- [ ] Add your test customer number(s) to
+- [x] DONE 2026-10-01: `TEST_CUSTOMER_PHONES=+6581505267` set + deployed. Add your test customer number(s) to
       `/Users/liongchenglex/Desktop/AI_Projects/Handyman/functions/.env.handyman-sg-3b418`
       (comma-separated, any format), then redeploy functions:
 
@@ -527,7 +527,7 @@ them — no WhatsApp, and not on their job board.
   TEST_CUSTOMER_PHONES=+6581505267
   ```
 
-- [ ] Firestore → `handymen` → open each TEST handyman account → **Add field**
+- [x] DONE 2026-10-01: `isTestAccount: true` on chenglex1+2@gmail.com and sooseeann@gmail.com (chenglex1+3 stays a REAL handyman). Firestore → `handymen` → open each TEST handyman account → **Add field**
       `isTestAccount` (boolean) = `true`. ⚠️ A test account stops receiving REAL
       jobs — only mark accounts that will never do real work.
 
