@@ -305,7 +305,10 @@ moves the job back to `in_progress`; a bare "1"/"2" reply now answers the right
 question; admin emails now work). Do the scenarios **in order**.
 
 **Before you start (2 min):**
-- [ x] Customer phone (CUST) is a **different WhatsApp number** from HM-A and HM-B.
+- [ x] One WhatsApp number for CUST and the handymen is **OK**. Rules: one
+      scenario at a time; tap buttons instead of typing; if you get "You have
+      N pending questions", reply `<number> <word>` (e.g. `1 YES`); check the
+      Job # on each message — both sides' messages land on the same phone.
 - [ x] CUST has **no leftover open questions**: finish or refund old test jobs
       first. If CUST gets "You have 2 pending questions", that's a leftover —
       answer it with the number + word it shows (e.g. `1 YES`).
