@@ -215,6 +215,29 @@ function buildVisitProposalReset(job, { visitIndex, nowIso }) {
  * Set by TWILIO_TEMPLATE_LINK_MODE, which must match the SIDs configured
  * in the same env file.
  */
+/**
+ * Scenario 7 — the job update for a customer-reported handyman no-show.
+ *
+ * Reportable while the job is in_progress or pending_confirmation (the
+ * handyman tapped Mark Complete but the customer says nobody came — a hard
+ * contradiction). In the latter case the completion claim is withdrawn
+ * (status back to in_progress, mirroring the poll's "coming back" answer):
+ * every follow-up — reschedule link, admin force-unassign, refund — needs
+ * an in_progress job, so leaving it in pending_confirmation wedged them.
+ * completionPollSentAt is deliberately left alone so the morning auto-poll
+ * doesn't re-ask; a later scheduleChange clears it.
+ *
+ * @returns {object|null} Firestore update, or null when not reportable
+ */
+function buildNoShowReportUpdate(job, { via, promptId = null, nowIso }) {
+  if (!job || !['in_progress', 'pending_confirmation'].includes(job.status)) return null;
+  const reports = Array.isArray(job.noShowReports) ? job.noShowReports.slice() : [];
+  reports.push({ reportedAt: nowIso, via, promptId: promptId || null });
+  const update = { noShowReports: reports };
+  if (job.status === 'pending_confirmation') update.status = 'in_progress';
+  return update;
+}
+
 function buildDispositionLinkVar({ appUrl, jobId, mode }) {
   const suffix = `${jobId}?action=disposition`;
   return mode === 'button' ? suffix : `${appUrl}/job-details/${suffix}`;
@@ -236,4 +259,5 @@ module.exports = {
   buildVisitIssueEntry,
   buildVisitProposalReset,
   buildDispositionLinkVar,
+  buildNoShowReportUpdate,
 };

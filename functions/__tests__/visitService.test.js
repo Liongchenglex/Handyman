@@ -17,6 +17,7 @@ const {
   buildVisitIssueEntry,
   buildVisitProposalReset,
   buildDispositionLinkVar,
+  buildNoShowReportUpdate,
 } = require('../visitService');
 
 const NOW_ISO = '2026-07-29T11:00:00.000Z';
@@ -254,5 +255,26 @@ describe('buildDispositionLinkVar', () => {
   test('unknown mode falls back to the full link', () => {
     expect(buildDispositionLinkVar({ appUrl: APP, jobId: 'JOB123', mode: 'weird' }))
       .toBe('https://www.easydonehandyman.sg/job-details/JOB123?action=disposition');
+  });
+});
+
+describe('buildNoShowReportUpdate', () => {
+  const NOW = '2026-10-01T02:00:00.000Z';
+  test('appends a report and keeps an in_progress job in_progress', () => {
+    const upd = buildNoShowReportUpdate({ status: 'in_progress' }, { via: 'poll', promptId: 'p1', nowIso: NOW });
+    expect(upd.noShowReports).toEqual([{ reportedAt: NOW, via: 'poll', promptId: 'p1' }]);
+    expect(upd.status).toBeUndefined();
+  });
+  test('withdraws a completion claim: pending_confirmation → in_progress', () => {
+    const upd = buildNoShowReportUpdate({ status: 'pending_confirmation', noShowReports: [{ via: 'x' }] }, { via: 'freetext', nowIso: NOW });
+    expect(upd.status).toBe('in_progress');
+    expect(upd.noShowReports).toHaveLength(2);
+    expect(upd.noShowReports[1]).toEqual({ reportedAt: NOW, via: 'freetext', promptId: null });
+  });
+  test('returns null for non-reportable statuses', () => {
+    for (const status of ['pending', 'completed', 'cancelled', 'disputed', 'pending_admin_approval']) {
+      expect(buildNoShowReportUpdate({ status }, { via: 'poll', nowIso: NOW })).toBeNull();
+    }
+    expect(buildNoShowReportUpdate(null, { via: 'poll', nowIso: NOW })).toBeNull();
   });
 });

@@ -88,7 +88,7 @@ const {
   buildVisitScheduledUpdate, buildVisitDeclinedUpdate,
   hasPendingSecondVisit, shouldSendDisposition,
   validateVisitIssueReport, buildVisitIssueEntry,
-  buildVisitProposalReset, buildDispositionLinkVar,
+  buildVisitProposalReset, buildDispositionLinkVar, buildNoShowReportUpdate,
 } = require('./visitService');
 
 // Post-inspection price adjustment domain logic (Scenario 10,
@@ -3091,10 +3091,9 @@ async function runNoShowReport({ db, jobId, via, promptId }) {
     const snap = await tx.get(db.collection('jobs').doc(jobId));
     if (!snap.exists) return;
     const job = snap.data();
-    if (!['in_progress', 'pending_confirmation'].includes(job.status)) return;
-    const reports = Array.isArray(job.noShowReports) ? job.noShowReports.slice() : [];
-    reports.push({ reportedAt: nowIso, via, promptId: promptId || null });
-    tx.update(snap.ref, { noShowReports: reports, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+    const update = buildNoShowReportUpdate(job, { via, promptId, nowIso });
+    if (!update) return;
+    tx.update(snap.ref, { ...update, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
     jobData = job;
   });
   if (!jobData) return { reported: false, promptId: null };
