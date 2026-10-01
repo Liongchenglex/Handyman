@@ -237,7 +237,14 @@ const TermsOfService = () => {
               <li>Once we have released the payment to the handyman, we cannot automatically refund it. Contact us and we will review your case</li>
             </ul>
 
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.4 Refund Processing</h3>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.4 48-Hour Workmanship Warranty</h3>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
+              <li>If the same problem the handyman worked on comes back within 48 hours after you confirmed the job as complete, contact us with your Job number and photos</li>
+              <li>We will arrange for the handyman to return and fix it at no extra cost to you</li>
+              <li>The warranty covers the handyman's workmanship only — not new or unrelated problems, damage caused afterwards, or parts and materials that fail on their own</li>
+            </ul>
+
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-6 mb-3">7.5 Refund Processing</h3>
             <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
               <li>Refunds are processed by our team, usually within 2 business days of being agreed</li>
               <li>Refunds go back to the card you paid with. Your bank typically takes 5–10 business days to show it</li>
@@ -253,6 +260,7 @@ const TermsOfService = () => {
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mt-4 mb-3">For Handymen</h3>
             <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300">
               <li>Perform services professionally and competently</li>
+              <li>Honour the 48-hour workmanship warranty (section 7.4): return to fix the same problem free of charge if it comes back within 48 hours of the customer confirming completion</li>
               <li>Maintain all required licenses and permits</li>
               <li>Carry appropriate insurance coverage</li>
               <li>Comply with local laws and regulations</li>

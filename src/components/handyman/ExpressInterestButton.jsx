@@ -262,6 +262,7 @@ const ExpressInterestButton = ({
                 <li>• If you cancel after accepting, the job goes back to other handymen and the cancellation is recorded on your profile</li>
                 <li>• If the customer reports that you didn't turn up, the no-show is recorded on your profile</li>
                 <li>• Repeated cancellations or no-shows may lead to your account being suspended</li>
+                <li>• <strong>48-hour warranty:</strong> if the same problem comes back within 48 hours of the customer confirming the job, you return to fix it free of charge</li>
               </ul>
             </div>
 

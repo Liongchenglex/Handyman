@@ -13,7 +13,7 @@ const Footer = () => {
             {/* Links to home for a consistent, clickable brand mark */}
             <BrandLogo to="/" className="mb-4" />
             <p className="text-gray-600 dark:text-gray-400 text-sm leading-relaxed">
-              Connecting customers with trusted handymen across Singapore. Quality service, guaranteed satisfaction.
+              Connecting customers with trusted handymen across Singapore. Quality work, backed by a 48-hour workmanship warranty.
             </p>
           </div>
 

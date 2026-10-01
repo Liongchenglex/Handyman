@@ -32,7 +32,7 @@ const HelpContact = () => {
       items: [
         {
           question: "No one is accepting my job request. What should I do?",
-          answer: "If your job isn't getting responses, try these steps: 1) Check if your budget is competitive for the service type. 2) Add more details to your job description. 3) Upload photos if relevant. 4) Consider marking your job as 'urgent' if it's time-sensitive. 5) Expand your service area if possible. Most jobs receive responses within 24-48 hours."
+          answer: "As soon as your payment goes through, we notify the handymen on our platform. If nobody has accepted your job after a few days, our team will contact you to either find a handyman for you or give you a full refund. You can also message us on WhatsApp at +65 9229 8812 at any time to check on it."
         },
         {
           question: "How do I cancel my job request?",
@@ -40,11 +40,11 @@ const HelpContact = () => {
         },
         {
           question: "Can I modify my job details after posting?",
-          answer: "Minor changes like contact details or additional notes can be made before a handyman accepts your job. For major changes (service type, budget, location), you may need to cancel and create a new job request. Contact support for assistance with modifications."
+          answer: "Jobs can't be edited in the app. Message us on WhatsApp at +65 9229 8812 with your Job number and the change you need — we'll update it or, if it changes the job significantly, cancel it with a full refund so you can book again. To change the visit time after a handyman accepts, the handyman can propose a new time or we can send you a link to pick one."
         },
         {
           question: "How long does it take to find a handyman?",
-          answer: "Most jobs receive interest within 2-4 hours. Urgent jobs typically get faster responses. Factors affecting response time include: service type availability, your location, budget competitiveness, and job complexity. We recommend waiting 24 hours before considering adjustments."
+          answer: "It depends on the type of job, the time you need and which handymen are available. Every handyman on the platform is notified as soon as you book. If it's taking longer than expected, message us and we'll help."
         }
       ]
     },
@@ -74,7 +74,11 @@ const HelpContact = () => {
       items: [
         {
           question: "What if I'm not satisfied with the work quality?",
-          answer: "If you're unsatisfied: 1) First, discuss concerns directly with the handyman. 2) Document issues with photos if possible. 3) Contact our support team within 24 hours of completion. 4) We'll mediate and may arrange re-work or partial refund. 5) For serious issues, we offer dispute resolution services."
+          answer: "When we ask you on WhatsApp to confirm the job is complete, tap 'Report Issue'. We keep holding your payment while our team talks to you and the handyman, and we decide case by case — the handyman may come back to fix it, or you may get a partial or full refund. If the same problem comes back within 48 hours after you confirmed the job, it's covered by our 48-hour warranty (see below)."
+        },
+        {
+          question: "Is there a warranty on the work?",
+          answer: "Yes — a 48-hour workmanship warranty. If the same problem comes back within 48 hours after you confirmed the job is complete, message us on WhatsApp at +65 9229 8812 with your Job number and photos. We'll arrange for the handyman to come back and fix it at no extra cost. The warranty covers the work the handyman did, not new or unrelated problems."
         },
         {
           question: "The handyman didn't show up. What now?",
@@ -82,11 +86,11 @@ const HelpContact = () => {
         },
         {
           question: "How do I report inappropriate behavior?",
-          answer: "Report any inappropriate behavior immediately: 1) Contact our 24/7 support hotline. 2) Provide details of the incident. 3) We'll investigate within 2 hours. 4) Serious violations result in immediate account suspension. 5) We may involve authorities for safety concerns. Your safety is our priority."
+          answer: "Message us on WhatsApp at +65 9229 8812 or email easydonehandyman@gmail.com with what happened and your Job number. We'll look into it as quickly as we can and may suspend the handyman's account. If you are in danger, call the police on 999 first."
         },
         {
           question: "What if there's damage to my property?",
-          answer: "For property damage: 1) Document with photos immediately. 2) Don't release payment until resolved. 3) Contact support within 6 hours. 4) We'll coordinate with the handyman's insurance. 5) Claims are processed through our damage protection program. Keep all documentation for insurance purposes."
+          answer: "Take photos straight away and contact us on WhatsApp at +65 9229 8812 before confirming the job is complete — while you haven't confirmed, we are still holding the payment. We'll work with you and the handyman to resolve it. Please note we don't currently provide damage insurance or a damage protection programme."
         }
       ]
     },
@@ -95,19 +99,19 @@ const HelpContact = () => {
       items: [
         {
           question: "How do you verify handymen?",
-          answer: "All handymen undergo: 1) NRIC/passport verification. 2) Background checks. 3) Skills assessment. 4) Insurance verification. 5) Reference checks. 6) Ongoing performance monitoring. Only verified professionals can accept jobs on our platform."
+          answer: "Every handyman applies with their personal details and their work experience or CV, which our team reviews and approves by hand before they can take jobs. Before a handyman can be paid, our payment provider Stripe verifies their identity and bank account. We don't currently run criminal background checks or skills tests."
         },
         {
           question: "Is my personal information safe?",
-          answer: "Yes, we use bank-level security: 1) All data encrypted with SSL. 2) Contact details only shared after job acceptance. 3) Payment information never stored. 4) Regular security audits. 5) GDPR compliant data handling. We never sell your information to third parties."
+          answer: "Card payments are handled by Stripe — we never see or store your card number. Handymen browsing jobs can see the job description, address and your name; your phone number is only shared with the handyman who accepts your job. We don't sell your information. See our Privacy Policy for details."
         },
         {
           question: "Can I choose my handyman?",
-          answer: "Currently, handymen express interest in your job, and we notify you of matches. You can view their profiles, ratings, and experience before confirming. In the future, we'll add features to browse and directly select preferred handymen based on reviews and specializations."
+          answer: "Not at the moment — the first available handyman who accepts your job is assigned to it. If you have a concern about your assigned handyman, message us and we can arrange a different one."
         },
         {
           question: "What if I need to change my contact details?",
-          answer: "Update your contact details in your account settings or contact support. Important: If you change your phone number, update it immediately as we use WhatsApp for job coordination. Email changes require verification for security."
+          answer: "Customers don't need an account, so just message us on WhatsApp at +65 9229 8812 with your Job number and new details. Please do this quickly if your phone number changes — we use WhatsApp to coordinate your job."
         }
       ]
     },
@@ -116,15 +120,15 @@ const HelpContact = () => {
       items: [
         {
           question: "The app/website isn't working properly. What should I do?",
-          answer: "For technical issues: 1) Refresh your browser or restart the app. 2) Clear browser cache/cookies. 3) Check your internet connection. 4) Try using a different browser. 5) Contact support with error screenshots. We monitor system status 24/7 and resolve issues quickly."
+          answer: "Try refreshing the page, using a different browser, or checking your internet connection. If it still doesn't work, send us a screenshot on WhatsApp at +65 9229 8812 or email easydonehandyman@gmail.com and we'll help."
         },
         {
           question: "I'm not receiving WhatsApp notifications. Why?",
-          answer: "Check these: 1) Verify your phone number is correct. 2) Ensure WhatsApp is installed and active. 3) Check if you've blocked our business number. 4) Verify notification permissions. 5) Contact support to resend test messages. We also send email backups for important notifications."
+          answer: "Check that the phone number on your booking is correct, that WhatsApp is installed on it, and that you haven't blocked our business number. If messages still don't arrive, contact us by email at easydonehandyman@gmail.com. Note: we send job updates by WhatsApp only (payment and refund receipts come by email from Stripe)."
         },
         {
           question: "How do I delete my account?",
-          answer: "To delete your account: 1) Complete or cancel any active jobs. 2) Contact support with your deletion request. 3) We'll process within 48 hours. 4) All personal data will be permanently deleted. 5) You'll receive confirmation email. Note: Some transaction records may be retained for legal compliance."
+          answer: "Contact us by email at easydonehandyman@gmail.com with your request. We'll delete your personal data once any active jobs are finished. Some payment records have to be kept for legal and accounting reasons."
         }
       ]
     }
@@ -133,9 +137,9 @@ const HelpContact = () => {
   const contactInfo = [
     {
       icon: "phone",
-      title: "Customer Support Hotline",
+      title: "WhatsApp / Phone",
       details: "+65 9229 8812",
-      subtext: "Available 24/7 via phone call or WhatsApp"
+      subtext: "WhatsApp or call — fastest way to reach us"
     },
     {
       icon: "email",
@@ -305,9 +309,9 @@ const HelpContact = () => {
                   Expected Response Times
                 </h4>
                 <ul className="space-y-1 text-sm text-blue-800 dark:text-blue-200">
-                  <li>• <strong>Phone/WhatsApp:</strong> Immediate response during business hours</li>
-                  <li>• <strong>Email inquiries:</strong> Within 2-4 hours on weekdays</li>
-                  <li>• <strong>Complex issues:</strong> Full resolution within 24-48 hours</li>
+                  <li>• <strong>WhatsApp/phone:</strong> We reply as soon as we can, usually the same day</li>
+                  <li>• <strong>Email:</strong> Usually within 1 business day</li>
+                  <li>• <strong>Refunds:</strong> Processed within 2 business days of being agreed</li>
                 </ul>
               </div>
             </div>
