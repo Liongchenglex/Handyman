@@ -1,5 +1,11 @@
 # Launch Checklist — Job Lifecycle Flows (prod)
 
+> **Status 2026-10-01: READY FOR PROD.** Phases 0–8 done and verified.
+> Only open item: **T1b** — confirm the first handyman payout reaches the bank
+> (~7 Oct). If it doesn't: Stripe → Connect → Accounts → handyman → Payouts
+> (Paid / Pending / Failed + reason; "Restricted" banner) → Stripe support.
+> That is a Stripe follow-up, not a code change — transfers were verified.
+
 Written 2026-09-28 to restart the project after a break. Work top to bottom,
 ticking boxes as you go. Every command below is copy-paste ready: each one
 starts with `cd` into the right folder.
@@ -533,14 +539,14 @@ them — no WhatsApp, and not on their job board.
 
 **Verify it works (once, ~S$1.10):**
 
-- [ ] Open https://www.easydonehandyman.sg/request-job?test=1 → 🧪 banner shows →
+- [x] Open https://www.easydonehandyman.sg/request-job?test=1 → 🧪 banner shows →
       book **Platform Test** (S$1 + fee = S$1.10) from the test phone.
-- [ ] Firestore job has `isTest: true`; `/admin` row shows 🧪 TEST.
-- [ ] Test handyman gets the WhatsApp + sees it on the board; a non-test
+- [x] Firestore job has `isTest: true`; `/admin` row shows 🧪 TEST.
+- [x] Test handyman gets the WhatsApp + sees it on the board; a non-test
       handyman (if any) gets nothing and doesn't see it.
-- [ ] Open the same URL but book with a NON-test phone → payment is refused
+- [x] Open the same URL but book with a NON-test phone → payment is refused
       ("Platform Test is for internal testing only").
-- [ ] Refund or release the test job as usual.
+- [x] Refund or release the test job as usual.
 
 ---
 
