@@ -420,7 +420,7 @@ the pass condition.
 
 ## Phase 7 — Before real customers
 
-- [ ] **Revert the test price.** PREPARED 2026-10-01 on branch `launch/real-pricing` (`4532c6e`: S$90–130 + S$20 floor in all 3 files, tests pass). After the Node smoke test, tell Claude Code "ship real pricing" → merge + deploy functions + hosting. (Original instructions below.) In both files, change
+- [x] DONE 2026-10-01 — real pricing merged (`81f2901`) and deployed after the owner's Node-22 smoke test. **Revert the test price.** PREPARED 2026-10-01 on branch `launch/real-pricing` (`4532c6e`: S$90–130 + S$20 floor in all 3 files, tests pass). After the Node smoke test, tell Claude Code "ship real pricing" → merge + deploy functions + hosting. (Original instructions below.) In both files, change
       `'Appliance Repair':  { min: 4,   max: 20 },` to
       `'Appliance Repair':  { min: 90,  max: 130 },` and remove the `TEMP`
       comment:
@@ -469,12 +469,12 @@ the pass condition.
      one WhatsApp reply flow (T3 or T6).
   - Optional later: `firebase-functions` 4.9 → latest has breaking changes;
     do it separately, not together with the Node upgrade.
-- [ ] Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
+- [x] DECIDED 2026-10-01: off for now (every handyman gets every job). Decide on `NOTIFY_FILTER_BY_SERVICE_TYPE` (keep or remove, Phase 4).
 - [x] N/A — nothing was switched off (Phase 4 ping step skipped). Set any handyman `notifyOnNewJob` you switched off in Phase 4 back to
       `true`.
-- [ ] Delete `TEST` jobs from prod Firestore (jobs collection → open job →
+- [x] DECIDED 2026-10-01: KEEP them (closed, off the board; the only in-app record of the live Stripe test payments). Delete `TEST` jobs from prod Firestore (jobs collection → open job →
       **⋮ → Delete document**).
-- [ ] Still-open product decisions (spec §6): refund policy wording (full vs
+- [x] DECIDED 2026-10-01 (`0312f6c`): refund policy = honest full refund before the job is done, no fees (Terms §7 + FAQ rewritten); $20/$50 handyman penalties removed. Still-open product decisions (spec §6): refund policy wording (full vs
       minus fee), and the "$20 penalty" wording in the Express Interest pop-up.
 
 ## Phase 8 — Safe prod testing after real handymen join ("test mode")
