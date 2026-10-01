@@ -237,7 +237,7 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
 - [ x] **T6 Price adjustment (decline).** Same, but CUST replies `NO` →
       HM-A gets "customer declined". Firestore:
       `priceAdjustment.status: "declined"`.
-- [ ] **T7 No-show.** Job dated today, HM-A claimed, don't mark complete →
+- [ ] ~~T7 No-show.~~ → replaced by **Phase 5b** below. Old text: Job dated today, HM-A claimed, don't mark complete →
       force-run `autoTriggerCompletionPoll` (only fires the day after the
       date; alternatively have HM-A tap **Mark Complete**) → CUST taps
       **Report Issue** → replies `2` ("never came") → CUST gets 3 choices.
@@ -256,11 +256,11 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
       force-run `eveningVisitDisposition` → HM-A gets "How did today's job
       go?" link → opens with **Job's done / Needs another visit / Problem —
       can't finish** options.
-- [ ] **T11 Stuck-job sweep.** Leave any Approve/Decline prompt unanswered
+- [ ] ~~T11 Stuck-job sweep.~~ → replaced by **Phase 5b** below. Old text: Leave any Approve/Decline prompt unanswered
       for 2 days → force-run `stuckStateSweep` → nudge WhatsApp sent → after
       the next threshold, job shows **Needs attention** on `/admin` and you
       get a digest email.
-- [ ] **T12 Templates really used.** Trigger each new template to a phone
+- [ ] ~~T12 Templates really used.~~ → replaced by **Phase 5b** below. Old text: Trigger each new template to a phone
       that hasn't messaged the business number for 24h+. Then open the logs
       link in the Quick reference and search `63016` — any hit means that
       template's SID isn't set (Phase 1).
@@ -297,6 +297,97 @@ Full scripts: `docs/features/e2e-test-plan-job-lifecycle.md`. Minimum set:
      `priceAdjustment.requestedVia: "admin"`.
   4. CUST pays → same result as T5 (both confirmed, fee goes up).
   5. The button is hidden while an adjustment is pending or paid.
+
+## Phase 5b — Final run: no-show → refund (replaces T7, T11, T12, R2, R3)
+
+Written 2026-10-01 after the T7 hiccups (all fixed and deployed: no-show now
+moves the job back to `in_progress`; a bare "1"/"2" reply now answers the right
+question; admin emails now work). Do the scenarios **in order**.
+
+**Before you start (2 min):**
+- [ ] Customer phone (CUST) is a **different WhatsApp number** from HM-A and HM-B.
+- [ ] CUST has **no leftover open questions**: finish or refund old test jobs
+      first. If CUST gets "You have 2 pending questions", that's a leftover —
+      answer it with the number + word it shows (e.g. `1 YES`).
+- [ ] Hard refresh (Cmd + Shift + R) the admin and handyman pages.
+- [ ] Book every job as **Appliance Repair (S$4)** with **today's date**, a
+      time slot later today (or ASAP + approve the proposed time).
+
+### S1 — No-show → customer wants a refund (covers T7 choice 3 + R2)
+1. [ ] CUST books `TEST S1`. HM-A claims it.
+2. [ ] HM-A → **Request price adjustment** → `1`, reason `extra part`. CUST pays
+       the link (S$1.10) → "Payment received" popup → both phones get "paid".
+3. [ ] HM-A → **Mark Complete**. CUST gets the 3-button poll → tap **Report Issue**.
+4. [ ] CUST gets "What happened? 1 problem / 2 never came" → reply `2`.
+5. [ ] Check **all** of:
+   - CUST gets the 3 choices (Reschedule / New handyman / Cancel & refund).
+   - HM-A gets "The customer reported that nobody arrived…".
+   - Admin email "no-show reported" arrives at easydonehandyman@gmail.com.
+   - Firestore job: `status: "in_progress"` (back from pending_confirmation),
+     one `noShowReports` entry. HM-A's handyman doc: `noShowCount` +1.
+6. [ ] CUST replies `3`. → CUST gets "our team will process your refund shortly";
+       admin email arrives; `/admin` row shows **⚠️ Needs attention**; Details
+       page says **"No-show — customer wants a refund"**.
+7. [ ] `/admin` → **Refund** on that row → confirm.
+8. [ ] **R2 check** — Stripe https://dashboard.stripe.com/payments: **both** the
+       S$4.40 and the S$1.10 payments show **Refunded**. Firestore job:
+       `paymentStatus: "refunded"`, `status: "cancelled"`,
+       `priceAdjustment.status: "refunded"`. CUST gets Stripe refund email(s).
+
+### S2 — No-show → new handyman → paid adjustment follows the job (T7 choice 2 + T16)
+1. [ ] CUST books `TEST S2`. HM-A claims. HM-A requests `+1`, CUST pays.
+2. [ ] HM-A **Mark Complete** → CUST **Report Issue** → `2` → then `2` (new handyman).
+3. [ ] Check: CUST gets "we're finding you a new handyman"; admin email;
+       `/admin` row ⚠️ → Details: **"No-show — customer wants a new handyman"**.
+4. [ ] `/admin` → **Force unassign** (add a note) → check:
+       HM-A notified and **cannot** re-claim; CUST notified; HM-B gets the
+       new-job WhatsApp; on HM-B's job board the card shows
+       **"💰 Price includes +S$1 agreed with the customer: extra part"**.
+5. [ ] HM-B claims → (ASAP: CUST approves time) → HM-B **Mark Complete** →
+       CUST **Confirm Complete** → `/admin/fund-release` → **Release Funds**.
+6. [ ] Stripe https://dashboard.stripe.com/connect/transfers: **two** transfers
+       to **HM-B** (≈S$3.41 + ≈S$0.51), **none** to HM-A for this job.
+
+### S3 — No-show → reschedule with the same handyman (T7 choice 1)
+1. [ ] CUST books `TEST S3`. HM-A claims → **Mark Complete** → CUST
+       **Report Issue** → `2` → then `1` (reschedule).
+2. [ ] CUST gets a pick-time link → opens `/pick-time` → picks tomorrow.
+3. [ ] HM-A gets "Customer picked … Approve / Decline" → **Approve** →
+       both get "new time confirmed". Firestore: new `preferredDate`,
+       `status: "in_progress"`.
+4. [ ] **Keep this job** for S5 (stuck-job sweep).
+
+### S4 — Refund a job nobody claimed (R3)
+1. [ ] CUST books `TEST S4`. **Nobody claims it** (HM-A/HM-B ignore the WhatsApp).
+2. [ ] https://dashboard.stripe.com/payments → open the S$4.40 payment →
+       **Refund** → full amount → Refund.
+3. [ ] Within ~1 min, Firestore job: `paymentStatus: "refunded"`. CUST gets
+       the Stripe refund email.
+4. [ ] The job is still `pending` (still on the board): `/admin/jobs` → find
+       `TEST S4` → **Set status (override)** → **cancelled**. Check it's gone
+       from HM-A's job board.
+
+### S5 — Stuck-job sweep, fast-forwarded (replaces T11)
+Instead of waiting 2+ days, move the deadline into the past by hand.
+1. [ ] On the S3 job, HM-A → **Propose new time** (any slot). CUST does **not** reply.
+2. [ ] Firestore → `jobs/<S3 job id>/prompts` → open the newest
+       `schedule_approval` (status `open`) → edit `expiresAt` to
+       `2026-09-30T00:00:00.000Z` → Update.
+3. [ ] Cloud Scheduler → **Force run** `stuckStateSweep`.
+       Check: CUST gets a reminder WhatsApp (prompt_nudge); the prompt now has
+       `nudgedAt` and a new `expiresAt` (+24h). No attention flag yet.
+4. [ ] Edit that same prompt's `expiresAt` to `2026-09-30T00:00:00.000Z` again →
+       **Force run** `stuckStateSweep` again.
+5. [ ] Check: prompt `status: "expired"`; `/admin` row ⚠️ → Details:
+       **"WhatsApp question left unanswered"**; admin digest email arrives.
+6. [ ] Clean up: Refund the S3 job (R1 path) so CUST has no open questions.
+
+### S6 — Template delivery check (replaces T12)
+- [x] 2026-10-01: Claude checked prod logs + Twilio — 98 WhatsApp sent since
+      29 Sep, **0 failed / undelivered**, no `63016` errors, no template-less
+      fallbacks.
+- [ ] After S1–S5: ask Claude Code to re-run the same check (it covers the
+      no-show, nudge and refund messages those scenarios send).
 
 ## Phase 6 — Refund testing
 
